@@ -1,0 +1,10 @@
+node_modules
+npm-debug.log
+dist
+release
+.git
+.gitignore
+.vscode
+uploads
+exports
+*.local

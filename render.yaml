@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: escalation-pro-crm
+    env: node
+    plan: starter
+    autoDeploy: true
+    rootDir: .
+    buildCommand: npm install ; npm run build ; npm run build:server
+    startCommand: npm run start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CRM_DB_MODE
+        value: sql
+      - key: CRM_SQL_CONNECTION_STRING
+        fromDatabase:
+          name: escalation-pro-postgres
+          property: connectionString
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: SESSION_COOKIE_SECURE
+        value: true
+
+databases:
+  - name: escalation-pro-postgres
+    plan: starter
+    postgresMajorVersion: "16"

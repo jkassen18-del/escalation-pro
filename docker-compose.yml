@@ -1,0 +1,49 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: escalation-pro-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      SESSION_SECRET: ${SESSION_SECRET:-replace-with-a-long-random-secret}
+      CRM_DB_MODE: sql
+      CRM_SQL_HOST: postgres
+      CRM_SQL_PORT: 5432
+      CRM_SQL_DATABASE: ${CRM_SQL_DATABASE:-crm}
+      CRM_SQL_USER: ${CRM_SQL_USER:-crm}
+      CRM_SQL_PASSWORD: ${CRM_SQL_PASSWORD:-crm}
+      CRM_SQL_STATE_TABLE: ${CRM_SQL_STATE_TABLE:-crm_state}
+      CRM_SQL_SYNC_POLL_MS: ${CRM_SQL_SYNC_POLL_MS:-3000}
+    ports:
+      - "3000:3000"
+    volumes:
+      - crm_uploads:/app/uploads
+      - crm_exports:/app/exports
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: escalation-pro-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${CRM_SQL_DATABASE:-crm}
+      POSTGRES_USER: ${CRM_SQL_USER:-crm}
+      POSTGRES_PASSWORD: ${CRM_SQL_PASSWORD:-crm}
+    ports:
+      - "${CRM_SQL_PORT:-5432}:5432"
+    volumes:
+      - crm_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CRM_SQL_USER:-crm} -d ${CRM_SQL_DATABASE:-crm}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  crm_postgres_data:
+  crm_uploads:
+  crm_exports:
