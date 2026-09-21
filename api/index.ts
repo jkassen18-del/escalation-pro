@@ -1,25 +1,44 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { getServerlessApp } from '../server/index.ts';
 
 /**
  * Serverless entry point.
  *
- * The Express app is built once per instance and reused. Any failure building
- * it is answered as JSON rather than being allowed to escape, because an
- * uncaught rejection here surfaces as an opaque platform error with nothing
- * to diagnose from.
+ * The server module is imported lazily inside the handler rather than at the
+ * top of this file. A module-level import that throws makes the whole function
+ * unloadable, and the platform reports that as an opaque invocation failure
+ * with nothing to diagnose from. Importing here means any startup fault -- a
+ * bad dependency, a missing environment variable, an unreachable database --
+ * comes back as JSON naming the cause.
  */
+let appPromise: Promise<(req: IncomingMessage, res: ServerResponse) => void> | null = null;
+
+async function loadApp() {
+  const { getServerlessApp } = await import('../server/index.ts');
+  const app = await getServerlessApp();
+  return app as unknown as (req: IncomingMessage, res: ServerResponse) => void;
+}
+
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   try {
-    const app = await getServerlessApp();
-    return app(req as never, res as never);
+    if (!appPromise) {
+      // A failed start is not cached, so a transient fault does not leave this
+      // instance permanently broken.
+      appPromise = loadApp().catch((error) => {
+        appPromise = null;
+        throw error;
+      });
+    }
+    const app = await appPromise;
+    return app(req, res);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const name = error instanceof Error ? error.name : 'Error';
     console.error('[serverless] failed to start the application', error);
+
     if (!res.headersSent) {
       res.statusCode = 503;
       res.setHeader('Content-Type', 'application/json');
     }
-    res.end(JSON.stringify({ status: 'degraded', error: message }));
+    res.end(JSON.stringify({ status: 'degraded', error: `${name}: ${message}` }));
   }
 }

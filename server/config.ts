@@ -51,15 +51,26 @@ function resolveDriver(): 'postgres' | 'sqlite' {
   const explicit = (process.env.DB_DRIVER || '').toLowerCase();
   if (explicit === 'postgres' || explicit === 'sqlite') return explicit;
   if (process.env.DATABASE_URL || process.env.PGHOST || process.env.PGDATABASE) return 'postgres';
-  if (IS_SERVERLESS) {
-    // A SQLite file under /tmp would vanish between invocations, so failing
-    // loudly here beats silently losing every ticket.
+  return 'sqlite';
+}
+
+/**
+ * A SQLite file under /tmp would vanish between invocations, so a serverless
+ * deployment without DATABASE_URL is a misconfiguration worth refusing.
+ *
+ * Checked when the connection is opened, never at module load: throwing while
+ * this module is being imported makes the whole function unloadable, and the
+ * platform reports that as an opaque invocation failure with no way for
+ * /health to explain what is actually wrong.
+ */
+export function assertDatabaseConfigured(): void {
+  if (IS_SERVERLESS && dbConfig.driver === 'sqlite') {
     throw new Error(
-      'DATABASE_URL is required in a serverless environment. The embedded SQLite ' +
-        'database needs a persistent filesystem, which this platform does not provide.',
+      'DATABASE_URL is not set. A serverless deployment needs an external database: ' +
+        'the embedded SQLite file requires a persistent filesystem, which this platform ' +
+        'does not provide. Set DATABASE_URL to a pooled Postgres connection string.',
     );
   }
-  return 'sqlite';
 }
 
 /** True when uploads can be written beside the app and read back later. */

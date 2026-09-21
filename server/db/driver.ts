@@ -1,4 +1,4 @@
-import { dbConfig, IS_SERVERLESS } from '../config.ts';
+import { assertDatabaseConfigured, dbConfig, IS_SERVERLESS } from '../config.ts';
 
 export type SqlParam = string | number | null | Buffer;
 
@@ -182,6 +182,8 @@ async function createPostgresDriver(): Promise<DbDriver> {
 }
 
 export async function createDriver(): Promise<DbDriver> {
+  assertDatabaseConfigured();
+
   if (dbConfig.driver === 'postgres') {
     try {
       return await createPostgresDriver();
