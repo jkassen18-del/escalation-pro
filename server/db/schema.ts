@@ -204,6 +204,33 @@ const TABLES: string[] = [
    * fetched and parsed constantly for no reason.
    */
   /*
+   * Connections to databases the company already runs, used to look up real
+   * records (customers, assets) when raising a ticket.
+   *
+   * The credential is encrypted at rest with the same key as the integration
+   * secrets. Nothing here is ever returned to the browser in the clear.
+   */
+  `CREATE TABLE IF NOT EXISTS data_sources (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    engine TEXT NOT NULL,
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL,
+    database_name TEXT NOT NULL,
+    username TEXT NOT NULL,
+    password_encrypted TEXT,
+    use_tls INTEGER NOT NULL DEFAULT 1,
+    lookup_query TEXT NOT NULL,
+    value_column TEXT NOT NULL DEFAULT 'id',
+    label_column TEXT NOT NULL DEFAULT 'name',
+    status TEXT NOT NULL DEFAULT 'unknown',
+    status_message TEXT,
+    last_tested_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
+  /*
    * Per-department intake forms. Each team defines the questions its own
    * tickets should answer, on top of the fields every ticket has.
    */

@@ -20,6 +20,7 @@ import { attachmentsRouter } from './routes/attachments.ts';
 import { notificationsRouter } from './routes/notifications.ts';
 import { settingsRouter } from './routes/settings.ts';
 import { integrationsRouter } from './routes/integrations.ts';
+import { dataSourcesRouter } from './routes/data-sources.ts';
 import { reportsRouter } from './routes/reports.ts';
 import { auditRouter } from './routes/audit.ts';
 import { webhooksRouter } from './routes/webhooks.ts';
@@ -129,6 +130,7 @@ export async function createApp() {
   app.use('/api/notifications', notificationsRouter);
   app.use('/api/settings', settingsRouter);
   app.use('/api/integrations', integrationsRouter);
+  app.use('/api/data-sources', dataSourcesRouter);
   app.use('/api/reports', reportsRouter);
   app.use('/api/audit', auditRouter);
 

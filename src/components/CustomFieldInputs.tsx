@@ -1,4 +1,5 @@
 import { Checkbox, Field, Input, Select, Textarea } from '@/components/ui/Field';
+import { LookupInput } from '@/components/LookupInput';
 import type { TeamFormField } from '@shared/types';
 
 /**
@@ -87,6 +88,14 @@ export function CustomFieldInputs({
                   );
                 })}
               </div>
+            ) : field.type === 'lookup' && field.dataSourceId ? (
+              <LookupInput
+                id={inputId}
+                dataSourceId={field.dataSourceId}
+                value={String(value ?? '')}
+                placeholder={field.placeholder ?? undefined}
+                onChange={(next) => set(field.key, next)}
+              />
             ) : (
               <Input
                 id={inputId}

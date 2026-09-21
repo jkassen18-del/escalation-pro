@@ -190,6 +190,29 @@ export interface Notification {
  * How a stored body should be rendered. Values written before rich text
  * existed are plain text, and stay that way.
  */
+export const DATA_SOURCE_ENGINES = ['postgres', 'mysql'] as const;
+export type DataSourceEngine = (typeof DATA_SOURCE_ENGINES)[number];
+
+/** A connection to a database the company already runs. Read-only. */
+export interface DataSourceSummary {
+  id: string;
+  name: string;
+  engine: DataSourceEngine;
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  /** Whether a password is stored; the value itself is never sent out. */
+  hasPassword: boolean;
+  useTls: boolean;
+  lookupQuery: string;
+  valueColumn: string;
+  labelColumn: string;
+  status: 'unknown' | 'ok' | 'error';
+  statusMessage: string | null;
+  lastTestedAt: string | null;
+}
+
 /** The question types a department can put on its intake form. */
 export const FORM_FIELD_TYPES = [
   'text',

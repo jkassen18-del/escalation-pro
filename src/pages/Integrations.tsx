@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, CircleAlert, CircleDashed, ExternalLink, RefreshCw } from 'lucide-react';
 import { ProviderIcon } from '@/components/BrandIcons';
+import { DataSourcePanel } from '@/components/DataSourcePanel';
 import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { relativeTime, shortDateTime } from '@/lib/format';
@@ -98,6 +99,8 @@ export function IntegrationsPage() {
             onToast={toast}
           />
         ))}
+
+        <DataSourcePanel />
 
         <section className="rounded-md border surface">
           <header className="flex items-center justify-between border-b px-4 py-2.5">

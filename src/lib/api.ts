@@ -1,4 +1,5 @@
 import type {
+  DataSourceSummary,
   TeamFormField,
   AppSettings,
   AuditEntry,
@@ -170,6 +171,20 @@ export const api = {
   settings: {
     get: () => get<{ settings: AppSettings }>('/settings'),
     update: (body: Partial<AppSettings>) => patch<{ settings: AppSettings }>('/settings', body),
+  },
+
+  dataSources: {
+    list: () => get<{ dataSources: DataSourceSummary[] }>('/data-sources'),
+    create: (body: Record<string, unknown>) => post<{ dataSource: DataSourceSummary }>('/data-sources', body),
+    update: (id: string, body: Record<string, unknown>) =>
+      patch<{ dataSource: DataSourceSummary }>(`/data-sources/${id}`, body),
+    remove: (id: string) => del<{ ok: true }>(`/data-sources/${id}`),
+    test: (id: string) =>
+      post<{ ok: boolean; message: string; sample: Array<{ value: string; label: string }>; dataSource: DataSourceSummary }>(
+        `/data-sources/${id}/test`,
+      ),
+    lookup: (id: string, query: string) =>
+      get<{ rows: Array<{ value: string; label: string }> }>(`/data-sources/${id}/lookup?q=${encodeURIComponent(query)}`),
   },
 
   branding: {

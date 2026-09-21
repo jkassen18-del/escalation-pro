@@ -210,6 +210,15 @@ function TeamDialog({
   onSaved: () => Promise<void>;
 }) {
   const toast = useToast();
+  /* Offered as a field type only where a connection actually exists. */
+  const [dataSources, setDataSources] = useState<Array<{ id: string; name: string }>>([]);
+
+  useEffect(() => {
+    void api.dataSources
+      .list()
+      .then((result) => setDataSources(result.dataSources.map(({ id, name }) => ({ id, name }))))
+      .catch(() => setDataSources([]));
+  }, []);
   const [form, setForm] = useState({
     name: team?.name ?? '',
     key: team?.key ?? '',
@@ -384,7 +393,7 @@ function TeamDialog({
         {team && (
           <div>
             <p className="mb-2 text-xs font-medium">Intake form</p>
-            <FormBuilder teamId={team.id} teamName={team.name} />
+            <FormBuilder teamId={team.id} teamName={team.name} dataSources={dataSources} />
           </div>
         )}
       </div>
