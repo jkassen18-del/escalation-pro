@@ -1,0 +1,247 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
+
+/*
+ * Design tokens.
+ *
+ * Warm stone neutrals with a single restrained brass accent. Hairline borders
+ * carry the layout instead of drop shadows, and the type scale is deliberately
+ * small and dense - this is a tool people stare at all day, not a landing page.
+ */
+@theme {
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --color-ink-50: #faf9f7;
+  --color-ink-100: #f2f0ed;
+  --color-ink-200: #e5e2dd;
+  --color-ink-300: #d0ccc4;
+  --color-ink-400: #a8a29a;
+  --color-ink-500: #7d776e;
+  --color-ink-600: #5c574f;
+  --color-ink-700: #423e38;
+  --color-ink-800: #2a2721;
+  --color-ink-900: #1a1815;
+  --color-ink-950: #100f0d;
+
+  --color-brass-50: #fbf8ef;
+  --color-brass-100: #f4ecd5;
+  --color-brass-200: #e8d7a8;
+  --color-brass-300: #d9bc73;
+  --color-brass-400: #c9a04b;
+  --color-brass-500: #b4863a;
+  --color-brass-600: #96692f;
+  --color-brass-700: #785129;
+  --color-brass-800: #5d4025;
+  --color-brass-900: #4a3420;
+
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-lg: 1rem;
+  --text-xl: 1.125rem;
+  --text-2xl: 1.375rem;
+  --text-3xl: 1.75rem;
+
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+}
+
+:root {
+  --bg: #f7f6f3;
+  --surface: #ffffff;
+  --surface-2: #faf9f7;
+  --surface-3: #f2f0ed;
+  --border: #e3e0da;
+  --border-strong: #d0ccc4;
+  --fg: #1a1815;
+  --fg-muted: #6b665e;
+  --fg-subtle: #938d84;
+  --accent: #96692f;
+  --accent-fg: #ffffff;
+  --focus: #b4863a;
+
+  --status-open: #1d6fb8;
+  --status-progress: #96692f;
+  --status-pending: #8a6d3b;
+  --status-resolved: #3f7d4e;
+  --status-closed: #7d776e;
+
+  --priority-urgent: #b42318;
+  --priority-high: #b54708;
+  --priority-normal: #1d6fb8;
+  --priority-low: #7d776e;
+
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --bg: #100f0d;
+  --surface: #191714;
+  --surface-2: #1f1d19;
+  --surface-3: #272420;
+  --border: #302c27;
+  --border-strong: #423e38;
+  --fg: #ede9e3;
+  --fg-muted: #9c968c;
+  --fg-subtle: #746e65;
+  --accent: #c9a04b;
+  --accent-fg: #191714;
+  --focus: #c9a04b;
+
+  --status-open: #6ba7de;
+  --status-progress: #d9bc73;
+  --status-pending: #c2a06a;
+  --status-resolved: #74b183;
+  --status-closed: #948d83;
+
+  --priority-urgent: #e8776b;
+  --priority-high: #dc9350;
+  --priority-normal: #6ba7de;
+  --priority-low: #948d83;
+
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+
+  /* Tabular figures keep ticket counts and timestamps from jittering. */
+  table,
+  time,
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 1px;
+  }
+
+  ::selection {
+    background: var(--color-brass-200);
+    color: var(--color-ink-900);
+  }
+
+  :root[data-theme='dark'] ::selection {
+    background: var(--color-brass-800);
+    color: var(--color-ink-50);
+  }
+
+  /* Thin scrollbars: the content matters more than the chrome. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 6px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+}
+
+@layer utilities {
+  .surface {
+    background: var(--surface);
+  }
+  .surface-2 {
+    background: var(--surface-2);
+  }
+  .surface-3 {
+    background: var(--surface-3);
+  }
+  .text-muted {
+    color: var(--fg-muted);
+  }
+  .text-subtle {
+    color: var(--fg-subtle);
+  }
+  .hairline {
+    border-color: var(--border);
+  }
+
+  /* Small uppercase label used for table headers and section eyebrows. */
+  .eyebrow {
+    font-size: var(--text-2xs);
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--fg-subtle);
+  }
+
+  .overlay-shadow {
+    box-shadow:
+      0 1px 2px rgb(0 0 0 / 0.06),
+      0 8px 24px -6px rgb(0 0 0 / 0.14);
+  }
+
+  :root[data-theme='dark'] .overlay-shadow {
+    box-shadow:
+      0 1px 2px rgb(0 0 0 / 0.4),
+      0 8px 24px -6px rgb(0 0 0 / 0.6);
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(-2px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .animate-in {
+    animation: fade-in 0.12s ease-out;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .animate-spin-slow {
+    animation: spin 0.7s linear infinite;
+  }
+}

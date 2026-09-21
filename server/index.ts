@@ -1,0 +1,160 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import cookieParser from 'cookie-parser';
+import express, { type NextFunction, type Request, type Response } from 'express';
+import session from 'express-session';
+import { MulterError } from 'multer';
+import { config, IS_PRODUCTION, paths } from './config.ts';
+import { db, initDatabase } from './db/index.ts';
+import { bootstrapFromEnvironment } from './bootstrap.ts';
+import { HttpError } from './lib/http.ts';
+import { sessionStore } from './lib/session-store.ts';
+import { attachUser } from './middleware/auth.ts';
+import { authRouter } from './routes/auth.ts';
+import { usersRouter } from './routes/users.ts';
+import { teamsRouter } from './routes/teams.ts';
+import { ticketsRouter } from './routes/tickets.ts';
+import { attachmentsRouter } from './routes/attachments.ts';
+import { notificationsRouter } from './routes/notifications.ts';
+import { settingsRouter } from './routes/settings.ts';
+import { integrationsRouter } from './routes/integrations.ts';
+import { reportsRouter } from './routes/reports.ts';
+import { auditRouter } from './routes/audit.ts';
+import { webhooksRouter } from './routes/webhooks.ts';
+import { startSlaMonitor } from './jobs/sla-monitor.ts';
+
+async function createApp() {
+  const app = express();
+
+  // Required for correct req.ip and secure cookies behind a reverse proxy.
+  app.set('trust proxy', 1);
+  app.disable('x-powered-by');
+
+  app.use(
+    express.json({
+      limit: '2mb',
+      // Keep the raw bytes so webhook HMAC signatures can be verified.
+      verify: (req, _res, buf) => {
+        (req as Request & { rawBody?: Buffer }).rawBody = buf;
+      },
+    }),
+  );
+  app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+  app.use(cookieParser());
+
+  sessionStore.startSweeper();
+  app.use(
+    session({
+      name: 'escalation.sid',
+      secret: config.sessionSecret,
+      store: sessionStore,
+      resave: false,
+      saveUninitialized: false,
+      rolling: true,
+      cookie: {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: config.cookieSecure,
+        maxAge: config.sessionMaxAgeMs,
+      },
+    }),
+  );
+
+  app.get('/health', async (_req, res) => {
+    try {
+      await db.get('SELECT 1 AS ok');
+      res.json({ status: 'ok', database: db.dialect, uptime: Math.round(process.uptime()) });
+    } catch (error) {
+      res.status(503).json({ status: 'degraded', error: error instanceof Error ? error.message : 'unknown' });
+    }
+  });
+
+  app.use('/api/auth', authRouter);
+  app.use('/api/webhooks', webhooksRouter);
+
+  // Everything below needs a resolved session user.
+  app.use('/api', attachUser);
+  app.use('/api/users', usersRouter);
+  app.use('/api/teams', teamsRouter);
+  app.use('/api/tickets/:id/attachments', attachmentsRouter);
+  app.use('/api/tickets', ticketsRouter);
+  app.use('/api/notifications', notificationsRouter);
+  app.use('/api/settings', settingsRouter);
+  app.use('/api/integrations', integrationsRouter);
+  app.use('/api/reports', reportsRouter);
+  app.use('/api/audit', auditRouter);
+
+  app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API endpoint' }));
+
+  if (IS_PRODUCTION) {
+    if (!fs.existsSync(paths.clientDist)) {
+      throw new Error(
+        `Client bundle not found at ${paths.clientDist}. Run "npm run build" before starting in production.`,
+      );
+    }
+    app.use(express.static(paths.clientDist, { index: false, maxAge: '1h' }));
+    app.get('*', (_req, res) => res.sendFile(path.join(paths.clientDist, 'index.html')));
+  } else {
+    // Vite in middleware mode gives HMR without a second port or a proxy.
+    const { createServer: createViteServer } = await import('vite');
+    const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
+    app.use(vite.middlewares);
+  }
+
+  app.use((error: Error, _req: Request, res: Response, _next: NextFunction) => {
+    if (error instanceof HttpError) {
+      return res.status(error.status).json({ error: error.message, details: error.details });
+    }
+    if (error instanceof MulterError) {
+      const message =
+        error.code === 'LIMIT_FILE_SIZE'
+          ? `Files must be ${Math.round(config.maxUploadBytes / 1024 / 1024)}MB or smaller.`
+          : error.message;
+      return res.status(400).json({ error: message });
+    }
+    if (error.message?.includes('are not allowed')) {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error('[error]', error);
+    return res.status(500).json({ error: 'Something went wrong on the server.' });
+  });
+
+  return app;
+}
+
+async function main() {
+  await initDatabase();
+  await bootstrapFromEnvironment();
+
+  const app = await createApp();
+  const server = app.listen(config.port, config.host, () => {
+    console.log('');
+    console.log(`  Escalation Pro`);
+    console.log(`  → http://localhost:${config.port}`);
+    console.log(`  → database: ${db.dialect}`);
+    console.log(`  → mode: ${IS_PRODUCTION ? 'production' : 'development'}`);
+    console.log('');
+  });
+
+  const stopSla = startSlaMonitor();
+
+  const shutdown = (signal: string) => {
+    console.log(`\n[server] ${signal} received, shutting down.`);
+    stopSla();
+    sessionStore.stopSweeper();
+    server.close(() => {
+      void db.close().then(() => process.exit(0));
+    });
+    // Do not hang forever if a connection refuses to drain.
+    setTimeout(() => process.exit(1), 8000).unref();
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+}
+
+main().catch((error) => {
+  console.error('\n[fatal] Escalation Pro failed to start:\n');
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+});

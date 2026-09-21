@@ -1,193 +1,298 @@
-# GML CRM
+# Escalation Pro
 
-GML CRM is a departmental escalation and work-item management system with:
+A departmental ticketing and escalation management system. Tickets are routed to
+teams, tracked against SLA targets, escalated when they stall, and mirrored into
+the tools your team already uses.
 
-- Queue/routing and assignment workflows
-- Department form builder
-- User + feature access control
-- Full work-item activity and audit tracking
-- Attachment upload, preview, and download
-- Reporting + filtered XLSX export
-- Live Excel workbook mirror that auto-updates on data changes
+**Accounts are created by administrators. There is no public sign-up** — the
+only exception is the one-time setup screen that creates the very first
+administrator on a brand-new database.
 
-## Core Capabilities
+---
 
-1. Work item lifecycle with history
-2. Auto-assignment by department (`round-robin` or `least-busy`)
-3. Department membership-driven queue visibility
-4. Per-user feature permissions and per-department permission template
-5. Overdue notification indicator
-6. Audit logging for create/edit/assign/status/settings/auth actions
-7. Report filters by date/time, department(s), status, creator, and handler
+## Quick start
 
-## Data Storage
+Requires Node.js 20.11 or newer. Nothing else.
 
-- Primary datastore: `db.json` (default) or PostgreSQL (`CRM_DB_MODE=sql`)
-- Uploads: `uploads/`
-- Live workbook mirror: `exports/slayr-crm-data.xlsx`
-
-Any create/edit/assignment/status update refreshes the workbook. In default mode, data is written to `db.json`; in SQL mode, data is written to PostgreSQL and mirrored locally for compatibility.
-
-## Security
-
-- Passwords are stored as `scrypt` hashes with per-user salts
-- Session cookies are `httpOnly` and `sameSite=lax`
-- Uploads are type-validated and size-limited
-- Feature access uses permission keys and department templates
-
-## Local Run
-
-Prerequisites: Node.js 20+
-
-1. Install dependencies
 ```bash
 npm install
-```
-
-2. Optional environment variable
-```bash
-SESSION_SECRET=replace-with-a-long-random-secret
-```
-
-3. Start the app
-```bash
+npm run seed     # optional: demo teams, people, and tickets
 npm run dev
 ```
 
-4. First run setup
-- Open the app and complete the setup screen.
-- Choose `Excel` or `SQL` backend mode.
-- Create the first admin account.
-- Login is blocked until setup is complete.
+Open <http://localhost:3000>.
 
-5. Type-check
+- If you skipped the seed, the setup screen asks you to create the first
+  administrator account.
+- If you ran the seed, sign in as `avery@example.com` / `ChangeMe123!`.
+  Six other demo accounts share that password; `npm run seed` prints them all.
+
+There is no database to install and no configuration to write. The app creates
+an embedded SQLite database under `data/` on first boot.
+
+To start over: `npm run reset`.
+
+---
+
+## Running in production
+
 ```bash
-npm run lint
+npm run build
+npm start
 ```
 
-## Docker SQL Setup (Recommended For Multi-PC)
+`npm run build` produces `dist/client` (the React bundle) and
+`dist/server/index.mjs` (the API). `npm start` serves both from one process on
+one port.
 
-Use Docker to host PostgreSQL once, then point every CRM instance to that same DB.
+### Docker
 
-1. Start PostgreSQL container
 ```bash
+# App + PostgreSQL
 docker compose up -d
+
+# App alone, on the embedded SQLite database
+docker compose up -d app
 ```
 
-2. Add CRM SQL env vars (see `.env.example`)
+### PostgreSQL
+
+Set `DATABASE_URL` and restart. The schema is created automatically:
+
 ```bash
-CRM_DB_MODE=sql
-CRM_SQL_HOST=localhost
-CRM_SQL_PORT=5432
-CRM_SQL_DATABASE=crm
-CRM_SQL_USER=crm
-CRM_SQL_PASSWORD=crm
+DATABASE_URL=postgresql://user:pass@host:5432/escalation_pro npm start
 ```
 
-3. Start CRM
-```bash
-npm run dev
+Both engines run the same schema and the same test suite. SQLite suits a single
+instance; use PostgreSQL when you need several instances or an external backup
+story.
+
+### Hosted deployment
+
+`render.yaml` provisions a web service and a managed PostgreSQL database.
+Point Render at this repository as a Blueprint and it deploys as-is.
+
+Set `SESSION_COOKIE_SECURE=true` behind any HTTPS proxy. Leave it `false` on
+plain HTTP, or browsers will refuse the session cookie and nobody can sign in.
+
+See `.env.example` for every supported variable. All of them are optional.
+
+---
+
+## How it works
+
+### Tickets
+
+Each ticket carries a reference (`ESC-1042`), a status, a priority, a type, an
+owning team, an assignee, and a full timeline of comments and system events.
+
+| Status | Meaning |
+| --- | --- |
+| `open` | Raised, not yet being worked |
+| `in_progress` | Someone is actively on it |
+| `pending` | Blocked, usually waiting on a third party |
+| `resolved` | Fixed, awaiting confirmation |
+| `closed` | Finished |
+
+Priorities are `urgent`, `high`, `normal`, and `low`. Types are `incident`,
+`request`, `question`, `problem`, and `escalation`.
+
+Comments are either public replies or **internal notes**, which are hidden from
+anyone without the internal-notes permission and are never sent to Slack,
+Microsoft Teams, or Linear.
+
+### Routing
+
+Each team chooses how new tickets find an owner:
+
+- **Manual** — the ticket stays unassigned until someone picks it up.
+- **Round robin** — each new ticket goes to the next member in turn.
+- **Least busy** — whichever member has the fewest open tickets.
+
+Only active members with the agent role or above are eligible. Viewers never
+receive work.
+
+### SLA
+
+Teams set a first-response target and a resolution target. The due date is
+derived from the resolution target, scaled by priority:
+
+| Priority | Multiplier |
+| --- | --- |
+| Urgent | ×0.25 |
+| High | ×0.5 |
+| Normal | ×1 |
+| Low | ×2 |
+
+A team with a 24-hour resolution target therefore gives an urgent ticket six
+hours. A background job scans for breaches every five minutes and notifies
+watchers once per breach.
+
+The first-response clock stops on the first public reply from someone other
+than the requester.
+
+### Escalation
+
+Escalating a ticket raises its level, bumps its priority, records the reason as
+an internal note, and notifies every connected channel. Above the configured
+priority floor it can also open a tracked issue in Linear.
+
+---
+
+## Roles and permissions
+
+| Role | Intended for |
+| --- | --- |
+| **Administrator** | Full access, including integrations, settings, and the audit log |
+| **Manager** | Runs queues and people; everything except integrations and system settings |
+| **Agent** | Works tickets in their assigned teams |
+| **Viewer** | Read-only access to tickets in their assigned teams |
+
+Individual permissions can be granted on top of a role from the People page. A
+role's own permissions cannot be revoked — change the role instead.
+
+Users without `tickets.view_all` see only tickets in their teams, plus any
+ticket they raised, were assigned, or created.
+
+The API enforces every permission independently of the UI. Hiding a button is a
+convenience, not the security boundary.
+
+---
+
+## Integrations
+
+Configure these in **Integrations** while signed in as an administrator. Every
+credential is encrypted with AES-256-GCM before it is stored, and each provider
+has a **Test connection** button that calls the real service and reports exactly
+what came back.
+
+### Slack
+
+Either method works:
+
+- **Incoming webhook** — create one at Slack → Your apps → Incoming Webhooks,
+  then paste the `https://hooks.slack.com/services/...` URL.
+- **Bot token** — create an app with the `chat:write` scope, then supply the
+  `xoxb-...` token and a channel. This lets you change channel later without a
+  new URL.
+
+Messages are sent as Block Kit, with a priority-coloured bar and a button that
+opens the ticket.
+
+### Microsoft Teams
+
+In Teams: channel → **⋯** → **Workflows** → *Post to a channel when a webhook
+request is received*. Paste the generated URL.
+
+Microsoft is retiring the older Office 365 connectors in favour of Workflows,
+and the two accept different payloads. Escalation Pro detects which one your URL
+needs from its host and sends an Adaptive Card or a MessageCard accordingly. You
+can override the choice if detection gets it wrong.
+
+### Linear
+
+Create a personal API key at Linear → Settings → API, then choose the Linear
+team that mirrored issues should be filed against.
+
+- Ticket priority maps onto Linear's scale (urgent → 1, high → 2, and so on).
+- The issue description links back to the ticket, and public replies are
+  mirrored as Linear comments.
+- Set a **webhook secret** and point a Linear webhook at
+  `https://your-host/api/webhooks/linear` to sync issue status back. Deliveries
+  are verified with an HMAC-SHA256 signature; unsigned requests are rejected.
+
+### Email (SMTP)
+
+Standard SMTP with STARTTLS on port 587 or implicit TLS on port 465. Notifies
+the assignee, the requester, and anyone watching the ticket.
+
+### Delivery log
+
+Every outbound notification is recorded with its status code and any error, and
+the last 60 are shown at the bottom of the Integrations page. An integration
+failure never blocks a ticket update — it is logged and the update proceeds.
+
+---
+
+## Reports
+
+The Reports page covers open and overdue volume, workload per assignee and per
+team, created-versus-resolved volume over time, average first response, average
+resolution, and SLA compliance.
+
+**Export XLSX** produces a real workbook with three sheets — Tickets, Comments,
+and History — scoped to the selected window and to what you have permission to
+see.
+
+---
+
+## Project layout
+
+```
+server/
+  index.ts              Express app, middleware, static serving
+  config.ts             Environment and paths
+  bootstrap.ts          First-administrator creation
+  permissions.ts        Roles and the permission catalogue
+  db/
+    driver.ts           SQLite and PostgreSQL drivers behind one interface
+    schema.ts           Portable schema, applied on boot
+    seed.ts             Demo data
+  routes/               One module per resource
+  repositories/         Data access
+  integrations/         Slack, Microsoft Teams, Linear, SMTP, dispatcher
+  jobs/sla-monitor.ts   Periodic breach detection
+shared/types.ts         Types shared by the API and the client
+src/                    React client (Vite, Tailwind, React Router)
 ```
 
-4. Verify backend mode
-- In setup flow, choose `SQL` mode.
-- Or if already initialized, keep `CRM_DB_MODE=sql` and restart the server.
+### Scripts
 
-## Docker Full Stack (App + SQL)
+| Command | Does |
+| --- | --- |
+| `npm run dev` | Dev server with hot reload on one port |
+| `npm run build` | Build the client and the server |
+| `npm start` | Run the production build |
+| `npm run seed` | Load demo data (no-op if users already exist) |
+| `npm run reset` | Delete the local database and re-seed |
+| `npm run typecheck` | Type-check client and server |
 
-Run the CRM backend/frontend and PostgreSQL together in containers:
+---
 
-1. Set environment values (recommended: create `.env` from `.env.example`)
-```bash
-SESSION_SECRET=replace-with-a-long-random-secret
-CRM_SQL_DATABASE=crm
-CRM_SQL_USER=crm
-CRM_SQL_PASSWORD=crm
-```
+## Security notes
 
-2. Build and start stack
-```bash
-docker compose up -d --build
-```
+- Passwords are hashed with scrypt (N=16384) and a per-user salt.
+- Sessions live in the database, not in process memory, so they survive
+  restarts and work across multiple instances. The session ID is rotated on
+  sign-in to prevent fixation.
+- Suspending a user, deleting them, or resetting their password ends their
+  sessions immediately. Changing your own password ends your *other* sessions
+  but keeps the one you are using.
+- Integration credentials are encrypted at rest and are never returned to the
+  browser — the UI receives only a masked preview.
+- Uploads are restricted to an allow-list of types, stored under generated
+  names, and served with `X-Content-Type-Options: nosniff`. SVGs are always
+  sent as downloads rather than rendered inline.
+- The system refuses to remove or demote the last active administrator.
+- Every privileged action is written to an append-only audit log with the
+  actor, a summary, and the source IP.
 
-3. Open CRM
-- `http://localhost:3000`
+## Troubleshooting
 
-4. Stop stack
-```bash
-docker compose down
-```
+**Port 3000 is in use** — start with `PORT=3001 npm run dev`.
 
-Persistent data in Docker volumes:
-- PostgreSQL data: `crm_postgres_data`
-- Attachments: `crm_uploads`
-- Excel exports/live workbook: `crm_exports`
+**Signing in does nothing, or the session drops immediately** — almost always
+`SESSION_COOKIE_SECURE=true` on a plain-HTTP origin. Set it to `false` unless
+you are behind HTTPS.
 
-## Public URL Deployment (No Local IP Work)
+**"Could not connect to PostgreSQL"** — the message includes the underlying
+reason. Unset `DATABASE_URL` to fall back to SQLite and confirm the rest of the
+app works first.
 
-If you do not want to manage local network IPs, deploy to Render and use a permanent public URL.
+**An integration test fails** — the error text comes straight from the
+provider. `invalid_token` means the credential is wrong; a timeout usually means
+egress to that host is blocked.
 
-This repo includes `render.yaml` so Render can create:
-- Web service for the CRM app
-- Managed PostgreSQL database
-
-Steps:
-
-1. Push this project to GitHub.
-2. In Render, create a new Blueprint and select the repo.
-3. Render reads `render.yaml`, provisions services, and deploys automatically.
-4. Open the generated URL (example: `https://escalation-pro-crm.onrender.com`).
-
-Notes:
-- Set up/login and CRM features work at the hosted URL.
-- SQL is the primary datastore in cloud mode (`CRM_DB_MODE=sql`).
-- `SESSION_SECRET` is auto-generated by Render.
-
-## Running On Another PC With Full Functionality
-
-To use one shared dataset from multiple PCs:
-
-1. Host full stack on one machine/server with `docker compose up -d --build`.
-2. From other PCs, open `http://<host-ip>:3000` in browser.
-3. Ensure firewall/network allows inbound app port `3000`.
-4. If you choose split deployment instead, keep SQL on host and point remote CRM instances to the same SQL host.
-
-All CRM instances will read/write the same shared SQL state, so users on different PCs see the same work items, users, departments, reports, and settings.
-
-## Reporting and Export
-
-Use the Reports page to:
-
-1. Filter by `from/to` date-time
-2. Filter by status
-3. Filter by creator or handler
-4. Select one or more departments
-5. Export filtered work item dataset as XLSX
-6. Download the full live workbook mirror (`slayr-crm-data.xlsx`)
-
-Export reliability notes:
-
-1. `Export Filtered XLSX` now returns a real `.xlsx` file (never HTML fallback content).
-2. Exported workbook includes: `WorkItemReport`, `AuditLog`, `WorkItemHistory`, `Notes`, `Attachments`, `Users`, `Departments`, and `Settings`.
-
-## Python Exporter (Optional)
-
-If you want a standalone exporter outside the web UI:
-
-1. Install Python dependency:
-```bash
-pip install -r scripts/requirements-reports.txt
-```
-2. Run exporter:
-```bash
-python scripts/report_export.py
-```
-3. Optional custom output path:
-```bash
-python scripts/report_export.py --db db.json --out exports/slayr-crm-python-export.xlsx
-```
-
-## Notes
-
-- If port `3000` is already in use, stop the existing process before starting GML CRM.
-- If WebSocket port `24678` is in use, another dev server instance may already be running.
+**Lost the only administrator password** — stop the app, set
+`BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD`, and start it against an
+empty database; or reset the password directly in the `users` table.
