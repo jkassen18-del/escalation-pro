@@ -1,5 +1,20 @@
 # Deploying
 
+## Live deployment
+
+| | |
+| --- | --- |
+| URL | https://escalation-pro.vercel.app |
+| Host | Vercel (Hobby), functions in `lhr1` |
+| Database | Supabase Postgres, `escalation_pro` schema, via the transaction pooler |
+| Attachments | Stored in Postgres (no persistent disk on serverless) |
+| SLA sweep | Daily at 07:00 UTC, the most a Hobby cron allows |
+
+Verified by `.github/workflows/smoke.yml`, which can be re-run at any time
+against any URL from the Actions tab.
+
+---
+
 The app runs two ways. Pick whichever matches what you have.
 
 | | Needs | Persistent uploads | Best for |
