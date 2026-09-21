@@ -1,6 +1,7 @@
 import { db, nextTicketNumber, parseJson, placeholders } from '../db/index.ts';
 import { randomId } from '../lib/crypto.ts';
 import type {
+  RichTextFormat,
   Ticket,
   TicketAttachment,
   TicketComment,
@@ -20,6 +21,7 @@ interface TicketRow {
   number: number;
   subject: string;
   description: string;
+  description_format: RichTextFormat | null;
   team_id: string | null;
   team_name: string | null;
   requester_id: string | null;
@@ -71,6 +73,7 @@ function mapTicket(row: TicketRow, prefix: string, watcherIds: string[], links: 
     reference: referenceOf(prefix, Number(row.number)),
     subject: row.subject,
     description: row.description,
+    descriptionFormat: (row.description_format ?? 'text') as RichTextFormat,
     teamId: row.team_id,
     teamName: row.team_name,
     requesterId: row.requester_id,
@@ -333,6 +336,7 @@ export async function loadTicketDetail(
     authorId: row.author_id ? String(row.author_id) : null,
     authorName: String(row.author_name ?? 'Unknown'),
     body: String(row.body),
+    bodyFormat: (String(row.body_format ?? 'text') as RichTextFormat),
     isInternal: Number(row.is_internal) === 1,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
@@ -357,6 +361,7 @@ export async function loadTicketDetail(
 export interface CreateTicketInput {
   subject: string;
   description: string;
+  descriptionFormat: RichTextFormat;
   teamId: string | null;
   requesterId: string | null;
   assigneeId: string | null;
@@ -375,14 +380,16 @@ export async function insertTicket(input: CreateTicketInput): Promise<{ id: stri
   const now = new Date().toISOString();
 
   await db.run(
-    `INSERT INTO tickets (id, number, subject, description, team_id, requester_id, assignee_id, status,
-       priority, type, source, tags, escalation_level, due_at, created_by, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
+    `INSERT INTO tickets (id, number, subject, description, description_format, team_id, requester_id,
+       assignee_id, status, priority, type, source, tags, escalation_level, due_at, created_by,
+       created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
     [
       id,
       number,
       input.subject,
       input.description,
+      input.descriptionFormat,
       input.teamId,
       input.requesterId,
       input.assigneeId,

@@ -63,6 +63,7 @@ const TABLES: string[] = [
     number INTEGER NOT NULL UNIQUE,
     subject TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
+    description_format TEXT NOT NULL DEFAULT 'text',
     team_id TEXT REFERENCES teams(id) ON DELETE SET NULL,
     requester_id TEXT REFERENCES users(id) ON DELETE SET NULL,
     assignee_id TEXT REFERENCES users(id) ON DELETE SET NULL,
@@ -86,6 +87,7 @@ const TABLES: string[] = [
     ticket_id TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
     author_id TEXT REFERENCES users(id) ON DELETE SET NULL,
     body TEXT NOT NULL,
+    body_format TEXT NOT NULL DEFAULT 'text',
     is_internal INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -242,7 +244,17 @@ const INDEXES: string[] = [
  * clause and rejects it as a syntax error. Re-running is handled by treating
  * "already exists" as success, which both engines report.
  */
-const ADDITIVE_COLUMNS: string[] = [`ALTER TABLE ticket_attachments ADD COLUMN content TEXT`];
+const ADDITIVE_COLUMNS: string[] = [
+  `ALTER TABLE ticket_attachments ADD COLUMN content TEXT`,
+  /*
+   * Rich text arrived after plain text, so every existing row holds plain
+   * text and must keep rendering as such. The format travels with the value
+   * rather than being inferred: guessing by sniffing for tags would mangle a
+   * plain-text description that happens to mention <html>.
+   */
+  `ALTER TABLE tickets ADD COLUMN description_format TEXT NOT NULL DEFAULT 'text'`,
+  `ALTER TABLE ticket_comments ADD COLUMN body_format TEXT NOT NULL DEFAULT 'text'`,
+];
 
 export async function migrate(driver: DbDriver): Promise<void> {
   for (const statement of TABLES) {

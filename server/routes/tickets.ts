@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { db } from '../db/index.ts';
 import { randomId } from '../lib/crypto.ts';
+import { isEffectivelyEmpty, sanitizeRichText } from '../lib/rich-text.ts';
+import { extractInlineImages } from '../lib/inline-images.ts';
 import {
   asyncRoute,
   badRequest,
@@ -150,7 +152,18 @@ ticketsRouter.post(
     const settings = await getSettings();
 
     const subject = requireString(req.body?.subject, 'Subject', { max: 200 });
-    const description = optionalString(req.body?.description, 20_000) ?? '';
+
+    /*
+     * Rich text arrives as HTML. It is sanitised here rather than trusted from
+     * the editor, because a request never has to come from the editor at all.
+     * The larger cap reflects markup overhead, not more prose - and inline
+     * images are pulled out into attachments straight after the insert.
+     */
+    const isHtml = req.body?.descriptionFormat === 'html';
+    const rawDescription = optionalString(req.body?.description, isHtml ? 400_000 : 20_000) ?? '';
+    const description = isHtml ? sanitizeRichText(rawDescription) : rawDescription;
+    const descriptionFormat: 'text' | 'html' = isHtml && !isEffectivelyEmpty(description) ? 'html' : 'text';
+    const storedDescription = descriptionFormat === 'html' ? description : isHtml ? '' : description;
     const teamId = optionalString(req.body?.teamId, 60) ?? settings.defaultTeamId;
     const priority = requireEnum(req.body?.priority ?? settings.defaultPriority, TICKET_PRIORITIES, 'Priority');
     const type = requireEnum(req.body?.type ?? 'request', TICKET_TYPES, 'Type');
@@ -174,7 +187,8 @@ ticketsRouter.post(
 
       const created = await insertTicket({
         subject,
-        description,
+        description: storedDescription,
+        descriptionFormat,
         teamId: team?.id ?? null,
         requesterId: optionalString(req.body?.requesterId, 60) ?? user.id,
         assigneeId,
@@ -186,6 +200,16 @@ ticketsRouter.post(
         dueAt,
         createdBy: user.id,
       });
+
+      if (descriptionFormat === 'html') {
+        const rewritten = await extractInlineImages(storedDescription, {
+          ticketId: created.id,
+          uploadedBy: user.id,
+        });
+        if (rewritten !== storedDescription) {
+          await db.run(`UPDATE tickets SET description = ? WHERE id = ?`, [rewritten, created.id]);
+        }
+      }
 
       await recordEvent(created.id, user.id, 'created', null, null, subject);
       if (assigneeId) {
@@ -551,7 +575,12 @@ ticketsRouter.post(
     if (!ticket) throw notFound('That ticket does not exist.');
     if (!canSeeTicket(user, ticket)) throw forbidden('You do not have access to this ticket.');
 
-    const body = requireString(req.body?.body, 'Comment', { max: 20_000 });
+    const commentIsHtml = req.body?.bodyFormat === 'html';
+    const rawBody = requireString(req.body?.body, 'Comment', { max: commentIsHtml ? 400_000 : 20_000 });
+    const cleanBody = commentIsHtml ? sanitizeRichText(rawBody) : rawBody;
+    if (commentIsHtml && isEffectivelyEmpty(cleanBody)) throw badRequest('Write something before posting.');
+    const body = cleanBody;
+    const bodyFormat: 'text' | 'html' = commentIsHtml ? 'html' : 'text';
     const isInternal = req.body?.isInternal === true;
     if (isInternal && !can(user, 'tickets.comment_internal')) {
       throw forbidden('You cannot post internal notes.');
@@ -560,10 +589,21 @@ ticketsRouter.post(
     const now = new Date().toISOString();
     const commentId = randomId();
     await db.run(
-      `INSERT INTO ticket_comments (id, ticket_id, author_id, body, is_internal, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [commentId, ticket.id, user.id, body, isInternal ? 1 : 0, now, now],
+      `INSERT INTO ticket_comments (id, ticket_id, author_id, body, body_format, is_internal, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [commentId, ticket.id, user.id, body, bodyFormat, isInternal ? 1 : 0, now, now],
     );
+
+    /*
+     * Only after the comment row exists: each extracted image is an attachment
+     * that references this comment, and Postgres enforces that foreign key.
+     */
+    if (bodyFormat === 'html') {
+      const rewritten = await extractInlineImages(body, { ticketId: ticket.id, commentId, uploadedBy: user.id });
+      if (rewritten !== body) {
+        await db.run(`UPDATE ticket_comments SET body = ? WHERE id = ?`, [rewritten, commentId]);
+      }
+    }
 
     // The first public reply from anyone other than the requester stops the
     // first-response SLA clock.

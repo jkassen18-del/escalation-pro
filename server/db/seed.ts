@@ -113,6 +113,7 @@ async function seed(): Promise<void> {
     const { id } = await insertTicket({
       subject: spec.subject,
       description: spec.description,
+      descriptionFormat: 'text',
       teamId,
       requesterId: requesterPool[index % requesterPool.length],
       assigneeId: spec.status === 'open' && index % 4 === 0 ? null : assigneeId,

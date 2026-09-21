@@ -104,7 +104,7 @@ export const api = {
     create: (body: Record<string, unknown>) => post<{ ticket: Ticket }>('/tickets', body),
     update: (id: string, body: Record<string, unknown>) => patch<{ ticket: Ticket }>(`/tickets/${id}`, body),
     remove: (id: string) => del<{ ok: true }>(`/tickets/${id}`),
-    comment: (id: string, body: { body: string; isInternal: boolean }) =>
+    comment: (id: string, body: { body: string; bodyFormat?: 'text' | 'html'; isInternal: boolean }) =>
       post<{ ticket: TicketDetail }>(`/tickets/${id}/comments`, body),
     escalate: (id: string, body: { reason: string }) => post<{ ticket: Ticket }>(`/tickets/${id}/escalate`, body),
     watch: (id: string, watch: boolean) => post<{ ticket: Ticket }>(`/tickets/${id}/watch`, { watch }),

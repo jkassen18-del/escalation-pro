@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import cookieParser from 'cookie-parser';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import session from 'express-session';
@@ -257,7 +258,25 @@ async function main() {
   process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-if (!IS_SERVERLESS) {
+/**
+ * Start a server only when this file is what was run.
+ *
+ * Importing it must not have side effects: tests and tooling import
+ * `createApp` and `getServerlessApp` from here, and booting a listener behind
+ * their backs binds a port they never asked for and keeps the process alive
+ * after their work is done.
+ */
+function isEntryModule(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return import.meta.url === pathToFileURL(entry).href;
+  } catch {
+    return false;
+  }
+}
+
+if (!IS_SERVERLESS && isEntryModule()) {
   main().catch((error) => {
     console.error('\n[fatal] Escalation Pro failed to start:\n');
     console.error(error instanceof Error ? error.message : error);

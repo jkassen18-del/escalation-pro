@@ -76,6 +76,7 @@ export interface TicketComment {
   authorId: string | null;
   authorName: string;
   body: string;
+  bodyFormat: RichTextFormat;
   /** Internal notes are hidden from users without the internal-notes permission. */
   isInternal: boolean;
   createdAt: string;
@@ -123,6 +124,7 @@ export interface Ticket {
   reference: string;
   subject: string;
   description: string;
+  descriptionFormat: RichTextFormat;
   teamId: string | null;
   teamName: string | null;
   requesterId: string | null;
@@ -181,6 +183,12 @@ export interface Notification {
   readAt: string | null;
   createdAt: string;
 }
+
+/**
+ * How a stored body should be rendered. Values written before rich text
+ * existed are plain text, and stay that way.
+ */
+export type RichTextFormat = 'text' | 'html';
 
 export interface AppSettings {
   organizationName: string;

@@ -5,7 +5,8 @@ import { api, ApiError } from '@/lib/api';
 import { PRIORITY_LABELS, TYPE_LABELS } from '@/lib/format';
 import { useToast } from '@/components/ui/Toast';
 import { Button } from '@/components/ui/Button';
-import { Field, Input, Select, Textarea } from '@/components/ui/Field';
+import { Field, Input, Select } from '@/components/ui/Field';
+import { RichTextEditor } from '@/components/ui/RichTextEditor';
 import { TICKET_PRIORITIES, TICKET_TYPES, type Team } from '@shared/types';
 import { useDocumentTitle } from '@/state/branding';
 
@@ -60,6 +61,8 @@ export function NewTicketPage() {
       const { ticket } = await api.tickets.create({
         subject: form.subject,
         description: form.description,
+        // The editor always produces HTML; the server decides what to store.
+        descriptionFormat: 'html',
         teamId: form.teamId || null,
         assigneeId: form.assigneeId || null,
         priority: form.priority,
@@ -111,14 +114,14 @@ export function NewTicketPage() {
 
         <Field
           label="Description"
-          htmlFor="description"
-          hint="What happened, who is affected, and anything already tried."
+          hint="What happened, who is affected, and anything already tried. Paste screenshots straight in."
         >
-          <Textarea
-            id="description"
+          <RichTextEditor
             value={form.description}
-            onChange={set('description')}
-            rows={6}
+            onChange={(html) => setForm((current) => ({ ...current, description: html }))}
+            onError={(message) => toast.error(message)}
+            minHeight={150}
+            ariaLabel="Description"
             placeholder="Customers in the EU region see a 502 at the payment step, starting around 09:40 UTC…"
           />
         </Field>

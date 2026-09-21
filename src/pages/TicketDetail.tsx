@@ -28,6 +28,8 @@ import { useAuth } from '@/state/auth';
 import { useToast } from '@/components/ui/Toast';
 import { Button } from '@/components/ui/Button';
 import { Field, Select, Textarea } from '@/components/ui/Field';
+import { RichText } from '@/components/ui/RichText';
+import { RichTextEditor } from '@/components/ui/RichTextEditor';
 import { PriorityBadge, Reference, StatusBadge } from '@/components/ui/Badge';
 import { Avatar, UserChip } from '@/components/ui/Avatar';
 import { ErrorPane, LoadingPane } from '@/components/ui/Feedback';
@@ -293,12 +295,17 @@ function Conversation({ ticket, onChanged }: { ticket: TicketDetailType; onChang
   const [files, setFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  /** `<p><br></p>` is what an emptied editor leaves behind, so look at what renders. */
+  const hasText = body.replace(/<[^>]*>/g, '').replace(/&nbsp;/gi, ' ').trim().length > 0;
+  const hasImage = /<img\b/i.test(body);
+  const hasBody = hasText || hasImage;
+
   const submit = async () => {
-    if (!body.trim() && files.length === 0) return;
+    if (!hasBody && files.length === 0) return;
     setSending(true);
     try {
-      if (body.trim()) {
-        await api.tickets.comment(ticket.id, { body: body.trim(), isInternal: internal });
+      if (hasBody) {
+        await api.tickets.comment(ticket.id, { body, bodyFormat: 'html', isInternal: internal });
       }
       if (files.length) {
         await api.tickets.upload(ticket.id, files);
@@ -333,9 +340,11 @@ function Conversation({ ticket, onChanged }: { ticket: TicketDetailType; onChang
             {shortDateTime(ticket.createdAt)}
           </time>
         </header>
-        <p className="text-sm leading-relaxed whitespace-pre-wrap">
-          {ticket.description || <span className="text-subtle italic">No description was provided.</span>}
-        </p>
+        <RichText
+          value={ticket.description}
+          format={ticket.descriptionFormat}
+          empty={<span className="text-sm text-subtle italic">No description was provided.</span>}
+        />
 
         {unattached.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-1.5 border-t pt-3">
@@ -375,7 +384,7 @@ function Conversation({ ticket, onChanged }: { ticket: TicketDetailType; onChang
                   {shortDateTime(entry.comment.createdAt)}
                 </time>
               </header>
-              <p className="text-sm leading-relaxed whitespace-pre-wrap">{entry.comment.body}</p>
+              <RichText value={entry.comment.body} format={entry.comment.bodyFormat} />
               {entry.comment.attachments.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {entry.comment.attachments.map((attachment) => (
@@ -398,16 +407,14 @@ function Conversation({ ticket, onChanged }: { ticket: TicketDetailType; onChang
       </div>
 
       <div className="mt-5 rounded-md border surface">
-        <Textarea
+        <RichTextEditor
           value={body}
-          onChange={(event) => setBody(event.target.value)}
+          onChange={setBody}
+          onError={(message) => toast.error(message)}
+          minHeight={96}
+          className="rounded-b-none border-0"
+          ariaLabel={internal ? 'Internal note' : 'Reply'}
           placeholder={internal ? 'Write an internal note, visible only to your team…' : 'Write a reply…'}
-          rows={4}
-          className="rounded-b-none border-0 focus:ring-0"
-          onKeyDown={(event) => {
-            // Cmd/Ctrl+Enter submits, matching the convention in chat tools.
-            if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void submit();
-          }}
         />
 
         {files.length > 0 && (
@@ -463,7 +470,7 @@ function Conversation({ ticket, onChanged }: { ticket: TicketDetailType; onChang
             variant="primary"
             size="sm"
             loading={sending}
-            disabled={!body.trim() && files.length === 0}
+            disabled={!hasBody && files.length === 0}
             onClick={submit}
           >
             <Send className="size-3.5" />
