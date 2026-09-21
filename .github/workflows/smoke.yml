@@ -1,0 +1,98 @@
+name: Deployment smoke test
+
+# Confirms a live deployment can actually reach its database and serve the app.
+# Run it after deploying, or on demand against any URL.
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: Base URL to test
+        required: true
+        default: https://escalation-pro.vercel.app
+  push:
+    branches: ['**']
+    paths: ['.github/workflows/smoke.yml']
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve target
+        id: target
+        run: echo "url=${{ github.event.inputs.base_url || 'https://escalation-pro.vercel.app' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Health check
+        run: |
+          set -euo pipefail
+          URL="${{ steps.target.outputs.url }}"
+          echo "Testing $URL"
+
+          # Cold starts can take a few seconds on a serverless platform.
+          for i in $(seq 1 10); do
+            CODE=$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 30 "$URL/health" || echo 000)
+            echo "attempt $i -> HTTP $CODE"
+            [ "$CODE" = "200" ] && break
+            sleep 6
+          done
+
+          echo "--- /health ---"
+          cat /tmp/health.json; echo
+
+          STATUS=$(jq -r '.status // "missing"' /tmp/health.json)
+          DB=$(jq -r '.database // "missing"' /tmp/health.json)
+
+          if [ "$STATUS" != "ok" ]; then
+            echo "::error::Health check failed. The database is unreachable."
+            echo "::error::Most often the wrong Supabase pooler host in DATABASE_URL."
+            exit 1
+          fi
+          echo "Healthy, database driver: $DB"
+
+      - name: First-run setup is reachable and gated
+        run: |
+          set -euo pipefail
+          URL="${{ steps.target.outputs.url }}"
+
+          curl -sS --max-time 30 "$URL/api/auth/bootstrap" -o /tmp/boot.json
+          echo "--- /api/auth/bootstrap ---"
+          cat /tmp/boot.json; echo
+
+          SETUP=$(jq -r '.setupRequired' /tmp/boot.json)
+          TOKEN=$(jq -r '.setupTokenRequired' /tmp/boot.json)
+          REG=$(jq -r '.registrationOpen' /tmp/boot.json)
+
+          [ "$REG" = "false" ] || { echo "::error::Public registration is open"; exit 1; }
+          echo "Public sign-up is closed, as expected."
+
+          if [ "$SETUP" = "true" ]; then
+            [ "$TOKEN" = "true" ] || echo "::warning::Setup is open without a token. Set SETUP_TOKEN before sharing this URL."
+            echo "Setup screen is available - the admin account has not been created yet."
+          else
+            echo "Setup already completed; the admin account exists."
+          fi
+
+      - name: Setup rejects a wrong token
+        if: success()
+        run: |
+          set -euo pipefail
+          URL="${{ steps.target.outputs.url }}"
+          SETUP=$(jq -r '.setupRequired' /tmp/boot.json)
+          if [ "$SETUP" != "true" ]; then echo "Already set up; skipping."; exit 0; fi
+
+          CODE=$(curl -sS -o /tmp/bad.json -w '%{http_code}' --max-time 30 \
+            -X POST "$URL/api/auth/setup" -H 'Content-Type: application/json' \
+            -d '{"name":"Smoke","email":"smoke@example.com","password":"NotTheRightToken1","organizationName":"X","setupToken":"definitely-wrong"}')
+          echo "wrong token -> HTTP $CODE"
+          [ "$CODE" = "403" ] || { echo "::error::Expected 403 for a wrong setup token, got $CODE"; cat /tmp/bad.json; exit 1; }
+          echo "Setup correctly refuses an incorrect token."
+
+      - name: Static assets are served
+        run: |
+          set -euo pipefail
+          URL="${{ steps.target.outputs.url }}"
+          CODE=$(curl -sS -o /tmp/index.html -w '%{http_code}' --max-time 30 "$URL/")
+          echo "GET / -> HTTP $CODE"
+          [ "$CODE" = "200" ] || { echo "::error::Frontend did not load"; exit 1; }
+          grep -q '<div id="root">' /tmp/index.html || { echo "::error::index.html is not the app shell"; exit 1; }
+          grep -qE '/assets/index-.*\.js' /tmp/index.html || { echo "::error::No bundled JS referenced"; exit 1; }
+          echo "Frontend shell and bundle reference present."
