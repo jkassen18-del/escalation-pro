@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { config } from '../config.ts';
+import { SESSION_COOKIE_NAME, config } from '../config.ts';
 import { db } from '../db/index.ts';
 import { timingSafeCompare, verifyAgainstDummy, verifyPassword } from '../lib/crypto.ts';
 import { HttpError, asyncRoute, badRequest, requireString, unauthorized } from '../lib/http.ts';
@@ -168,7 +168,7 @@ authRouter.post(
       });
     }
     req.session.destroy(() => {
-      res.clearCookie('escalation.sid', { path: '/', sameSite: 'lax', secure: config.cookieSecure });
+      res.clearCookie(SESSION_COOKIE_NAME, { path: '/', sameSite: 'lax', secure: config.cookieSecure });
       res.json({ ok: true });
     });
   }),

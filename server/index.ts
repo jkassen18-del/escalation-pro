@@ -4,7 +4,7 @@ import cookieParser from 'cookie-parser';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import session from 'express-session';
 import { MulterError } from 'multer';
-import { config, dbConfig, IS_PRODUCTION, IS_SERVERLESS, paths } from './config.ts';
+import { config, dbConfig, IS_PRODUCTION, IS_SERVERLESS, SESSION_COOKIE_NAME, paths } from './config.ts';
 import { db, initDatabase } from './db/index.ts';
 import { bootstrapFromEnvironment } from './bootstrap.ts';
 import { asyncRoute, HttpError } from './lib/http.ts';
@@ -44,10 +44,44 @@ export async function createApp() {
   app.use(express.urlencoded({ extended: true, limit: '2mb' }));
   app.use(cookieParser());
 
+  /**
+   * express-session reads its store on every request that carries a session
+   * cookie, and that store is the database - so the connection has to be open
+   * before the session middleware runs, not after it.
+   *
+   * Mounting the readiness check only on /api was not enough: on a cold
+   * serverless instance a returning visitor's very first request went through
+   * express-session first, db.get() threw "Database has not been initialised",
+   * and the generic handler answered an opaque 500. Sign-in failed on the
+   * first attempt and worked on the retry, which is exactly what it looked
+   * like from the browser.
+   *
+   * Static assets are deliberately left ungated so a database outage degrades
+   * the app rather than blanking it, and /health stays reachable so it can
+   * still report the cause.
+   */
+  app.use(
+    asyncRoute(async (req, _res, next) => {
+      const needsDatabase =
+        req.path.startsWith('/api') || req.headers.cookie?.includes(`${SESSION_COOKIE_NAME}=`);
+      if (req.path === '/health' || !needsDatabase) return next();
+
+      try {
+        await ensureDatabaseReady();
+      } catch (error) {
+        throw new HttpError(
+          503,
+          `The database is unavailable: ${error instanceof Error ? error.message : 'unknown error'}`,
+        );
+      }
+      next();
+    }),
+  );
+
   sessionStore.startSweeper();
   app.use(
     session({
-      name: 'escalation.sid',
+      name: SESSION_COOKIE_NAME,
       secret: config.sessionSecret,
       store: sessionStore,
       resave: false,
@@ -77,23 +111,6 @@ export async function createApp() {
       });
     }
   });
-
-  // Everything past this point needs a working database. Report an outage as
-  // a 503 naming the cause, rather than a generic 500 that says nothing.
-  app.use(
-    '/api',
-    asyncRoute(async (_req, _res, next) => {
-      try {
-        await ensureDatabaseReady();
-      } catch (error) {
-        throw new HttpError(
-          503,
-          `The database is unavailable: ${error instanceof Error ? error.message : 'unknown error'}`,
-        );
-      }
-      next();
-    }),
-  );
 
   app.use('/api/auth', authRouter);
   app.use('/api/webhooks', webhooksRouter);

@@ -17,6 +17,7 @@
     "reset": "node -e \"require('fs').rmSync('data',{recursive:true,force:true})\" && npm run seed",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.server.json",
     "lint": "npm run typecheck",
+    "test": "tsx --test tests/*.test.ts",
     "build:function": "esbuild server/serverless.ts --bundle --platform=node --format=esm --target=node22 --packages=external --outfile=dist/function/index.mjs"
   },
   "dependencies": {

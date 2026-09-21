@@ -10,6 +10,12 @@ const ROOT = process.cwd();
 export const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 /**
+ * One definition so the database-readiness gate, the session middleware and
+ * the logout route cannot drift apart on the cookie's name.
+ */
+export const SESSION_COOKIE_NAME = 'escalation.sid';
+
+/**
  * Serverless platforms give you a read-only filesystem (except /tmp) and a
  * container that is discarded between requests. Detecting this decides where
  * the database lives, whether uploads can touch disk, and whether the
