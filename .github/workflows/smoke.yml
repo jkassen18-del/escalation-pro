@@ -95,6 +95,27 @@ jobs:
           [ "$CODE" = "403" ] || { echo "::error::Expected 403 for a wrong setup token, got $CODE"; cat /tmp/bad.json; exit 1; }
           echo "Setup correctly refuses an incorrect token."
 
+      - name: Login endpoint is live and rejects a bad password
+        run: |
+          set -euo pipefail
+          URL="${{ steps.target.outputs.url }}"
+
+          # A wrong password must come back 401 from the auth route itself,
+          # not 404 (route missing) or 500 (database unreachable). The response
+          # is deliberately identical whether or not the account exists, so this
+          # proves the path is alive without leaking who is registered.
+          CODE=$(curl -sS -o /tmp/login.json -w '%{http_code}' --max-time 30 \
+            -X POST "$URL/api/auth/login" -H 'Content-Type: application/json' \
+            -d '{"login":"smoke-probe@example.invalid","password":"not-a-real-password"}')
+          echo "bad password -> HTTP $CODE"
+          cat /tmp/login.json; echo
+
+          case "$CODE" in
+            401) echo "Login route is live and refuses bad credentials." ;;
+            429) echo "Login route is live; rate limiter engaged." ;;
+            *)   echo "::error::Expected 401 from /api/auth/login, got $CODE"; exit 1 ;;
+          esac
+
       - name: Static assets are served
         run: |
           set -euo pipefail
