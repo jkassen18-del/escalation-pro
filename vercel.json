@@ -9,9 +9,23 @@
     }
   },
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/index" },
-    { "source": "/health", "destination": "/api/index" },
-    { "source": "/((?!assets/|favicon|logo).*)", "destination": "/index.html" }
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/health",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/((?!assets/|favicon|logo).*)",
+      "destination": "/index.html"
+    }
   ],
-  "crons": [{ "path": "/api/cron/sla", "schedule": "0 * * * *" }]
+  "crons": [
+    {
+      "path": "/api/cron/sla",
+      "schedule": "0 7 * * *"
+    }
+  ]
 }

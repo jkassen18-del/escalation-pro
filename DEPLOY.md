@@ -76,7 +76,25 @@ There is no public sign-up anywhere in the app.
 grab: the first stranger to find it would become your administrator. Leave it
 unset only for local or internal use.
 
-### 5. Check it came up
+### 5. SLA sweeps on the free plan
+
+Vercel's Hobby plan allows **one cron run per day**, so `vercel.json` schedules
+the SLA breach sweep at 07:00 UTC. Everything else is real-time; only the
+"ticket has passed its due date" notification waits for that daily pass.
+
+If you want it checked more often without upgrading, point any external
+scheduler at the endpoint — it is a plain authenticated POST:
+
+```bash
+curl -X POST https://your-deployment.vercel.app/api/cron/sla \
+  -H "Authorization: Bearer $CRON_SECRET"
+# {"ok":true,"breachesNotified":0,"ranAt":"..."}
+```
+
+A free scheduler (cron-job.org, GitHub Actions on a schedule, an existing box's
+crontab) calling that every 15 minutes gives the same behaviour as a paid plan.
+
+### 6. Check it came up
 
 ```bash
 curl https://your-deployment.vercel.app/health
