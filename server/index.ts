@@ -4,10 +4,10 @@ import cookieParser from 'cookie-parser';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import session from 'express-session';
 import { MulterError } from 'multer';
-import { config, IS_PRODUCTION, IS_SERVERLESS, paths } from './config.ts';
+import { config, dbConfig, IS_PRODUCTION, IS_SERVERLESS, paths } from './config.ts';
 import { db, initDatabase } from './db/index.ts';
 import { bootstrapFromEnvironment } from './bootstrap.ts';
-import { HttpError } from './lib/http.ts';
+import { asyncRoute, HttpError } from './lib/http.ts';
 import { sessionStore } from './lib/session-store.ts';
 import { attachUser } from './middleware/auth.ts';
 import { authRouter } from './routes/auth.ts';
@@ -64,12 +64,36 @@ export async function createApp() {
 
   app.get('/health', async (_req, res) => {
     try {
+      await ensureDatabaseReady();
       await db.get('SELECT 1 AS ok');
       res.json({ status: 'ok', database: db.dialect, uptime: Math.round(process.uptime()) });
     } catch (error) {
-      res.status(503).json({ status: 'degraded', error: error instanceof Error ? error.message : 'unknown' });
+      // Deliberately still a JSON body: an unreachable database is the most
+      // common deployment fault, and this is where its reason gets reported.
+      res.status(503).json({
+        status: 'degraded',
+        database: dbConfig.driver,
+        error: error instanceof Error ? error.message : 'unknown',
+      });
     }
   });
+
+  // Everything past this point needs a working database. Report an outage as
+  // a 503 naming the cause, rather than a generic 500 that says nothing.
+  app.use(
+    '/api',
+    asyncRoute(async (_req, _res, next) => {
+      try {
+        await ensureDatabaseReady();
+      } catch (error) {
+        throw new HttpError(
+          503,
+          `The database is unavailable: ${error instanceof Error ? error.message : 'unknown error'}`,
+        );
+      }
+      next();
+    }),
+  );
 
   app.use('/api/auth', authRouter);
   app.use('/api/webhooks', webhooksRouter);
@@ -133,18 +157,43 @@ export async function createApp() {
 }
 
 /**
- * Lazily builds the app once per serverless instance and reuses it across
- * invocations, so the database and schema check happen on cold start only.
+ * Connects to the database on first use and reuses that connection for the
+ * life of the instance.
+ *
+ * A failed attempt is not cached: caching a rejected promise would leave the
+ * instance permanently broken after one transient blip, and every later
+ * request would report a stale error.
+ */
+let databaseReady: Promise<void> | null = null;
+
+export function ensureDatabaseReady(): Promise<void> {
+  if (!databaseReady) {
+    databaseReady = (async () => {
+      await initDatabase();
+      await bootstrapFromEnvironment();
+    })().catch((error) => {
+      databaseReady = null;
+      throw error;
+    });
+  }
+  return databaseReady;
+}
+
+/**
+ * Builds the app once per serverless instance.
+ *
+ * Deliberately does NOT open the database first. If it did, an unreachable
+ * database would reject here and the platform would return an opaque
+ * invocation failure - with no way for /health to say what went wrong.
  */
 let serverlessApp: Promise<express.Express> | null = null;
 
 export function getServerlessApp(): Promise<express.Express> {
   if (!serverlessApp) {
-    serverlessApp = (async () => {
-      await initDatabase();
-      await bootstrapFromEnvironment();
-      return createApp();
-    })();
+    serverlessApp = createApp().catch((error) => {
+      serverlessApp = null;
+      throw error;
+    });
   }
   return serverlessApp;
 }
