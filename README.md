@@ -105,6 +105,8 @@ No firewall port is opened and no DNS record is edited by hand. Put
 
 ### Serverless (Vercel)
 
+See [DEPLOY.md](DEPLOY.md) for the full walkthrough.
+
 The app also runs as a single serverless function, with `vercel.json` and
 `api/index.ts` already wired up. Two things change automatically in that mode:
 
