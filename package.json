@@ -16,7 +16,8 @@
     "seed": "tsx server/db/seed.ts",
     "reset": "node -e \"require('fs').rmSync('data',{recursive:true,force:true})\" && npm run seed",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.server.json",
-    "lint": "npm run typecheck"
+    "lint": "npm run typecheck",
+    "build:function": "esbuild server/serverless.ts --bundle --platform=node --format=esm --target=node22 --packages=external --outfile=api/index.js"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",

@@ -42,8 +42,17 @@ jobs:
           DB=$(jq -r '.database // "missing"' /tmp/health.json)
 
           if [ "$STATUS" != "ok" ]; then
-            echo "::error::Health check failed. The database is unreachable."
-            echo "::error::Most often the wrong Supabase pooler host in DATABASE_URL."
+            # Report what the app actually said rather than guessing at a cause.
+            REASON=$(jq -r '.error // "no error field; the function did not start"' /tmp/health.json 2>/dev/null \
+              || echo "response was not JSON")
+            echo "::error::Health check failed: $REASON"
+            case "$REASON" in
+              *"Cannot find module"*) echo "::error::The function bundle is incomplete. Check build:function." ;;
+              *DATABASE_URL*)         echo "::error::Set DATABASE_URL to a pooled Postgres connection string." ;;
+              *ENOTFOUND*|*EAI_AGAIN*) echo "::error::Database host does not resolve. Check the pooler hostname." ;;
+              *ETIMEDOUT*|*ECONNREFUSED*) echo "::error::Database refused the connection. Check host, port and network rules." ;;
+              *"password authentication"*|*"Tenant or user not found"*) echo "::error::Database credentials rejected. Check the user and password." ;;
+            esac
             exit 1
           fi
           echo "Healthy, database driver: $DB"
