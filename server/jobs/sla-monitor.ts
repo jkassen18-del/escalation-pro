@@ -9,7 +9,7 @@ const CHECK_INTERVAL_MS = Number(process.env.SLA_CHECK_INTERVAL_MS || 5 * 60 * 1
 /** Tickets already announced, so a breach is reported once rather than every tick. */
 const announced = new Set<string>();
 
-async function checkBreaches(): Promise<void> {
+export async function checkBreaches(): Promise<number> {
   const settings = await getSettings();
   const now = new Date().toISOString();
 
@@ -20,6 +20,7 @@ async function checkBreaches(): Promise<void> {
     [now],
   );
 
+  let notified = 0;
   for (const row of rows) {
     if (announced.has(row.id)) continue;
 
@@ -27,6 +28,7 @@ async function checkBreaches(): Promise<void> {
     if (!ticket) continue;
 
     announced.add(ticket.id);
+    notified += 1;
 
     const recipients = [ticket.assigneeId, ...ticket.watcherIds].filter((id): id is string => Boolean(id));
     await notifyUsers(recipients, {
@@ -51,9 +53,15 @@ async function checkBreaches(): Promise<void> {
   for (const id of announced) {
     if (!stillBreaching.has(id)) announced.delete(id);
   }
+
+  return notified;
 }
 
-/** Starts the periodic SLA sweep. Returns a function that stops it. */
+/**
+ * Starts the periodic SLA sweep for a long-running server. Serverless
+ * deployments have no process to hold a timer, so they call `checkBreaches`
+ * from a scheduled HTTP request instead (see the /api/cron/sla route).
+ */
 export function startSlaMonitor(): () => void {
   const run = () => {
     void checkBreaches().catch((error) => console.error('[sla] check failed', error));

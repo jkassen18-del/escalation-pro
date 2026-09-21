@@ -103,6 +103,27 @@ docker compose --profile tunnel up -d
 No firewall port is opened and no DNS record is edited by hand. Put
 **Cloudflare Access** in front of the hostname if you want SSO or MFA.
 
+### Serverless (Vercel)
+
+The app also runs as a single serverless function, with `vercel.json` and
+`api/index.ts` already wired up. Two things change automatically in that mode:
+
+- **A Postgres database is required.** `DATABASE_URL` must be set; the embedded
+  SQLite file needs a persistent filesystem that serverless platforms do not
+  have, so the app refuses to start rather than silently losing data. Use a
+  **pooled** connection string — serverless creates many short-lived instances,
+  and a direct connection will exhaust the database's connection limit.
+- **Attachments move into the database.** With no persistent disk, bytes are
+  stored in Postgres (capped at 6MB per file) instead of on the filesystem.
+  Override with `ATTACHMENT_STORE=disk|database`.
+
+The SLA sweep has no long-running process to live in, so it runs on a schedule
+instead: `vercel.json` declares an hourly cron that calls `/api/cron/sla`,
+authorised with `CRON_SECRET`.
+
+Required environment variables: `DATABASE_URL`, `SESSION_SECRET`, `SECRET_KEY`,
+`CRON_SECRET`, `SETUP_TOKEN`, and `SESSION_COOKIE_SECURE=true`.
+
 ### Hosted deployment
 
 `render.yaml` provisions a web service and a managed PostgreSQL database.

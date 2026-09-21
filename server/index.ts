@@ -4,7 +4,7 @@ import cookieParser from 'cookie-parser';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import session from 'express-session';
 import { MulterError } from 'multer';
-import { config, IS_PRODUCTION, paths } from './config.ts';
+import { config, IS_PRODUCTION, IS_SERVERLESS, paths } from './config.ts';
 import { db, initDatabase } from './db/index.ts';
 import { bootstrapFromEnvironment } from './bootstrap.ts';
 import { HttpError } from './lib/http.ts';
@@ -21,10 +21,11 @@ import { integrationsRouter } from './routes/integrations.ts';
 import { reportsRouter } from './routes/reports.ts';
 import { auditRouter } from './routes/audit.ts';
 import { webhooksRouter } from './routes/webhooks.ts';
+import { cronRouter } from './routes/cron.ts';
 import { startSlaMonitor } from './jobs/sla-monitor.ts';
 import { pruneAttempts } from './lib/rate-limit.ts';
 
-async function createApp() {
+export async function createApp() {
   const app = express();
 
   // Required for correct req.ip and secure cookies behind a reverse proxy.
@@ -72,6 +73,7 @@ async function createApp() {
 
   app.use('/api/auth', authRouter);
   app.use('/api/webhooks', webhooksRouter);
+  app.use('/api/cron', cronRouter);
 
   // Everything below needs a resolved session user.
   app.use('/api', attachUser);
@@ -87,7 +89,10 @@ async function createApp() {
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API endpoint' }));
 
-  if (IS_PRODUCTION) {
+  if (IS_SERVERLESS) {
+    // The platform serves dist/client directly; this function only answers /api.
+    app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
+  } else if (IS_PRODUCTION) {
     if (!fs.existsSync(paths.clientDist)) {
       throw new Error(
         `Client bundle not found at ${paths.clientDist}. Run "npm run build" before starting in production.`,
@@ -125,6 +130,23 @@ async function createApp() {
   });
 
   return app;
+}
+
+/**
+ * Lazily builds the app once per serverless instance and reuses it across
+ * invocations, so the database and schema check happen on cold start only.
+ */
+let serverlessApp: Promise<express.Express> | null = null;
+
+export function getServerlessApp(): Promise<express.Express> {
+  if (!serverlessApp) {
+    serverlessApp = (async () => {
+      await initDatabase();
+      await bootstrapFromEnvironment();
+      return createApp();
+    })();
+  }
+  return serverlessApp;
 }
 
 async function main() {
@@ -166,8 +188,10 @@ async function main() {
   process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-main().catch((error) => {
-  console.error('\n[fatal] Escalation Pro failed to start:\n');
-  console.error(error instanceof Error ? error.message : error);
-  process.exit(1);
-});
+if (!IS_SERVERLESS) {
+  main().catch((error) => {
+    console.error('\n[fatal] Escalation Pro failed to start:\n');
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  });
+}

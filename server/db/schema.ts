@@ -111,7 +111,10 @@ const TABLES: string[] = [
     mime_type TEXT NOT NULL,
     size INTEGER NOT NULL,
     uploaded_by TEXT REFERENCES users(id) ON DELETE SET NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    -- Populated only when the attachment store is 'database' (serverless, where
+    -- there is no persistent disk). Base64 so the column stays dialect-neutral.
+    content TEXT
   )`,
 
   `CREATE TABLE IF NOT EXISTS ticket_watchers (
@@ -218,9 +221,29 @@ const INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_login_attempts ON login_attempts(key, created_at)`,
 ];
 
+/**
+ * Columns added after the first release, so an existing database upgrades in
+ * place without a migration tool.
+ *
+ * Plain ADD COLUMN rather than IF NOT EXISTS: SQLite does not support that
+ * clause and rejects it as a syntax error. Re-running is handled by treating
+ * "already exists" as success, which both engines report.
+ */
+const ADDITIVE_COLUMNS: string[] = [`ALTER TABLE ticket_attachments ADD COLUMN content TEXT`];
+
 export async function migrate(driver: DbDriver): Promise<void> {
   for (const statement of TABLES) {
     await driver.run(statement);
+  }
+  for (const statement of ADDITIVE_COLUMNS) {
+    try {
+      await driver.run(statement);
+    } catch (error) {
+      // Expected on every run after the first, and on a fresh database where
+      // CREATE TABLE above already declared the column.
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/duplicate column|already exists/i.test(message)) throw error;
+    }
   }
   for (const statement of INDEXES) {
     await driver.run(statement);

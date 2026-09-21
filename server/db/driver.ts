@@ -1,4 +1,4 @@
-import { dbConfig } from '../config.ts';
+import { dbConfig, IS_SERVERLESS } from '../config.ts';
 
 export type SqlParam = string | number | null | Buffer;
 
@@ -46,7 +46,12 @@ export function toPositional(sql: string): string {
 }
 
 async function createSqliteDriver(): Promise<DbDriver> {
-  const { default: Database } = await import('better-sqlite3');
+  // The specifier is built at runtime so serverless bundlers do not try to
+  // trace and include this native addon, which they cannot package.
+  const specifier = ['better', 'sqlite3'].join('-');
+  const { default: Database } = (await import(/* @vite-ignore */ specifier)) as {
+    default: new (path: string) => any;
+  };
   const database = new Database(dbConfig.sqlitePath);
 
   // WAL keeps readers from blocking on the writer; FK enforcement is off by default.
@@ -97,13 +102,24 @@ async function createPostgresDriver(): Promise<DbDriver> {
   const pg = await import('pg');
   const Pool = pg.default?.Pool ?? pg.Pool;
 
+  /**
+   * Serverless instances are numerous and short-lived, so each one keeps a
+   * single connection and releases it quickly. A large pool per instance is
+   * how a managed Postgres runs out of connections.
+   */
+  const poolTuning = IS_SERVERLESS
+    ? { max: 1, idleTimeoutMillis: 10_000, connectionTimeoutMillis: 10_000 }
+    : { max: 10 };
+
   const pool = new Pool(
     dbConfig.connectionString
       ? {
           connectionString: dbConfig.connectionString,
           ssl: dbConfig.ssl ? { rejectUnauthorized: false } : undefined,
+          ...poolTuning,
         }
       : {
+          ...poolTuning,
           host: process.env.PGHOST || 'localhost',
           port: Number(process.env.PGPORT || 5432),
           database: process.env.PGDATABASE || 'escalation_pro',

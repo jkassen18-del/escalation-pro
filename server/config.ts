@@ -7,13 +7,32 @@ dotenv.config();
 
 const ROOT = process.cwd();
 
+export const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+/**
+ * Serverless platforms give you a read-only filesystem (except /tmp) and a
+ * container that is discarded between requests. Detecting this decides where
+ * the database lives, whether uploads can touch disk, and whether the
+ * in-process SLA timer is worth starting.
+ */
+export const IS_SERVERLESS = Boolean(
+  process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY,
+);
+
+/**
+ * Creating the directory is best-effort: on a read-only filesystem the path is
+ * still returned so imports do not throw at cold start. Anything that actually
+ * writes there checks `hasWritableDisk` first.
+ */
 function dirOf(envVar: string, fallback: string) {
   const dir = path.resolve(ROOT, process.env[envVar] || fallback);
-  fs.mkdirSync(dir, { recursive: true });
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch {
+    // Read-only filesystem; the caller decides how to degrade.
+  }
   return dir;
 }
-
-export const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 export const paths = {
   root: ROOT,
@@ -32,7 +51,26 @@ function resolveDriver(): 'postgres' | 'sqlite' {
   const explicit = (process.env.DB_DRIVER || '').toLowerCase();
   if (explicit === 'postgres' || explicit === 'sqlite') return explicit;
   if (process.env.DATABASE_URL || process.env.PGHOST || process.env.PGDATABASE) return 'postgres';
+  if (IS_SERVERLESS) {
+    // A SQLite file under /tmp would vanish between invocations, so failing
+    // loudly here beats silently losing every ticket.
+    throw new Error(
+      'DATABASE_URL is required in a serverless environment. The embedded SQLite ' +
+        'database needs a persistent filesystem, which this platform does not provide.',
+    );
+  }
   return 'sqlite';
+}
+
+/** True when uploads can be written beside the app and read back later. */
+export function hasWritableDisk(): boolean {
+  if (IS_SERVERLESS) return false;
+  try {
+    fs.accessSync(paths.uploads, fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export const dbConfig = {
@@ -96,6 +134,15 @@ export const config = {
    * the token can claim it.
    */
   setupToken: process.env.SETUP_TOKEN || '',
+  /**
+   * Where attachment bytes live. `disk` keeps them beside the app; `database`
+   * stores them in Postgres, which is what a serverless deployment needs.
+   * Defaults to whichever the platform can actually support.
+   */
+  attachmentStore: (process.env.ATTACHMENT_STORE ||
+    (IS_SERVERLESS ? 'database' : 'disk')) as 'disk' | 'database',
+  /** Shared secret that lets a scheduler invoke the SLA sweep over HTTP. */
+  cronSecret: process.env.CRON_SECRET || '',
   bootstrapAdmin: {
     email: process.env.BOOTSTRAP_ADMIN_EMAIL || '',
     password: process.env.BOOTSTRAP_ADMIN_PASSWORD || '',

@@ -21,7 +21,6 @@
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",
     "@fontsource-variable/geist-mono": "^5.2.8",
-    "better-sqlite3": "^12.2.0",
     "clsx": "^2.1.1",
     "cookie-parser": "^1.4.7",
     "date-fns": "^4.1.0",
@@ -56,5 +55,8 @@
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^12.2.0"
   }
 }

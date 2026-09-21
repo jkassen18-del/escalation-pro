@@ -2,10 +2,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Router } from 'express';
 import multer from 'multer';
-import { config, paths } from '../config.ts';
+import { config } from '../config.ts';
 import { db } from '../db/index.ts';
 import { randomId } from '../lib/crypto.ts';
 import { asyncRoute, badRequest, forbidden, notFound } from '../lib/http.ts';
+import {
+  DATABASE_STORE_MAX_BYTES,
+  getAttachment,
+  putAttachment,
+  removeAttachment,
+  storeMode,
+  uploadTempDir,
+} from '../lib/attachment-store.ts';
 import { can, requireAuth, type AuthedRequest } from '../middleware/auth.ts';
 import { findTicket, recordEvent } from '../repositories/tickets.ts';
 import { getSettings } from '../repositories/settings.ts';
@@ -34,11 +42,16 @@ const ALLOWED_MIME = new Set([
 
 const upload = multer({
   storage: multer.diskStorage({
-    destination: (_req, _file, cb) => cb(null, paths.uploads),
+    // On a serverless platform this is /tmp; the bytes are moved into the
+    // database immediately afterwards.
+    destination: (_req, _file, cb) => cb(null, uploadTempDir()),
     // Stored under a random name so a hostile filename cannot escape the directory.
     filename: (_req, file, cb) => cb(null, `${randomId()}${path.extname(file.originalname).slice(0, 12)}`),
   }),
-  limits: { fileSize: config.maxUploadBytes, files: 5 },
+  limits: {
+    fileSize: storeMode() === 'database' ? Math.min(config.maxUploadBytes, DATABASE_STORE_MAX_BYTES) : config.maxUploadBytes,
+    files: 5,
+  },
   fileFilter: (_req, file, cb) => {
     if (!ALLOWED_MIME.has(file.mimetype)) {
       cb(new Error(`Files of type "${file.mimetype}" are not allowed.`));
@@ -66,11 +79,15 @@ attachmentsRouter.post(
     const commentId = typeof req.body?.commentId === 'string' ? req.body.commentId : null;
 
     for (const file of files) {
+      const attachmentId = randomId();
       await db.run(
         `INSERT INTO ticket_attachments (id, ticket_id, comment_id, stored_name, original_name, mime_type, size, uploaded_by, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [randomId(), ticket.id, commentId, file.filename, file.originalname, file.mimetype, file.size, user.id, now],
+        [attachmentId, ticket.id, commentId, file.filename, file.originalname, file.mimetype, file.size, user.id, now],
       );
+      // No-op on disk; moves the bytes into the database when there is no
+      // persistent filesystem to keep them on.
+      await putAttachment(attachmentId, file.filename, await fs.promises.readFile(file.path));
       await recordEvent(ticket.id, user.id, 'attached', 'attachment', null, file.originalname);
     }
 
@@ -101,21 +118,19 @@ attachmentsRouter.get(
     );
     if (!row) throw notFound('That attachment does not exist.');
 
-    const filePath = path.join(paths.uploads, row.stored_name);
-    // Belt and braces: confirm the resolved path is still inside the uploads dir.
-    if (!filePath.startsWith(paths.uploads) || !fs.existsSync(filePath)) {
-      throw notFound('That file is no longer available.');
-    }
+    const bytes = await getAttachment(req.params.attachmentId, row.stored_name);
+    if (!bytes) throw notFound('That file is no longer available.');
 
     // SVGs can carry script, so never render them inline in the app's origin.
     const inline = req.query.download !== '1' && row.mime_type !== 'image/svg+xml';
     res.setHeader('Content-Type', row.mime_type);
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Length', String(bytes.length));
     res.setHeader(
       'Content-Disposition',
       `${inline ? 'inline' : 'attachment'}; filename="${encodeURIComponent(row.original_name)}"`,
     );
-    fs.createReadStream(filePath).pipe(res);
+    res.end(bytes);
   }),
 );
 
@@ -133,7 +148,7 @@ attachmentsRouter.delete(
     }
 
     await db.run(`DELETE FROM ticket_attachments WHERE id = ?`, [req.params.attachmentId]);
-    fs.rm(path.join(paths.uploads, row.stored_name), { force: true }, () => undefined);
+    removeAttachment(row.stored_name);
     res.json({ ok: true });
   }),
 );
