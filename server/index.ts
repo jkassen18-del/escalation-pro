@@ -11,6 +11,7 @@ import { asyncRoute, HttpError } from './lib/http.ts';
 import { sessionStore } from './lib/session-store.ts';
 import { attachUser } from './middleware/auth.ts';
 import { authRouter } from './routes/auth.ts';
+import { brandingRouter } from './routes/branding.ts';
 import { usersRouter } from './routes/users.ts';
 import { teamsRouter } from './routes/teams.ts';
 import { ticketsRouter } from './routes/tickets.ts';
@@ -113,6 +114,8 @@ export async function createApp() {
   });
 
   app.use('/api/auth', authRouter);
+  // Before attachUser: the sign-in screen needs the company name and logo.
+  app.use('/api/branding', brandingRouter);
   app.use('/api/webhooks', webhooksRouter);
   app.use('/api/cron', cronRouter);
 

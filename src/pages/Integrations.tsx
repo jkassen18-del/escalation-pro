@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, CircleAlert, CircleDashed, ExternalLink, Plug, RefreshCw } from 'lucide-react';
+import { CheckCircle2, CircleAlert, CircleDashed, ExternalLink, RefreshCw } from 'lucide-react';
+import { ProviderIcon } from '@/components/BrandIcons';
 import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { relativeTime, shortDateTime } from '@/lib/format';
@@ -9,6 +10,7 @@ import { Button } from '@/components/ui/Button';
 import { Checkbox, Field, Input, Select } from '@/components/ui/Field';
 import { ErrorPane, LoadingPane } from '@/components/ui/Feedback';
 import type { IntegrationProvider, IntegrationSummary } from '@shared/types';
+import { useDocumentTitle } from '@/state/branding';
 
 const PROVIDER_META: Record<
   IntegrationProvider,
@@ -50,6 +52,7 @@ const EVENT_LABELS: Array<{ key: string; label: string; hint: string }> = [
 ];
 
 export function IntegrationsPage() {
+  useDocumentTitle('Integrations');
   const toast = useToast();
   const [integrations, setIntegrations] = useState<IntegrationSummary[]>([]);
   const [deliveries, setDeliveries] = useState<Awaited<ReturnType<typeof api.integrations.deliveries>>['deliveries']>([]);
@@ -231,7 +234,7 @@ function IntegrationCard({
       <header className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
         <div className="flex min-w-0 gap-3">
           <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border surface-2">
-            <Plug className="size-4 text-[var(--fg-subtle)]" />
+            <ProviderIcon provider={integration.provider} className="size-4 text-[var(--fg-subtle)]" />
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">

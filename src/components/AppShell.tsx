@@ -20,6 +20,7 @@ import {
   Users as UsersIcon,
   X,
 } from 'lucide-react';
+import { BrandMark } from '@/components/BrandMark';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { relativeTime } from '@/lib/format';
@@ -132,9 +133,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <>
       <div className="px-3 py-3">
         <Link to="/tickets" className="flex items-center gap-2 rounded-sm px-1 py-1">
-          <span className="flex size-6 shrink-0 items-center justify-center rounded-[4px] bg-[var(--fg)] text-[10px] font-bold text-[var(--bg)]">
-            EP
-          </span>
+          <BrandMark className="size-6 text-[10px]" />
           <span className="min-w-0 truncate text-xs font-semibold">{organizationName}</span>
         </Link>
       </div>

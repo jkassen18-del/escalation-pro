@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button';
 import { SegmentedControl } from '@/components/ui/Field';
 import { ErrorPane, LoadingPane, MeterBar } from '@/components/ui/Feedback';
 import type { ReportSummary } from '@shared/types';
+import { useDocumentTitle } from '@/state/branding';
 
 const RANGES = [
   { value: '7', label: '7 days' },
@@ -17,6 +18,7 @@ const RANGES = [
 ] as const;
 
 export function ReportsPage() {
+  useDocumentTitle('Reports');
   const { can } = useAuth();
   const [days, setDays] = useState<'7' | '30' | '90'>('30');
   const [summary, setSummary] = useState<ReportSummary | null>(null);

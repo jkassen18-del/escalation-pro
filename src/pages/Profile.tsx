@@ -9,8 +9,10 @@ import { Button } from '@/components/ui/Button';
 import { Field, Input, SegmentedControl } from '@/components/ui/Field';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
+import { useDocumentTitle } from '@/state/branding';
 
 export function ProfilePage() {
+  useDocumentTitle('Profile');
   const { user, refresh } = useAuth();
   const { theme, setTheme } = useTheme();
   const toast = useToast();

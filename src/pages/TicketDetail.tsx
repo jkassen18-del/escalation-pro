@@ -41,10 +41,12 @@ import {
   type Team,
   type TicketDetail as TicketDetailType,
 } from '@shared/types';
+import { useDocumentTitle } from '@/state/branding';
 
 type Directory = Awaited<ReturnType<typeof api.users.directory>>['users'];
 
 export function TicketDetailPage() {
+  useDocumentTitle('Ticket');
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const toast = useToast();

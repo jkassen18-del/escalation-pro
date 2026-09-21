@@ -11,6 +11,7 @@ import { EmptyState, ErrorPane, LoadingPane } from '@/components/ui/Feedback';
 import { ConfirmDialog, Modal } from '@/components/ui/Modal';
 import { Menu } from '@/components/ui/Menu';
 import { AUTO_ASSIGN_MODES, TICKET_PRIORITIES, type Team } from '@shared/types';
+import { useDocumentTitle } from '@/state/branding';
 
 const AUTO_ASSIGN_LABELS: Record<string, string> = {
   none: 'Manual — someone picks it up',
@@ -32,6 +33,7 @@ const SLA_PRESETS = [
 ];
 
 export function TeamsPage() {
+  useDocumentTitle('Teams');
   const toast = useToast();
   const [teams, setTeams] = useState<Team[]>([]);
   const [directory, setDirectory] = useState<Awaited<ReturnType<typeof api.users.directory>>['users']>([]);

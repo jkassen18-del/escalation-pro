@@ -19,10 +19,12 @@ import {
   type Team,
   type Ticket,
 } from '@shared/types';
+import { useDocumentTitle } from '@/state/branding';
 
 const PAGE_SIZE = 50;
 
 export function TicketListPage() {
+  useDocumentTitle('Tickets');
   const { can } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
 

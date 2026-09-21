@@ -8,11 +8,13 @@ import { Input, Select } from '@/components/ui/Field';
 import { EmptyState, ErrorPane, LoadingPane } from '@/components/ui/Feedback';
 import { Badge } from '@/components/ui/Badge';
 import type { AuditEntry } from '@shared/types';
+import { useDocumentTitle } from '@/state/branding';
 
 const ENTITY_TYPES = ['ticket', 'user', 'team', 'settings', 'integration', 'auth', 'system'];
 const PAGE_SIZE = 100;
 
 export function AuditLogPage() {
+  useDocumentTitle('Audit log');
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);

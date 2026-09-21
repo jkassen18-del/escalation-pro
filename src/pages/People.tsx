@@ -14,10 +14,12 @@ import { EmptyState, ErrorPane, LoadingPane } from '@/components/ui/Feedback';
 import { ConfirmDialog, Modal } from '@/components/ui/Modal';
 import { Menu } from '@/components/ui/Menu';
 import { USER_ROLES, type Permission, type PublicUser, type Team } from '@shared/types';
+import { useDocumentTitle } from '@/state/branding';
 
 type Meta = Awaited<ReturnType<typeof api.users.meta>>;
 
 export function PeoplePage() {
+  useDocumentTitle('People');
   const { user: currentUser, can } = useAuth();
   const toast = useToast();
 

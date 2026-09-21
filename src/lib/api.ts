@@ -167,6 +167,16 @@ export const api = {
     update: (body: Partial<AppSettings>) => patch<{ settings: AppSettings }>('/settings', body),
   },
 
+  branding: {
+    get: () => get<{ organizationName: string; logoUrl: string | null }>('/branding'),
+    uploadLogo: (file: File) => {
+      const form = new FormData();
+      form.append('logo', file);
+      return request<{ logoUrl: string }>('/branding/logo', { method: 'PUT', body: form });
+    },
+    removeLogo: () => del<{ logoUrl: null }>('/branding/logo'),
+  },
+
   integrations: {
     list: () => get<{ integrations: IntegrationSummary[] }>('/integrations'),
     update: (

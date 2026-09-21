@@ -196,6 +196,19 @@ const TABLES: string[] = [
     created_at TEXT NOT NULL
   )`,
 
+  /*
+   * Branding images live in their own table rather than in `settings`, which
+   * is read on almost every request - a base64 logo in that blob would be
+   * fetched and parsed constantly for no reason.
+   */
+  `CREATE TABLE IF NOT EXISTS branding_assets (
+    id TEXT PRIMARY KEY,
+    mime_type TEXT NOT NULL,
+    byte_size INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
   `CREATE TABLE IF NOT EXISTS sessions (
     sid TEXT PRIMARY KEY,
     data TEXT NOT NULL,

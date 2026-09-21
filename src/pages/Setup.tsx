@@ -4,6 +4,7 @@ import { useAuth } from '@/state/auth';
 import { Button } from '@/components/ui/Button';
 import { Field, Input } from '@/components/ui/Field';
 import { AuthLayout } from './Login';
+import { useDocumentTitle } from '@/state/branding';
 
 /**
  * Shown only while the database has no users. Creates the first administrator,
@@ -11,6 +12,7 @@ import { AuthLayout } from './Login';
  * from the People page.
  */
 export function SetupPage() {
+  useDocumentTitle('First-run setup');
   const { completeSetup, setupTokenRequired } = useAuth();
   const [form, setForm] = useState({
     organizationName: '',

@@ -7,8 +7,10 @@ import { useToast } from '@/components/ui/Toast';
 import { Button } from '@/components/ui/Button';
 import { Field, Input, Select, Textarea } from '@/components/ui/Field';
 import { TICKET_PRIORITIES, TICKET_TYPES, type Team } from '@shared/types';
+import { useDocumentTitle } from '@/state/branding';
 
 export function NewTicketPage() {
+  useDocumentTitle('New ticket');
   const navigate = useNavigate();
   const toast = useToast();
 

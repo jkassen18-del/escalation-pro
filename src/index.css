@@ -138,6 +138,26 @@
     outline-offset: 1px;
   }
 
+  /*
+   * The native dropdown list is drawn by the platform, and it inherits the
+   * control's text colour without inheriting its background. In the dark
+   * theme that left near-white option text on a system-white list - legible
+   * only for the row the pointer happened to be over.
+   *
+   * Setting both properties on the options themselves is what browsers
+   * actually honour for the popup, so the list matches the rest of the UI in
+   * either theme. `option` also covers <datalist> and multi-selects.
+   */
+  select option,
+  select optgroup {
+    background-color: var(--surface);
+    color: var(--fg);
+  }
+
+  select option:disabled {
+    color: var(--fg-subtle);
+  }
+
   ::selection {
     background: var(--color-brass-200);
     color: var(--color-ink-900);

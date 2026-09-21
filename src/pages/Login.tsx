@@ -4,9 +4,13 @@ import { ApiError } from '@/lib/api';
 import { useAuth } from '@/state/auth';
 import { Button } from '@/components/ui/Button';
 import { Field, Input } from '@/components/ui/Field';
+import { BrandMark } from '@/components/BrandMark';
+import { useBranding, useDocumentTitle } from '@/state/branding';
 
 export function LoginPage() {
-  const { login, organizationName } = useAuth();
+  const { login } = useAuth();
+  const { organizationName } = useBranding();
+  useDocumentTitle('Sign in');
   const [loginValue, setLoginValue] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -82,14 +86,13 @@ export function LoginPage() {
 }
 
 export function AuthLayout({ children }: { children: React.ReactNode }) {
+  const { organizationName } = useBranding();
   return (
     <div className="flex min-h-dvh items-center justify-center p-6" style={{ background: 'var(--bg)' }}>
       <div className="w-full max-w-sm">
         <div className="mb-5 flex items-center gap-2">
-          <span className="flex size-7 items-center justify-center rounded-[5px] bg-[var(--fg)] text-[11px] font-bold text-[var(--bg)]">
-            EP
-          </span>
-          <span className="text-sm font-semibold tracking-tight">Escalation Pro</span>
+          <BrandMark className="size-7 text-[11px]" />
+          <span className="text-sm font-semibold tracking-tight">{organizationName}</span>
         </div>
         <div className="rounded-md border p-6 surface">{children}</div>
       </div>

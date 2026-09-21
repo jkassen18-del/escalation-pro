@@ -7,13 +7,17 @@ import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Field, Input, Select } from '@/components/ui/Field';
 import { LoadingPane } from '@/components/ui/Feedback';
+import { LogoUploader } from '@/components/LogoUploader';
+import { useBranding, useDocumentTitle } from '@/state/branding';
 import { TICKET_PRIORITIES, type AppSettings, type Team } from '@shared/types';
 
 const SLA_PRESETS = [30, 60, 120, 240, 480, 1440, 2880, 4320, 10080];
 
 export function SettingsPage() {
+  useDocumentTitle('Settings');
   const toast = useToast();
   const { refresh } = useAuth();
+  const { refresh: refreshBranding } = useBranding();
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [saving, setSaving] = useState(false);
@@ -38,7 +42,8 @@ export function SettingsPage() {
     try {
       const result = await api.settings.update(settings);
       setSettings(result.settings);
-      await refresh();
+      // Renaming the organisation changes the sidebar and the tab title too.
+      await Promise.all([refresh(), refreshBranding()]);
       toast.success('Settings saved.');
     } catch (caught) {
       toast.error('Could not save', caught instanceof ApiError ? caught.message : undefined);
@@ -61,12 +66,14 @@ export function SettingsPage() {
 
       <div className="max-w-2xl space-y-4 p-4 sm:p-6">
         <Section title="Organisation">
-          <Field label="Name" hint="Shown in the sidebar, emails, and chat notifications.">
+          <Field label="Name" hint="Shown in the sidebar, the browser tab, emails, and chat notifications.">
             <Input
               value={settings.organizationName}
               onChange={(event) => set('organizationName', event.target.value)}
             />
           </Field>
+
+          <LogoUploader />
 
           <Field label="Support email" hint="Used as the reply-to address on outgoing notifications.">
             <Input
