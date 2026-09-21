@@ -7,8 +7,10 @@ import { useToast } from '@/components/ui/Toast';
 import { Button } from '@/components/ui/Button';
 import { Field, Input, Select } from '@/components/ui/Field';
 import { RichTextEditor } from '@/components/ui/RichTextEditor';
+import { CustomFieldInputs, type CustomFieldValues } from '@/components/CustomFieldInputs';
 import { TICKET_PRIORITIES, TICKET_TYPES, type Team } from '@shared/types';
 import { useDocumentTitle } from '@/state/branding';
+import type { TeamFormField } from '@shared/types';
 
 export function NewTicketPage() {
   useDocumentTitle('New ticket');
@@ -19,6 +21,9 @@ export function NewTicketPage() {
   const [directory, setDirectory] = useState<Awaited<ReturnType<typeof api.users.directory>>['users']>([]);
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  /* Every team's questions, fetched once so switching team is instant. */
+  const [forms, setForms] = useState<Record<string, TeamFormField[]>>({});
+  const [customValues, setCustomValues] = useState<CustomFieldValues>({});
 
   const [form, setForm] = useState({
     subject: '',
@@ -31,10 +36,11 @@ export function NewTicketPage() {
   });
 
   useEffect(() => {
-    void Promise.all([api.teams.list(), api.users.directory(), api.settings.get()])
-      .then(([teamResult, directoryResult, settingsResult]) => {
+    void Promise.all([api.teams.list(), api.users.directory(), api.settings.get(), api.teams.allForms()])
+      .then(([teamResult, directoryResult, settingsResult, formResult]) => {
         setTeams(teamResult.teams);
         setDirectory(directoryResult.users);
+        setForms(formResult.forms);
         // Pre-select the organisation default so the common path is one click.
         setForm((current) => ({
           ...current,
@@ -49,6 +55,7 @@ export function NewTicketPage() {
     setForm((current) => ({ ...current, [key]: event.target.value }));
 
   const selectedTeam = teams.find((team) => team.id === form.teamId);
+  const teamFields = form.teamId ? (forms[form.teamId] ?? []) : [];
   const assignable = form.teamId
     ? directory.filter((person) => person.teamIds.includes(form.teamId) && person.role !== 'viewer')
     : [];
@@ -66,6 +73,7 @@ export function NewTicketPage() {
         teamId: form.teamId || null,
         assigneeId: form.assigneeId || null,
         priority: form.priority,
+        customFields: customValues,
         type: form.type,
         tags: form.tags
           .split(',')
@@ -181,6 +189,13 @@ export function NewTicketPage() {
         <Field label="Tags" htmlFor="tags" hint="Comma separated, e.g. payments, eu">
           <Input id="tags" value={form.tags} onChange={set('tags')} placeholder="payments, eu" />
         </Field>
+
+        {teamFields.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs font-medium">{selectedTeam?.name} needs a few more details</p>
+            <CustomFieldInputs fields={teamFields} values={customValues} onChange={setCustomValues} />
+          </div>
+        )}
 
         <div className="flex justify-end gap-2 border-t pt-4">
           <Button variant="ghost" type="button" onClick={() => navigate(-1)}>

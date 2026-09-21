@@ -3,6 +3,7 @@ import { db } from '../db/index.ts';
 import { randomId } from '../lib/crypto.ts';
 import { isEffectivelyEmpty, sanitizeRichText } from '../lib/rich-text.ts';
 import { extractInlineImages } from '../lib/inline-images.ts';
+import { listTeamFields, saveAnswers, validateAnswers } from '../repositories/form-fields.ts';
 import {
   asyncRoute,
   badRequest,
@@ -175,6 +176,17 @@ ticketsRouter.post(
     // Validated up front so an invalid date fails before any write begins.
     const explicitDueAt = optionalDate(req.body?.dueAt, 'Due date');
 
+    /*
+     * The department's own questions. Checked here rather than in the browser
+     * because the form is data - a request can omit a required answer or send
+     * a choice that is not on the list, and neither should reach the database.
+     */
+    const formFields = team ? await listTeamFields(team.id) : [];
+    const answers = validateAnswers(
+      formFields,
+      (req.body?.customFields ?? {}) as Record<string, unknown>,
+    );
+
     const result = await db.transaction(async () => {
       // Explicit assignee wins; otherwise fall back to the team's routing rule.
       let assigneeId = optionalString(req.body?.assigneeId, 60);
@@ -210,6 +222,8 @@ ticketsRouter.post(
           await db.run(`UPDATE tickets SET description = ? WHERE id = ?`, [rewritten, created.id]);
         }
       }
+
+      if (answers.length > 0) await saveAnswers(created.id, answers);
 
       await recordEvent(created.id, user.id, 'created', null, null, subject);
       if (assigneeId) {

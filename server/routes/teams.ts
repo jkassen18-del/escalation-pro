@@ -13,6 +13,7 @@ import {
 } from '../lib/http.ts';
 import { clientIp, recordAudit } from '../lib/audit.ts';
 import { requireAuth, requirePermission, type AuthedRequest } from '../middleware/auth.ts';
+import { listAllFields, listTeamFields, replaceTeamForm } from '../repositories/form-fields.ts';
 import { createTeam, findTeamById, keyInUse, listTeams, setTeamMembers } from '../repositories/teams.ts';
 import { AUTO_ASSIGN_MODES, TICKET_PRIORITIES } from '../../shared/types.ts';
 
@@ -170,5 +171,52 @@ teamsRouter.delete(
     });
 
     res.json({ ok: true });
+  }),
+);
+
+/* --------------------------- intake forms -------------------------------- */
+
+/**
+ * Every team's form in one response.
+ *
+ * The new-ticket page swaps forms as the team changes, so fetching them all
+ * once avoids a request on each change of the team picker.
+ */
+teamsRouter.get(
+  '/forms/all',
+  asyncRoute(async (_req, res) => {
+    res.json({ forms: await listAllFields() });
+  }),
+);
+
+teamsRouter.get(
+  '/:id/form',
+  asyncRoute(async (req, res) => {
+    res.json({ fields: await listTeamFields(req.params.id) });
+  }),
+);
+
+teamsRouter.put(
+  '/:id/form',
+  requirePermission('teams.manage'),
+  asyncRoute(async (req, res) => {
+    const actor = (req as AuthedRequest).user;
+    const team = await findTeamById(req.params.id);
+    if (!team) throw notFound('That team does not exist.');
+
+    const submitted = Array.isArray(req.body?.fields) ? req.body.fields : [];
+    const fields = await replaceTeamForm(team.id, submitted);
+
+    await recordAudit({
+      actorId: actor.id,
+      actorName: actor.name,
+      entityType: 'team',
+      entityId: team.id,
+      action: 'form_updated',
+      summary: `${actor.name} updated the intake form for ${team.name} (${fields.length} field(s))`,
+      ip: clientIp(req),
+    });
+
+    res.json({ fields });
   }),
 );

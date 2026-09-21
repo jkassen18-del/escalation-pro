@@ -1,4 +1,5 @@
 import type {
+  TeamFormField,
   AppSettings,
   AuditEntry,
   IntegrationProvider,
@@ -155,6 +156,10 @@ export const api = {
     create: (body: Record<string, unknown>) => post<{ team: Team }>('/teams', body),
     update: (id: string, body: Record<string, unknown>) => patch<{ team: Team }>(`/teams/${id}`, body),
     remove: (id: string) => del<{ ok: true }>(`/teams/${id}`),
+    form: (id: string) => get<{ fields: TeamFormField[] }>(`/teams/${id}/form`),
+    allForms: () => get<{ forms: Record<string, TeamFormField[]> }>('/teams/forms/all'),
+    saveForm: (id: string, fields: unknown[]) =>
+      request<{ fields: TeamFormField[] }>(`/teams/${id}/form`, { method: 'PUT', body: JSON.stringify({ fields }) }),
   },
 
   notifications: {

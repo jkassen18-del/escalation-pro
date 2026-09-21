@@ -157,6 +157,8 @@ export interface TicketDetail extends Ticket {
   comments: TicketComment[];
   events: TicketEvent[];
   attachments: TicketAttachment[];
+  /** Answers to the department's intake form, as they were asked. */
+  fieldValues: TicketFieldValue[];
 }
 
 export interface AuditEntry {
@@ -188,6 +190,48 @@ export interface Notification {
  * How a stored body should be rendered. Values written before rich text
  * existed are plain text, and stay that way.
  */
+/** The question types a department can put on its intake form. */
+export const FORM_FIELD_TYPES = [
+  'text',
+  'textarea',
+  'number',
+  'date',
+  'select',
+  'multiselect',
+  'checkbox',
+  'email',
+  'url',
+  'lookup',
+] as const;
+export type FormFieldType = (typeof FORM_FIELD_TYPES)[number];
+
+export interface TeamFormField {
+  id: string;
+  teamId: string;
+  /** Stable machine name; answers are keyed by it and it survives renames. */
+  key: string;
+  label: string;
+  type: FormFieldType;
+  required: boolean;
+  helpText: string | null;
+  placeholder: string | null;
+  /** Choices for select and multiselect. */
+  options: string[];
+  position: number;
+  /** Set only for lookup fields: the external connection supplying options. */
+  dataSourceId: string | null;
+}
+
+/** An answer, carrying a copy of the question as it was asked. */
+export interface TicketFieldValue {
+  fieldId: string | null;
+  key: string;
+  label: string;
+  type: FormFieldType;
+  value: string | number | boolean | string[] | null;
+  position: number;
+}
+
 export type RichTextFormat = 'text' | 'html';
 
 export interface AppSettings {

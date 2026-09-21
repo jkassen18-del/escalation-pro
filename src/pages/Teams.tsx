@@ -9,6 +9,7 @@ import { Checkbox, Field, Input, Select, Textarea } from '@/components/ui/Field'
 import { Avatar } from '@/components/ui/Avatar';
 import { EmptyState, ErrorPane, LoadingPane } from '@/components/ui/Feedback';
 import { ConfirmDialog, Modal } from '@/components/ui/Modal';
+import { FormBuilder } from '@/components/FormBuilder';
 import { Menu } from '@/components/ui/Menu';
 import { AUTO_ASSIGN_MODES, TICKET_PRIORITIES, type Team } from '@shared/types';
 import { useDocumentTitle } from '@/state/branding';
@@ -374,6 +375,18 @@ function TeamDialog({
             ))}
           </div>
         </div>
+
+        {/*
+          * Only offered for a team that already exists: the form is stored
+          * against a team id, so there is nothing to attach questions to until
+          * the team has been created.
+          */}
+        {team && (
+          <div>
+            <p className="mb-2 text-xs font-medium">Intake form</p>
+            <FormBuilder teamId={team.id} teamName={team.name} />
+          </div>
+        )}
       </div>
     </Modal>
   );

@@ -29,6 +29,7 @@ import { useToast } from '@/components/ui/Toast';
 import { Button } from '@/components/ui/Button';
 import { Field, Select, Textarea } from '@/components/ui/Field';
 import { RichText } from '@/components/ui/RichText';
+import { CustomFieldSummary } from '@/components/CustomFieldInputs';
 import { RichTextEditor } from '@/components/ui/RichTextEditor';
 import { PriorityBadge, Reference, StatusBadge } from '@/components/ui/Badge';
 import { Avatar, UserChip } from '@/components/ui/Avatar';
@@ -345,6 +346,12 @@ function Conversation({ ticket, onChanged }: { ticket: TicketDetailType; onChang
           format={ticket.descriptionFormat}
           empty={<span className="text-sm text-subtle italic">No description was provided.</span>}
         />
+
+        {ticket.fieldValues.length > 0 && (
+          <div className="mt-4 rounded-sm border border-dashed p-3">
+            <CustomFieldSummary values={ticket.fieldValues} />
+          </div>
+        )}
 
         {unattached.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-1.5 border-t pt-3">

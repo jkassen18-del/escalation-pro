@@ -203,6 +203,50 @@ const TABLES: string[] = [
    * is read on almost every request - a base64 logo in that blob would be
    * fetched and parsed constantly for no reason.
    */
+  /*
+   * Per-department intake forms. Each team defines the questions its own
+   * tickets should answer, on top of the fields every ticket has.
+   */
+  `CREATE TABLE IF NOT EXISTS team_form_fields (
+    id TEXT PRIMARY KEY,
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    field_key TEXT NOT NULL,
+    label TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'text',
+    required INTEGER NOT NULL DEFAULT 0,
+    help_text TEXT,
+    placeholder TEXT,
+    options TEXT NOT NULL DEFAULT '[]',
+    position INTEGER NOT NULL DEFAULT 0,
+    /* Set only for lookup fields, which read their options from an
+       external database connection. */
+    data_source_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (team_id, field_key)
+  )`,
+
+  /*
+   * Answers, with the question copied alongside them.
+   *
+   * The label and type are snapshotted rather than joined from the field
+   * definition on read: a ticket raised last year should still say what was
+   * actually asked, even after the form has been reworded or the field
+   * deleted. field_id is kept for grouping but is deliberately not a foreign
+   * key, so removing a field never erases the history of what people answered.
+   */
+  `CREATE TABLE IF NOT EXISTS ticket_field_values (
+    id TEXT PRIMARY KEY,
+    ticket_id TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+    field_id TEXT,
+    field_key TEXT NOT NULL,
+    label TEXT NOT NULL,
+    type TEXT NOT NULL,
+    value TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (ticket_id, field_key)
+  )`,
+
   `CREATE TABLE IF NOT EXISTS branding_assets (
     id TEXT PRIMARY KEY,
     mime_type TEXT NOT NULL,
@@ -233,6 +277,8 @@ const INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_type, entity_id)`,
   `CREATE INDEX IF NOT EXISTS idx_deliveries_created_at ON integration_deliveries(created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_form_fields_team ON team_form_fields(team_id, position)`,
+  `CREATE INDEX IF NOT EXISTS idx_field_values_ticket ON ticket_field_values(ticket_id, position)`,
   `CREATE INDEX IF NOT EXISTS idx_login_attempts ON login_attempts(key, created_at)`,
 ];
 

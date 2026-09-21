@@ -1,5 +1,6 @@
 import { db, nextTicketNumber, parseJson, placeholders } from '../db/index.ts';
 import { randomId } from '../lib/crypto.ts';
+import { listAnswers } from './form-fields.ts';
 import type {
   RichTextFormat,
   Ticket,
@@ -355,7 +356,9 @@ export async function loadTicketDetail(
     createdAt: String(row.created_at),
   }));
 
-  return { ...ticket, comments, events, attachments };
+  const fieldValues = await listAnswers(ticket.id);
+
+  return { ...ticket, comments, events, attachments, fieldValues };
 }
 
 export interface CreateTicketInput {
