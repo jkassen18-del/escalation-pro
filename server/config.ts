@@ -87,6 +87,15 @@ export const config = {
     .createHash('sha256')
     .update(process.env.SECRET_KEY || resolveSessionSecret())
     .digest(),
+  /**
+   * Optional shared secret required to complete first-run setup.
+   *
+   * Setup is open by default, which is right for a laptop or an internal
+   * network. On a public URL that is a land grab: whoever loads the page first
+   * claims the administrator account. Setting this means only someone holding
+   * the token can claim it.
+   */
+  setupToken: process.env.SETUP_TOKEN || '',
   bootstrapAdmin: {
     email: process.env.BOOTSTRAP_ADMIN_EMAIL || '',
     password: process.env.BOOTSTRAP_ADMIN_PASSWORD || '',

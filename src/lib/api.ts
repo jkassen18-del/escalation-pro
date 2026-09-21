@@ -74,8 +74,19 @@ export function toQuery(params: Record<string, string | number | boolean | undef
 export const api = {
   auth: {
     bootstrap: () =>
-      get<{ setupRequired: boolean; organizationName: string; registrationOpen: boolean }>('/auth/bootstrap'),
-    setup: (body: { name: string; email: string; password: string; organizationName: string }) =>
+      get<{
+        setupRequired: boolean;
+        organizationName: string;
+        registrationOpen: boolean;
+        setupTokenRequired: boolean;
+      }>('/auth/bootstrap'),
+    setup: (body: {
+      name: string;
+      email: string;
+      password: string;
+      organizationName: string;
+      setupToken?: string;
+    }) =>
       post<{ user: PublicUser }>('/auth/setup', body),
     login: (body: { login: string; password: string }) => post<{ user: PublicUser }>('/auth/login', body),
     logout: () => post<{ ok: true }>('/auth/logout'),

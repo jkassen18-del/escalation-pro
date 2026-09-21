@@ -11,6 +11,7 @@ import {
   setIntegrationStatus,
 } from '../integrations/store.ts';
 import { listDeliveries } from '../integrations/dispatcher.ts';
+import { assertSafeWebhookUrl, assertSlackWebhookUrl } from '../integrations/url-guard.ts';
 import { testSlack } from '../integrations/slack.ts';
 import { detectFormat, testMsTeams } from '../integrations/msteams.ts';
 import { listLinearTeams, testLinear } from '../integrations/linear.ts';
@@ -88,9 +89,22 @@ integrationsRouter.patch(
     const actor = (req as AuthedRequest).user;
     const provider = requireEnum(req.params.provider, INTEGRATION_PROVIDERS, 'Provider');
 
+    const incoming =
+      typeof req.body?.config === 'object' && req.body.config
+        ? ({ ...req.body.config } as Record<string, unknown>)
+        : undefined;
+
+    // Reject URLs that would let an outbound webhook reach internal services.
+    if (incoming && typeof incoming.webhookUrl === 'string' && incoming.webhookUrl) {
+      incoming.webhookUrl =
+        provider === 'slack'
+          ? assertSlackWebhookUrl(incoming.webhookUrl)
+          : assertSafeWebhookUrl(incoming.webhookUrl, 'Webhook URL');
+    }
+
     const record = await saveIntegration(provider, {
       enabled: typeof req.body?.enabled === 'boolean' ? req.body.enabled : undefined,
-      config: typeof req.body?.config === 'object' && req.body.config ? req.body.config : undefined,
+      config: incoming,
       events: typeof req.body?.events === 'object' && req.body.events ? req.body.events : undefined,
     });
 

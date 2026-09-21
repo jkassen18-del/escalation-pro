@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { config } from '../config.ts';
 import { db } from '../db/index.ts';
-import { verifyPassword } from '../lib/crypto.ts';
-import { asyncRoute, badRequest, requireString, unauthorized } from '../lib/http.ts';
+import { timingSafeCompare, verifyAgainstDummy, verifyPassword } from '../lib/crypto.ts';
+import { HttpError, asyncRoute, badRequest, requireString, unauthorized } from '../lib/http.ts';
 import { clientIp, recordAudit } from '../lib/audit.ts';
+import { LOGIN_LIMITS, accountKey, checkLimit, clearFailures, ipKey, recordFailure } from '../lib/rate-limit.ts';
 import { sessionStore } from '../lib/session-store.ts';
 import { attachUser, requireAuth, type AuthedRequest } from '../middleware/auth.ts';
 import { countUsers, findUserById, findUserRowByLogin, updatePassword } from '../repositories/users.ts';
@@ -26,6 +27,8 @@ authRouter.get(
       organizationName: settings.organizationName,
       /** Self-registration is intentionally unavailable; admins create accounts. */
       registrationOpen: false,
+      /** Tells the setup screen whether to ask for the token. */
+      setupTokenRequired: users === 0 && Boolean(config.setupToken),
     });
   }),
 );
@@ -36,6 +39,22 @@ authRouter.post(
   asyncRoute(async (req, res) => {
     if ((await countUsers()) > 0) {
       throw badRequest('This system is already set up. Ask an administrator for an account.');
+    }
+
+    // When a token is configured, it gates the whole endpoint. Compared in
+    // constant time so the check cannot be narrowed down by guessing.
+    if (config.setupToken) {
+      const supplied = typeof req.body?.setupToken === 'string' ? req.body.setupToken : '';
+      if (!timingSafeCompare(supplied, config.setupToken)) {
+        await recordAudit({
+          actorName: 'unknown',
+          entityType: 'system',
+          action: 'setup_rejected',
+          summary: 'First-run setup attempted with an incorrect setup token',
+          ip: clientIp(req),
+        });
+        throw new HttpError(403, 'That setup token is not correct.');
+      }
     }
 
     const name = requireString(req.body?.name, 'Name', { max: 120 });
@@ -65,25 +84,49 @@ authRouter.post(
     const login = requireString(req.body?.login, 'Email or username', { max: 160 });
     const password = requireString(req.body?.password, 'Password', { max: 200 });
 
+    const ip = clientIp(req);
+    const keys = [accountKey(login), ipKey(ip)];
+
+    // Refuse before touching the password so a locked-out attacker gains nothing,
+    // not even timing information.
+    const [accountLimit, ipLimit] = await Promise.all([
+      checkLimit(keys[0], LOGIN_LIMITS.account),
+      checkLimit(keys[1], LOGIN_LIMITS.ip),
+    ]);
+    const limited = accountLimit.blocked ? accountLimit : ipLimit.blocked ? ipLimit : null;
+    if (limited) {
+      res.setHeader('Retry-After', String(limited.retryAfterSeconds));
+      throw new HttpError(
+        429,
+        `Too many failed sign-in attempts. Try again in ${Math.ceil(limited.retryAfterSeconds / 60)} minute(s).`,
+      );
+    }
+
     const row = await findUserRowByLogin(login);
-    // Always run the hash comparison so a missing account and a wrong password
-    // take the same amount of time.
-    const valid = row ? verifyPassword(password, row.password_hash, row.password_salt) : false;
+    // Hash on every path, including a miss, so an unknown account and a wrong
+    // password cost the same. A bare early return leaks which accounts exist.
+    const valid = row
+      ? verifyPassword(password, row.password_hash, row.password_salt)
+      : verifyAgainstDummy(password);
 
     if (!row || !valid) {
+      await recordFailure(keys);
       await recordAudit({
         actorName: login,
         entityType: 'auth',
         action: 'login_failed',
         summary: `Failed sign-in attempt for "${login}"`,
-        ip: clientIp(req),
+        ip,
       });
       throw unauthorized('That email/username and password combination is not recognised.');
     }
 
     if (row.status !== 'active') {
+      await recordFailure(keys);
       throw unauthorized('This account has been suspended. Contact an administrator.');
     }
+
+    await clearFailures(keys);
 
     await db.run(`UPDATE users SET last_login_at = ? WHERE id = ?`, [new Date().toISOString(), row.id]);
 
@@ -101,7 +144,7 @@ authRouter.post(
       entityId: row.id,
       action: 'login',
       summary: `${row.name} signed in`,
-      ip: clientIp(req),
+      ip,
     });
 
     res.json({ user });

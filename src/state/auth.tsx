@@ -14,6 +14,7 @@ interface AuthState {
   user: PublicUser | null;
   loading: boolean;
   setupRequired: boolean;
+  setupTokenRequired: boolean;
   organizationName: string;
   login: (login: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -22,6 +23,7 @@ interface AuthState {
     email: string;
     password: string;
     organizationName: string;
+    setupToken?: string;
   }) => Promise<void>;
   refresh: () => Promise<void>;
   can: (permission: Permission) => boolean;
@@ -44,12 +46,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<PublicUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [setupRequired, setSetupRequired] = useState(false);
+  const [setupTokenRequired, setSetupTokenRequired] = useState(false);
   const [organizationName, setOrganizationName] = useState('Escalation Pro');
 
   const loadSession = useCallback(async () => {
     try {
       const boot = await api.auth.bootstrap();
       setSetupRequired(boot.setupRequired);
+      setSetupTokenRequired(boot.setupTokenRequired);
       setOrganizationName(boot.organizationName);
 
       if (boot.setupRequired) {
@@ -86,7 +90,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const completeSetup = useCallback(
-    async (input: { name: string; email: string; password: string; organizationName: string }) => {
+    async (input: {
+      name: string;
+      email: string;
+      password: string;
+      organizationName: string;
+      setupToken?: string;
+    }) => {
       const { user: admin } = await api.auth.setup(input);
       setUser(admin);
       setSetupRequired(false);
@@ -106,8 +116,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo<AuthState>(
-    () => ({ user, loading, setupRequired, organizationName, login, logout, completeSetup, refresh, can }),
-    [user, loading, setupRequired, organizationName, login, logout, completeSetup, refresh, can],
+    () => ({ user, loading, setupRequired, setupTokenRequired, organizationName, login, logout, completeSetup, refresh, can }),
+    [user, loading, setupRequired, setupTokenRequired, organizationName, login, logout, completeSetup, refresh, can],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

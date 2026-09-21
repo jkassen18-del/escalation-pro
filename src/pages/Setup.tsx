@@ -11,13 +11,14 @@ import { AuthLayout } from './Login';
  * from the People page.
  */
 export function SetupPage() {
-  const { completeSetup } = useAuth();
+  const { completeSetup, setupTokenRequired } = useAuth();
   const [form, setForm] = useState({
     organizationName: '',
     name: '',
     email: '',
     password: '',
     confirmPassword: '',
+    setupToken: '',
   });
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -45,6 +46,7 @@ export function SetupPage() {
         email: form.email,
         password: form.password,
         organizationName: form.organizationName || 'Escalation Pro',
+        setupToken: form.setupToken || undefined,
       });
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'Setup failed. Please try again.');
@@ -62,13 +64,32 @@ export function SetupPage() {
       </p>
 
       <form onSubmit={onSubmit} className="mt-6 space-y-3.5">
+        {setupTokenRequired && (
+          <Field
+            label="Setup token"
+            htmlFor="setupToken"
+            hint="This deployment requires the SETUP_TOKEN value from its environment."
+            required
+          >
+            <Input
+              id="setupToken"
+              value={form.setupToken}
+              onChange={set('setupToken')}
+              className="font-mono text-xs"
+              autoComplete="off"
+              autoFocus
+              required
+            />
+          </Field>
+        )}
+
         <Field label="Organisation name" htmlFor="organizationName" hint="Shown in the sidebar and notifications.">
           <Input
             id="organizationName"
             value={form.organizationName}
             onChange={set('organizationName')}
             placeholder="Northwind Services"
-            autoFocus
+            autoFocus={!setupTokenRequired}
           />
         </Field>
 

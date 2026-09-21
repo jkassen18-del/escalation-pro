@@ -187,6 +187,12 @@ const TABLES: string[] = [
     value INTEGER NOT NULL
   )`,
 
+  `CREATE TABLE IF NOT EXISTS login_attempts (
+    id TEXT PRIMARY KEY,
+    key TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
+
   `CREATE TABLE IF NOT EXISTS sessions (
     sid TEXT PRIMARY KEY,
     data TEXT NOT NULL,
@@ -209,6 +215,7 @@ const INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_type, entity_id)`,
   `CREATE INDEX IF NOT EXISTS idx_deliveries_created_at ON integration_deliveries(created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_login_attempts ON login_attempts(key, created_at)`,
 ];
 
 export async function migrate(driver: DbDriver): Promise<void> {

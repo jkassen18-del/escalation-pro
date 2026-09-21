@@ -6,6 +6,7 @@ import {
   badRequest,
   forbidden,
   notFound,
+  optionalDate,
   optionalEnum,
   optionalString,
   parseIntOr,
@@ -158,6 +159,9 @@ ticketsRouter.post(
     const team = teamId ? await findTeamById(teamId) : null;
     if (teamId && !team) throw badRequest('That team no longer exists.', { teamId: 'Unknown' });
 
+    // Validated up front so an invalid date fails before any write begins.
+    const explicitDueAt = optionalDate(req.body?.dueAt, 'Due date');
+
     const result = await db.transaction(async () => {
       // Explicit assignee wins; otherwise fall back to the team's routing rule.
       let assigneeId = optionalString(req.body?.assigneeId, 60);
@@ -166,9 +170,7 @@ ticketsRouter.post(
       }
 
       const resolveMins = team?.slaResolveMins ?? settings.slaResolveMins;
-      const dueAt = req.body?.dueAt
-        ? new Date(String(req.body.dueAt)).toISOString()
-        : dueDateFrom(Math.round(resolveMins * slaMultiplier(priority)));
+      const dueAt = explicitDueAt ?? dueDateFrom(Math.round(resolveMins * slaMultiplier(priority)));
 
       const created = await insertTicket({
         subject,
@@ -319,7 +321,7 @@ ticketsRouter.patch(
     }
 
     if (req.body?.dueAt !== undefined) {
-      const dueAt = req.body.dueAt ? new Date(String(req.body.dueAt)).toISOString() : null;
+      const dueAt = optionalDate(req.body.dueAt, 'Due date');
       push('due_at', dueAt);
       changes.push({ field: 'dueAt', from: before.dueAt, to: dueAt });
     }

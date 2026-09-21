@@ -22,6 +22,7 @@ import { reportsRouter } from './routes/reports.ts';
 import { auditRouter } from './routes/audit.ts';
 import { webhooksRouter } from './routes/webhooks.ts';
 import { startSlaMonitor } from './jobs/sla-monitor.ts';
+import { pruneAttempts } from './lib/rate-limit.ts';
 
 async function createApp() {
   const app = express();
@@ -105,6 +106,10 @@ async function createApp() {
     if (error instanceof HttpError) {
       return res.status(error.status).json({ error: error.message, details: error.details });
     }
+    // body-parser raises a SyntaxError with a `body` property on unparseable JSON.
+    if (error instanceof SyntaxError && 'body' in error) {
+      return res.status(400).json({ error: 'The request body is not valid JSON.' });
+    }
     if (error instanceof MulterError) {
       const message =
         error.code === 'LIMIT_FILE_SIZE'
@@ -138,9 +143,17 @@ async function main() {
 
   const stopSla = startSlaMonitor();
 
+  // Failed-login rows are only needed for the length of the limiter window.
+  const pruneTimer = setInterval(
+    () => void pruneAttempts().catch((error) => console.error('[rate-limit] prune failed', error)),
+    60 * 60 * 1000,
+  );
+  pruneTimer.unref();
+
   const shutdown = (signal: string) => {
     console.log(`\n[server] ${signal} received, shutting down.`);
     stopSla();
+    clearInterval(pruneTimer);
     sessionStore.stopSweeper();
     server.close(() => {
       void db.close().then(() => process.exit(0));

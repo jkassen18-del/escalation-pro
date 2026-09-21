@@ -59,6 +59,23 @@ export function parseIntOr(value: unknown, fallback: number, { min = 0, max = Nu
   return Math.min(max, Math.max(min, parsed));
 }
 
+/**
+ * Parses a client-supplied date, rejecting anything Date cannot represent.
+ * `new Date('nonsense').toISOString()` throws a RangeError, which would
+ * otherwise surface as a 500 on a plainly invalid request.
+ */
+export function optionalDate(value: unknown, field: string): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value !== 'string' && typeof value !== 'number') {
+    throw badRequest(`${field} must be a date`, { [field]: 'Invalid date' });
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw badRequest(`${field} is not a valid date`, { [field]: 'Invalid date' });
+  }
+  return date.toISOString();
+}
+
 export function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value);
 }

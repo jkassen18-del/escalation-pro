@@ -8,6 +8,11 @@ the tools your team already uses.
 only exception is the one-time setup screen that creates the very first
 administrator on a brand-new database.
 
+> **Before exposing this on a public URL, set `SETUP_TOKEN`.** Setup is open by
+> default, which is right for local and internal use, but on a public address
+> the first person to load the page claims the administrator account. See
+> [SECURITY.md](SECURITY.md).
+
 ---
 
 ## Quick start
@@ -67,10 +72,42 @@ Both engines run the same schema and the same test suite. SQLite suits a single
 instance; use PostgreSQL when you need several instances or an external backup
 story.
 
+### Putting it on your own domain (Cloudflare)
+
+This is a Node server with a native SQLite module, disk-backed uploads, and a
+background job. **It does not run on Cloudflare Workers** — Workers have no
+filesystem, cannot load native addons, and are request-scoped. Running it there
+would mean replacing the database, upload storage, HTTP layer, and scheduler.
+
+The supported way to serve it on a Cloudflare domain is a **Cloudflare Tunnel**,
+which proxies to the Node server and needs no code changes:
+
+1. In Cloudflare Zero Trust → **Networks → Tunnels**, create a tunnel.
+2. Add a public hostname (e.g. `tickets.yourdomain.com`) pointing at
+   `http://app:3000`.
+3. Copy the tunnel token into `.env`:
+
+```bash
+CLOUDFLARE_TUNNEL_TOKEN=eyJhIjoi...
+SETUP_TOKEN=$(openssl rand -hex 16)     # required before going public
+SESSION_COOKIE_SECURE=true              # the tunnel terminates TLS
+APP_URL=https://tickets.yourdomain.com
+```
+
+4. Start it:
+
+```bash
+docker compose --profile tunnel up -d
+```
+
+No firewall port is opened and no DNS record is edited by hand. Put
+**Cloudflare Access** in front of the hostname if you want SSO or MFA.
+
 ### Hosted deployment
 
 `render.yaml` provisions a web service and a managed PostgreSQL database.
-Point Render at this repository as a Blueprint and it deploys as-is.
+Point Render at this repository as a Blueprint and it deploys as-is. You can
+then point Cloudflare DNS at the Render hostname.
 
 Set `SESSION_COOKIE_SECURE=true` behind any HTTPS proxy. Leave it `false` on
 plain HTTP, or browsers will refuse the session cookie and nobody can sign in.
@@ -259,7 +296,10 @@ src/                    React client (Vite, Tailwind, React Router)
 
 ---
 
-## Security notes
+## Security
+
+[SECURITY.md](SECURITY.md) covers the threat model, the test suites, and the
+known limitations. In short:
 
 - Passwords are hashed with scrypt (N=16384) and a per-user salt.
 - Sessions live in the database, not in process memory, so they survive
@@ -276,6 +316,10 @@ src/                    React client (Vite, Tailwind, React Router)
 - The system refuses to remove or demote the last active administrator.
 - Every privileged action is written to an append-only audit log with the
   actor, a summary, and the source IP.
+- Login is rate limited (5 failures per account, 30 per IP, per 15 minutes) and
+  does not leak which accounts exist through response timing.
+- All SQL is parameterised; admin-configurable webhook URLs are checked against
+  private and link-local address ranges before they are saved.
 
 ## Troubleshooting
 
@@ -292,6 +336,14 @@ app works first.
 **An integration test fails** — the error text comes straight from the
 provider. `invalid_token` means the credential is wrong; a timeout usually means
 egress to that host is blocked.
+
+**"That setup token is not correct"** — `SETUP_TOKEN` is set in the
+environment and must be entered on the setup screen. Read it from your `.env`
+or container config; clear the variable and restart if you want setup open.
+
+**Locked out by the login rate limit** — wait out the window shown in the
+error (15 minutes), or clear the counter with
+`DELETE FROM login_attempts WHERE key LIKE 'account:%';`.
 
 **Lost the only administrator password** — stop the app, set
 `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD`, and start it against an

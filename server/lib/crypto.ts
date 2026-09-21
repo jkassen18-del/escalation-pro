@@ -19,6 +19,18 @@ export function verifyPassword(password: string, hash: string, salt: string): bo
   return crypto.timingSafeEqual(expected, actual);
 }
 
+/**
+ * A real scrypt hash used when no account matched, so an unknown username costs
+ * the same as a known one. Without this, the early return leaks which accounts
+ * exist through response timing.
+ */
+const DUMMY = hashPassword(crypto.randomBytes(32).toString('hex'));
+
+export function verifyAgainstDummy(password: string): false {
+  verifyPassword(password, DUMMY.hash, DUMMY.salt);
+  return false;
+}
+
 /** Readable, unambiguous temporary passwords for admin-provisioned accounts. */
 export function generatePassword(length = 14): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
