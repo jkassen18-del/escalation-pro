@@ -174,7 +174,11 @@ export const api = {
   },
 
   dataSources: {
-    list: () => get<{ dataSources: DataSourceSummary[] }>('/data-sources'),
+    /**
+     * Without integrations.manage the server returns only id and name, so the
+     * shape is narrowed here rather than pretending the rest is present.
+     */
+    list: () => get<{ dataSources: Array<Partial<DataSourceSummary> & { id: string; name: string }> }>('/data-sources'),
     create: (body: Record<string, unknown>) => post<{ dataSource: DataSourceSummary }>('/data-sources', body),
     update: (id: string, body: Record<string, unknown>) =>
       patch<{ dataSource: DataSourceSummary }>(`/data-sources/${id}`, body),

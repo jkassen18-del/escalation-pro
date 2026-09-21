@@ -42,7 +42,14 @@ export function DataSourcePanel() {
 
   const load = useCallback(async () => {
     try {
-      setSources((await api.dataSources.list()).dataSources);
+      const result = await api.dataSources.list();
+      /*
+       * This panel only renders for someone who can manage integrations, and
+       * the server sends full records to exactly those people. Anything
+       * partial means the permission changed underneath us, so it is left out
+       * rather than rendered as a row full of blanks.
+       */
+      setSources(result.dataSources.filter((source): source is DataSourceSummary => source.host !== undefined));
     } catch {
       toast.error('Could not load database connections.');
     }
