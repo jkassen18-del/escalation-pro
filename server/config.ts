@@ -84,14 +84,54 @@ export function hasWritableDisk(): boolean {
   }
 }
 
+/**
+ * Works out the TLS settings for Postgres.
+ *
+ * Managed providers (Supabase, Render, Heroku) terminate TLS with their own
+ * private CA, which the system trust store does not know about. Leaving
+ * `sslmode=require` in the connection string makes node-postgres verify
+ * against that store and fail with "self-signed certificate in certificate
+ * chain", so the mode is parsed out here and turned into an explicit setting.
+ *
+ * `rejectUnauthorized: false` still encrypts the connection, it just does not
+ * authenticate the server. To verify properly, point PGSSLROOTCERT at the
+ * provider's CA certificate (a file path or the PEM itself) and the
+ * certificate chain is checked against it.
+ */
+function resolveSslConfig(url: string): false | { rejectUnauthorized: boolean; ca?: string } {
+  const mode = (
+    url.match(/[?&]sslmode=([^&]+)/)?.[1] ??
+    process.env.PGSSLMODE ??
+    ''
+  ).toLowerCase();
+
+  if (mode === 'disable') return false;
+
+  const rootCert = process.env.PGSSLROOTCERT;
+  if (rootCert) {
+    const ca = rootCert.includes('BEGIN CERTIFICATE')
+      ? rootCert
+      : fs.readFileSync(path.resolve(ROOT, rootCert), 'utf8');
+    return { rejectUnauthorized: true, ca };
+  }
+
+  // No mode and no TLS hint at all: a local Postgres usually has no TLS.
+  if (!mode && !url) return false;
+  if (!mode && /localhost|127\.0\.0\.1/.test(url)) return false;
+
+  return { rejectUnauthorized: false };
+}
+
+/** node-postgres reads sslmode from the string itself, so it is stripped. */
+function stripSslMode(url: string): string {
+  return url.replace(/([?&])sslmode=[^&]*&?/, (_match, sep) => (sep === '?' ? '?' : '&')).replace(/[?&]$/, '');
+}
+
 export const dbConfig = {
   driver: resolveDriver(),
-  connectionString: process.env.DATABASE_URL || '',
+  connectionString: stripSslMode(process.env.DATABASE_URL || ''),
   sqlitePath: path.join(paths.data, process.env.SQLITE_FILE || 'escalation-pro.db'),
-  /** Managed Postgres (Render, Heroku, Supabase) terminates TLS with its own CA. */
-  ssl:
-    (process.env.PGSSLMODE || '').toLowerCase() === 'require' ||
-    /[?&]sslmode=require/.test(process.env.DATABASE_URL || ''),
+  ssl: resolveSslConfig(process.env.DATABASE_URL || ''),
 };
 
 const SESSION_SECRET_FILE = path.join(paths.data, '.session-secret');

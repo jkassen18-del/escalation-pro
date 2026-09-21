@@ -37,6 +37,13 @@ postgresql://USER.PROJECT_REF:PASSWORD@aws-N-REGION.pooler.supabase.com:6543/pos
 Copy the host exactly as the dashboard shows it (`aws-0-…` and `aws-1-…` are
 different clusters; guessing gets you a DNS error).
 
+Keep `?sslmode=require`. The connection is encrypted, but the certificate is
+not verified by default, because managed providers sign it with a private CA
+that the system trust store does not know about — leaving verification on
+fails with *self-signed certificate in certificate chain*. To verify it
+properly, download the provider's CA certificate and set `PGSSLROOTCERT` to
+its path or contents.
+
 ### 2. Import the repository
 
 In Vercel, **Add New → Project**, pick this repository, and set the production

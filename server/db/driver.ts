@@ -115,7 +115,7 @@ async function createPostgresDriver(): Promise<DbDriver> {
     dbConfig.connectionString
       ? {
           connectionString: dbConfig.connectionString,
-          ssl: dbConfig.ssl ? { rejectUnauthorized: false } : undefined,
+          ssl: dbConfig.ssl,
           ...poolTuning,
         }
       : {
@@ -125,7 +125,7 @@ async function createPostgresDriver(): Promise<DbDriver> {
           database: process.env.PGDATABASE || 'escalation_pro',
           user: process.env.PGUSER || 'postgres',
           password: process.env.PGPASSWORD || 'postgres',
-          ssl: dbConfig.ssl ? { rejectUnauthorized: false } : undefined,
+          ssl: dbConfig.ssl,
         },
   );
 
