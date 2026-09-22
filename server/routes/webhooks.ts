@@ -14,6 +14,13 @@ import {
   verifySlackSignature,
   type SlackEventEnvelope,
 } from '../integrations/slack-events.ts';
+import {
+  applyStatus,
+  parseInteractivePayload,
+  resolveActor,
+  respondEphemeral,
+  statusForAction,
+} from '../integrations/slack-actions.ts';
 import { dispatch, buildTicketUrl } from '../integrations/dispatcher.ts';
 import { findTicket, recordEvent } from '../repositories/tickets.ts';
 import { getSettings } from '../repositories/settings.ts';
@@ -239,5 +246,107 @@ webhooksRouter.post(
     );
 
     res.json({ ok: true, ticket: ticket.reference });
+  }),
+);
+
+/* ------------------------ Slack button clicks ----------------------------- */
+
+/**
+ * Inbound Slack interactions: the Resolve/Close/Reopen buttons.
+ *
+ * Slack gives three seconds before it shows the person an error, so the work
+ * is done first and kept short, and anything slow - telling the other
+ * integrations - is left to run after the reply has gone.
+ *
+ * Every non-signature failure still answers 200 with an explanation: a
+ * non-2xx makes Slack retry, and a retry of a button click is another attempt
+ * at the same change.
+ */
+webhooksRouter.post(
+  '/slack/interactive',
+  asyncRoute(async (req, res) => {
+    const record = await loadIntegration('slack');
+    const config = record.config as SlackConfig;
+
+    if (!record.enabled) return res.status(503).json({ error: 'Slack integration is disabled' });
+    if (!config.signingSecret) return res.status(400).json({ error: 'No Slack signing secret configured' });
+
+    const verified = verifySlackSignature(req, config.signingSecret);
+    if (!verified.ok) return res.status(401).json({ error: verified.reason });
+
+    const payload = parseInteractivePayload(req);
+    const action = payload?.actions?.[0];
+    const next = action?.action_id ? statusForAction(action.action_id) : null;
+    const ticketId = action?.value;
+    const responseUrl = payload?.response_url;
+
+    // Something else in the app was clicked, or Slack sent a shape we do not
+    // handle. Acknowledged and dropped.
+    if (!payload || !next || !ticketId || !payload.user?.id) return res.json({ ok: true, ignored: true });
+
+    const actor = await resolveActor(config.botToken ?? '', payload.user.id, 'tickets.update');
+    if (!actor.ok) {
+      if (responseUrl) await respondEphemeral(responseUrl, actor.message);
+      return res.json({ ok: true, refused: true });
+    }
+
+    const settings = await getSettings();
+    const ticket = await findTicket(ticketId, settings.ticketPrefix);
+    if (!ticket) {
+      if (responseUrl) await respondEphemeral(responseUrl, 'That ticket no longer exists.');
+      return res.json({ ok: true, ignored: true });
+    }
+
+    const change = await applyStatus(ticket.id, next, actor.user.id);
+    if (!change) return res.json({ ok: true, ignored: true });
+
+    if (!change.changed) {
+      if (responseUrl) {
+        await respondEphemeral(responseUrl, `${ticket.reference} was already ${next.replace('_', ' ')}.`);
+      }
+      return res.json({ ok: true, unchanged: true });
+    }
+
+    await recordAudit({
+      actorId: actor.user.id,
+      actorName: actor.user.name,
+      entityType: 'ticket',
+      entityId: ticket.id,
+      action: 'status_changed_from_slack',
+      summary: `${actor.user.name} moved ${ticket.reference} to ${next} from Slack`,
+      meta: { from: change.from, to: next },
+    });
+
+    const watchers = [ticket.requesterId, ticket.assigneeId, ...ticket.watcherIds].filter(
+      (id): id is string => Boolean(id) && id !== actor.user.id,
+    );
+    await notifyUsers(watchers, {
+      ticketId: ticket.id,
+      type: 'status',
+      title: `${actor.user.name} marked ${ticket.reference} ${next.replace('_', ' ')}`,
+      body: `Changed from ${change.from.replace('_', ' ')} in Slack.`,
+    });
+
+    // Answer the click before fanning out: the ephemeral reply is what the
+    // person is waiting on, and Teams, Linear and email are not.
+    if (responseUrl) {
+      await respondEphemeral(
+        responseUrl,
+        `${ticket.reference} is now *${next.replace('_', ' ')}*. Everyone watching it has been told.`,
+      );
+    }
+    res.json({ ok: true, ticket: ticket.reference, status: next });
+
+    const updated = await findTicket(ticket.id, settings.ticketPrefix);
+    if (updated) {
+      void dispatch({
+        event: 'ticketStatusChanged',
+        ticket: updated,
+        actorName: actor.user.name,
+        headline: `${updated.reference} moved to ${next.replace('_', ' ')}`,
+        detail: `${change.from.replace('_', ' ')} → ${next.replace('_', ' ')} (from Slack)`,
+        ticketUrl: await buildTicketUrl(updated),
+      });
+    }
   }),
 );

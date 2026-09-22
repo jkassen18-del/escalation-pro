@@ -47,7 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [setupRequired, setSetupRequired] = useState(false);
   const [setupTokenRequired, setSetupTokenRequired] = useState(false);
-  const [organizationName, setOrganizationName] = useState('Escalation Pro');
+  const [organizationName, setOrganizationName] = useState('Service Desk');
 
   const loadSession = useCallback(async () => {
     try {

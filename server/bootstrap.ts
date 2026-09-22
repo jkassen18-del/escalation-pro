@@ -91,7 +91,7 @@ export async function bootstrapFromEnvironment(): Promise<void> {
     name,
     email,
     password,
-    organizationName: process.env.ORGANIZATION_NAME || 'Escalation Pro',
+    organizationName: process.env.ORGANIZATION_NAME || 'Service Desk',
   });
   console.log(`[bootstrap] created initial administrator ${email}`);
 }

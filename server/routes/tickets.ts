@@ -656,7 +656,7 @@ ticketsRouter.post(
     if (linearLink && !isInternal) {
       const record = await loadIntegration('linear');
       if (record.enabled) {
-        void commentOnLinearIssue(record, linearLink.externalId, `**${user.name}** (Escalation Pro):\n\n${body}`);
+        void commentOnLinearIssue(record, linearLink.externalId, `**${user.name}** (${settings.organizationName}):\n\n${body}`);
       }
     }
 

@@ -81,6 +81,17 @@ export interface SlackAuthor {
   displayName: string;
 }
 
+export interface ResolveAuthorOptions {
+  /**
+   * Match suspended accounts too.
+   *
+   * Off for comments, where a suspended account should not be written as the
+   * author. On for the buttons, so someone whose access was revoked is told
+   * that rather than being told to ask for an account they already have.
+   */
+  includeSuspended?: boolean;
+}
+
 /**
  * Works out who wrote the reply.
  *
@@ -89,7 +100,11 @@ export interface SlackAuthor {
  * attributed by name - losing the reply because the author is not a user of
  * this system would be worse than an unattributed comment.
  */
-export async function resolveSlackAuthor(botToken: string, slackUserId: string): Promise<SlackAuthor> {
+export async function resolveSlackAuthor(
+  botToken: string,
+  slackUserId: string,
+  options: ResolveAuthorOptions = {},
+): Promise<SlackAuthor> {
   let displayName = 'Someone in Slack';
 
   try {
@@ -109,7 +124,9 @@ export async function resolveSlackAuthor(botToken: string, slackUserId: string):
     if (!email) return { userId: null, displayName };
 
     const row = await db.get<{ id: string; name: string }>(
-      `SELECT id, name FROM users WHERE LOWER(email) = ? AND status = 'active'`,
+      options.includeSuspended
+        ? `SELECT id, name FROM users WHERE LOWER(email) = ?`
+        : `SELECT id, name FROM users WHERE LOWER(email) = ? AND status = 'active'`,
       [email],
     );
     return row ? { userId: row.id, displayName: row.name } : { userId: null, displayName };

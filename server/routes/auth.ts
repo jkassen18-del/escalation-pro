@@ -60,7 +60,7 @@ authRouter.post(
     const name = requireString(req.body?.name, 'Name', { max: 120 });
     const email = requireString(req.body?.email, 'Email', { max: 160 }).toLowerCase();
     const password = requireString(req.body?.password, 'Password', { max: 200, min: 10 });
-    const organizationName = requireString(req.body?.organizationName ?? 'Escalation Pro', 'Organisation', { max: 120 });
+    const organizationName = requireString(req.body?.organizationName ?? 'Service Desk', 'Organisation', { max: 120 });
 
     const user = await bootstrapFirstAdmin({ name, email, password, organizationName });
 

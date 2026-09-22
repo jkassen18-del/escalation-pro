@@ -1,5 +1,12 @@
 import { findTeamRoute } from '../repositories/team-routing.ts';
-import { postJson, type DeliveryResult, type NotificationContext, type TestResult, PRIORITY_HEX } from './types.ts';
+import {
+  postJson,
+  senderName,
+  type DeliveryResult,
+  type NotificationContext,
+  type TestResult,
+  PRIORITY_HEX,
+} from './types.ts';
 import type { IntegrationRecord } from './store.ts';
 
 export interface MsTeamsConfig {
@@ -124,10 +131,11 @@ export async function testMsTeams(record: IntegrationRecord): Promise<TestResult
   if (!config.webhookUrl) return { ok: false, message: 'A Microsoft Teams webhook URL is required.' };
 
   const format = resolveFormat(config);
+  const sender = await senderName();
   const testContext = {
-    headline: 'Escalation Pro is connected',
-    detail: 'This channel will receive ticket notifications from Escalation Pro.',
-    actorName: 'Escalation Pro',
+    headline: `${sender} is connected`,
+    detail: `This channel will receive ticket notifications from ${sender}.`,
+    actorName: sender,
     ticketUrl: config.webhookUrl.split('?')[0],
     ticket: {
       reference: 'TEST-0',

@@ -47,7 +47,7 @@ export function SetupPage() {
         name: form.name,
         email: form.email,
         password: form.password,
-        organizationName: form.organizationName || 'Escalation Pro',
+        organizationName: form.organizationName || 'Service Desk',
         setupToken: form.setupToken || undefined,
       });
     } catch (caught) {
@@ -59,7 +59,7 @@ export function SetupPage() {
 
   return (
     <AuthLayout>
-      <h1 className="text-lg font-semibold">Set up Escalation Pro</h1>
+      <h1 className="text-lg font-semibold">Create the first administrator</h1>
       <p className="mt-1 text-xs leading-relaxed text-muted">
         This creates the first administrator account. Everyone else is added from the People page afterwards — there
         is no public sign-up.

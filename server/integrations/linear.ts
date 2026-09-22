@@ -1,4 +1,4 @@
-import type { DeliveryResult, NotificationContext, TestResult } from './types.ts';
+import { senderName, type DeliveryResult, type NotificationContext, type TestResult } from './types.ts';
 import type { IntegrationRecord } from './store.ts';
 import { findTeamRoute } from '../repositories/team-routing.ts';
 import type { TicketPriority, TicketStatus } from '../../shared/types.ts';
@@ -121,15 +121,16 @@ export async function createLinearIssue(
   const targetTeamId = route?.target || config.teamId;
   if (!targetTeamId) return { ok: false, error: 'No Linear team selected' };
 
+  const sender = await senderName();
   const description = [
     ctx.ticket.description,
     '',
     '---',
-    `Escalated from **${ctx.ticket.reference}** in Escalation Pro.`,
+    `Escalated from **${ctx.ticket.reference}** in ${sender}.`,
     `- Team: ${ctx.ticket.teamName ?? 'Unassigned'}`,
     `- Priority: ${ctx.ticket.priority}`,
     `- Requester: ${ctx.ticket.requesterName ?? 'Unknown'}`,
-    `- [Open in Escalation Pro](${ctx.ticketUrl})`,
+    `- [Open in ${sender}](${ctx.ticketUrl})`,
   ].join('\n');
 
   try {

@@ -2,7 +2,7 @@ import { db } from '../db/index.ts';
 import type { AppSettings, TicketPriority } from '../../shared/types.ts';
 
 const DEFAULTS: AppSettings = {
-  organizationName: 'Escalation Pro',
+  organizationName: 'Service Desk',
   supportEmail: '',
   appUrl: '',
   defaultTeamId: null,

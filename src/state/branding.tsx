@@ -17,7 +17,7 @@ interface BrandingState extends Branding {
   refresh: () => Promise<void>;
 }
 
-const FALLBACK: Branding = { organizationName: 'Escalation Pro', logoUrl: null };
+const FALLBACK: Branding = { organizationName: 'Service Desk', logoUrl: null };
 
 const BrandingContext = createContext<BrandingState | null>(null);
 

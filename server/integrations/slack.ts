@@ -1,8 +1,16 @@
-import { postJson, type DeliveryResult, type NotificationContext, type TestResult, PRIORITY_HEX } from './types.ts';
+import {
+  postJson,
+  senderName,
+  type DeliveryResult,
+  type NotificationContext,
+  type TestResult,
+  PRIORITY_HEX,
+} from './types.ts';
 import type { IntegrationRecord } from './store.ts';
 import { db } from '../db/index.ts';
 import { addLink } from '../repositories/tickets.ts';
 import { findTeamRoute } from '../repositories/team-routing.ts';
+import { ticketActionButtons } from './slack-actions.ts';
 
 export interface SlackConfig {
   /** Incoming webhook URL (https://hooks.slack.com/services/...). */
@@ -75,17 +83,12 @@ function buildMessage(ctx: NotificationContext, mention?: string | null) {
     elements: [{ type: 'mrkdwn', text: `Updated by ${ctx.actorName} · ${new Date().toUTCString()}` }],
   });
 
-  blocks.push({
-    type: 'actions',
-    elements: [
-      {
-        type: 'button',
-        text: { type: 'plain_text', text: 'Open ticket' },
-        url: ctx.ticketUrl,
-        style: ticket.priority === 'urgent' ? 'danger' : undefined,
-      },
-    ],
-  });
+  /*
+      * Resolve/Close/Reopen alongside the link. Whether a click is honoured is
+      * decided when it arrives, not here: the buttons are visible to everyone
+      * who can see the channel.
+      */
+  blocks.push(ticketActionButtons(ticket, ctx.ticketUrl));
 
   return {
     // Also the push-notification line, so a phone shows who is being asked.
@@ -98,6 +101,7 @@ function buildMessage(ctx: NotificationContext, mention?: string | null) {
 export async function testSlack(record: IntegrationRecord): Promise<TestResult> {
   const config = readConfig(record);
   const useBot = config.mode === 'bot';
+  const sender = await senderName();
 
   if (useBot) {
     if (!config.botToken) return { ok: false, message: 'A bot token is required when using bot mode.' };
@@ -133,13 +137,13 @@ export async function testSlack(record: IntegrationRecord): Promise<TestResult> 
       },
       body: JSON.stringify({
         channel: config.channel,
-        text: 'Escalation Pro connection test',
+        text: `${sender} connection test`,
         blocks: [
           {
             type: 'section',
             text: {
               type: 'mrkdwn',
-              text: '*Escalation Pro is connected.*\nThis channel will receive ticket notifications.',
+              text: `*${sender} is connected.*\nThis channel will receive ticket notifications.`,
             },
           },
         ],
@@ -173,13 +177,13 @@ export async function testSlack(record: IntegrationRecord): Promise<TestResult> 
   }
 
   const { status, text } = await postJson(config.webhookUrl, {
-    text: 'Escalation Pro connection test',
+    text: `${sender} connection test`,
     blocks: [
       {
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: '*Escalation Pro is connected.*\nThis channel will receive ticket notifications.',
+          text: `*${sender} is connected.*\nThis channel will receive ticket notifications.`,
         },
       },
     ],

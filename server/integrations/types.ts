@@ -1,4 +1,22 @@
 import type { Ticket } from '../../shared/types.ts';
+import { getSettings } from '../repositories/settings.ts';
+
+/**
+ * The name this app signs outbound messages with.
+ *
+ * Messages posted into Slack, Linear or Teams carry the organisation's own
+ * name, not a product name: the people reading them work for the
+ * organisation, and a tool's name in the channel tells them nothing useful.
+ */
+export async function senderName(): Promise<string> {
+  try {
+    const settings = await getSettings();
+    return settings.organizationName.trim() || 'Service Desk';
+  } catch {
+    // A test should still say something sensible if settings cannot be read.
+    return 'Service Desk';
+  }
+}
 
 export type IntegrationEvent =
   | 'ticketCreated'

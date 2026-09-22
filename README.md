@@ -1,4 +1,4 @@
-# Escalation Pro
+# InfraTicket
 
 A departmental ticketing and escalation management system. Tickets are routed to
 teams, tracked against SLA targets, escalated when they stall, and mirrored into
@@ -226,6 +226,23 @@ credential is encrypted with AES-256-GCM before it is stored, and each provider
 has a **Test connection** button that calls the real service and reports exactly
 what came back.
 
+Not every provider can carry traffic in both directions. What each one actually
+supports:
+
+| | Notifications out | Reply to a ticket | Change its status |
+|---|---|---|---|
+| **Slack** (bot token) | yes | yes, in the ticket's thread | yes, from the buttons on the message |
+| **Slack** (incoming webhook) | yes | no — a webhook cannot receive | no |
+| **Linear** | yes, as a mirrored issue | yes, comments sync both ways | yes, moving the issue moves the ticket |
+| **Microsoft Teams** | yes | no | no |
+| **Email** | yes | no | no |
+
+Teams is one-way because an incoming webhook is a URL you post *to*; Microsoft
+provides no callback on it. Accepting replies or status changes from Teams would
+mean registering a full Teams bot (an Azure app registration, a Bot Service
+resource, and a messaging endpoint), which this app does not do. Every card
+links back to the ticket.
+
 ### Slack
 
 Either method works:
@@ -239,13 +256,32 @@ Either method works:
 Messages are sent as Block Kit, with a priority-coloured bar and a button that
 opens the ticket.
 
+With a bot token, Slack can also send work back:
+
+- **Replies.** Each ticket gets one thread, and anything typed in that thread
+  becomes a public comment on the ticket. Set the **signing secret**, point
+  Slack → *Event Subscriptions* at `https://your-host/api/webhooks/slack`, and
+  subscribe to `message.channels`. Add the `users:read` and `users:read.email`
+  scopes so replies are attributed to the right person.
+- **Resolve, Close and Reopen.** Each message carries buttons. Turn on Slack →
+  *Interactivity & Shortcuts* and point it at
+  `https://your-host/api/webhooks/slack/interactive`.
+
+A click is only honoured when the clicker's Slack email matches an active
+account here that holds the *Update tickets* permission — the buttons are
+visible to everyone in the channel, so the click itself proves nothing. A
+refused click is answered privately and changes nothing. Every accepted one is
+written to the audit trail against the person who made it.
+
 ### Microsoft Teams
 
 In Teams: channel → **⋯** → **Workflows** → *Post to a channel when a webhook
 request is received*. Paste the generated URL.
 
+This is send-only — see the table above.
+
 Microsoft is retiring the older Office 365 connectors in favour of Workflows,
-and the two accept different payloads. Escalation Pro detects which one your URL
+and the two accept different payloads. InfraTicket detects which one your URL
 needs from its host and sends an Adaptive Card or a MessageCard accordingly. You
 can override the choice if detection gets it wrong.
 

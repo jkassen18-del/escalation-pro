@@ -436,6 +436,18 @@ function SlackFields({ config, set }: { config: Record<string, unknown>; set: (k
               className="font-mono text-xs"
             />
           </Field>
+
+          <Field
+            label="Interactivity Request URL"
+            hint="Slack API → Interactivity & Shortcuts → turn it on and paste this. Without it the Resolve, Close and Reopen buttons on each ticket message do nothing. A click is only honoured when the Slack account's email matches an active user here who can update tickets."
+          >
+            <Input
+              readOnly
+              value={`${window.location.origin}/api/webhooks/slack/interactive`}
+              onFocus={(event) => event.currentTarget.select()}
+              className="font-mono text-xs"
+            />
+          </Field>
         </div>
       )}
     </div>
@@ -445,6 +457,12 @@ function SlackFields({ config, set }: { config: Record<string, unknown>; set: (k
 function TeamsFields({ config, set }: { config: Record<string, unknown>; set: (k: string, v: unknown) => void }) {
   return (
     <div className="space-y-3">
+      <p className="rounded-sm border border-[var(--border)] bg-[var(--surface)] px-2.5 py-2 text-xs leading-relaxed text-muted">
+        Teams notifications are one-way. An incoming webhook can be posted to but cannot call back, so replying to a
+        card or closing a ticket from Teams is not possible without registering a full Teams bot. Use Slack, or the
+        link on each card, for those.
+      </p>
+
       <Field
         label="Webhook URL"
         hint="In Teams: channel → ⋯ → Workflows → 'Post to a channel when a webhook request is received'."
@@ -643,7 +661,7 @@ function EmailFields({ config, set }: { config: Record<string, unknown>; set: (k
           <Input
             value={(config.fromName as string) ?? ''}
             onChange={(event) => set('fromName', event.target.value)}
-            placeholder="Escalation Pro"
+            placeholder="Service Desk"
           />
         </Field>
         <Field label="From address">

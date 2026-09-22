@@ -44,7 +44,16 @@ export async function createApp() {
       },
     }),
   );
-  app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+  app.use(
+    express.urlencoded({
+      extended: true,
+      limit: '2mb',
+      // Slack posts button clicks form-encoded, and signs the raw bytes.
+      verify: (req, _res, buf) => {
+        (req as Request & { rawBody?: Buffer }).rawBody = buf;
+      },
+    }),
+  );
   app.use(cookieParser());
 
   /**
@@ -228,7 +237,7 @@ async function main() {
   const app = await createApp();
   const server = app.listen(config.port, config.host, () => {
     console.log('');
-    console.log(`  Escalation Pro`);
+    console.log(`  InfraTicket`);
     console.log(`  → http://localhost:${config.port}`);
     console.log(`  → database: ${db.dialect}`);
     console.log(`  → mode: ${IS_PRODUCTION ? 'production' : 'development'}`);
@@ -280,7 +289,7 @@ function isEntryModule(): boolean {
 
 if (!IS_SERVERLESS && isEntryModule()) {
   main().catch((error) => {
-    console.error('\n[fatal] Escalation Pro failed to start:\n');
+    console.error('\n[fatal] InfraTicket failed to start:\n');
     console.error(error instanceof Error ? error.message : error);
     process.exit(1);
   });

@@ -1,9 +1,9 @@
 {
-  "name": "escalation-pro",
+  "name": "infraticket",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Escalation Pro - a departmental ticketing and escalation management system.",
+  "description": "InfraTicket - a departmental ticketing and escalation management system.",
   "engines": {
     "node": ">=20.11"
   },

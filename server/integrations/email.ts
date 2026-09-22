@@ -1,7 +1,7 @@
 import nodemailer, { type Transporter } from 'nodemailer';
 import type { DeliveryResult, NotificationContext, TestResult } from './types.ts';
 import type { IntegrationRecord } from './store.ts';
-import { PRIORITY_HEX } from './types.ts';
+import { PRIORITY_HEX, senderName } from './types.ts';
 
 export interface EmailConfig {
   host?: string;
@@ -107,6 +107,7 @@ export async function testEmail(record: IntegrationRecord, recipient?: string): 
     const transport = buildTransport(config);
     await transport.verify();
 
+    const sender = await senderName();
     const to = recipient || config.fromEmail || config.username;
     if (!to) {
       return { ok: true, message: 'SMTP credentials verified. Set a from-address to send test mail.' };
@@ -115,9 +116,9 @@ export async function testEmail(record: IntegrationRecord, recipient?: string): 
     const info = await transport.sendMail({
       from: fromAddress(config),
       to,
-      subject: 'Escalation Pro SMTP test',
-      text: 'Escalation Pro connected to this mail server successfully.',
-      html: '<p>Escalation Pro connected to this mail server successfully.</p>',
+      subject: `${sender} SMTP test`,
+      text: `${sender} connected to this mail server successfully.`,
+      html: `<p>${escapeHtml(sender)} connected to this mail server successfully.</p>`,
     });
 
     return { ok: true, message: `SMTP verified and a test message was sent to ${to}.`, details: { messageId: info.messageId } };

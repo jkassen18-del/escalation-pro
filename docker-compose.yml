@@ -21,7 +21,7 @@ services:
       # Creates the first administrator on a fresh database. Ignored afterwards.
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
-      ORGANIZATION_NAME: ${ORGANIZATION_NAME:-Escalation Pro}
+      ORGANIZATION_NAME: ${ORGANIZATION_NAME:-Service Desk}
       # Required to claim the first admin account. Set this before exposing the
       # app publicly, or the first stranger to find the URL becomes the admin.
       SETUP_TOKEN: ${SETUP_TOKEN:-}
