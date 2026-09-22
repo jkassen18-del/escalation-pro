@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Activity, Plus, Trash2 } from 'lucide-react';
+import { Activity, Plus, Send, Trash2 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/state/auth';
 import { useToast } from '@/components/ui/Toast';
@@ -13,10 +13,12 @@ import { useDocumentTitle } from '@/state/branding';
 import { relativeTime } from '@/lib/format';
 import {
   ALERT_SOURCE_KINDS,
+  PROBE_AUTH_KINDS,
   type Alert,
   type AlertSeverity,
   type AlertSource,
   type Heartbeat,
+  type Probe,
   type Team,
 } from '@shared/types';
 
@@ -43,16 +45,18 @@ export function InfraGridPage() {
   const [sources, setSources] = useState<AlertSource[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [heartbeats, setHeartbeats] = useState<Heartbeat[]>([]);
+  const [probes, setProbes] = useState<Probe[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(true);
   const [issued, setIssued] = useState<{ label: string; url: string } | null>(null);
 
   const load = async () => {
     try {
-      const data = await api.infragrid.overview();
+      const [data, probeData] = await Promise.all([api.infragrid.overview(), api.infragrid.probes()]);
       setSources(data.sources);
       setAlerts(data.alerts);
       setHeartbeats(data.heartbeats);
+      setProbes(probeData.probes);
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : 'Could not load InfraGrid.');
     } finally {
@@ -82,10 +86,13 @@ export function InfraGridPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        title="InfraGrid"
-        description="Every system watching the estate, and what they are reporting right now."
-      />
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <PageHeader
+          title="InfraGrid"
+          description="Every system watching the estate, and what they are reporting right now."
+        />
+        {manage && <TestAlert teams={teams} onSent={load} />}
+      </div>
 
       {issued && (
         <div className="rounded-md border border-[var(--status-open)] bg-[var(--status-open)]/5 px-4 py-3">
@@ -143,6 +150,8 @@ export function InfraGridPage() {
         onChanged={load}
         onIssued={setIssued}
       />
+
+      <Probes probes={probes} teams={teams} manage={manage} onChanged={load} />
 
       <Heartbeats
         heartbeats={heartbeats}
@@ -430,5 +439,282 @@ function Heartbeats({
         </ul>
       )}
     </section>
+  );
+}
+
+/**
+ * APIs this system calls out to and checks.
+ *
+ * The pull half of InfraGrid. A webhook only arrives while the far end is
+ * well enough to send one, so a service that has fallen over entirely is
+ * exactly what an inbound-only setup cannot see.
+ */
+function Probes({
+  probes,
+  teams,
+  manage,
+  onChanged,
+}: {
+  probes: Probe[];
+  teams: Team[];
+  manage: boolean;
+  onChanged: () => void;
+}) {
+  const toast = useToast();
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({
+    name: '',
+    url: '',
+    authKind: 'none',
+    authName: '',
+    authSecret: '',
+    intervalSeconds: '300',
+    teamId: '',
+  });
+
+  const set = (key: keyof typeof form) => (event: { target: { value: string } }) =>
+    setForm((current) => ({ ...current, [key]: event.target.value }));
+
+  const add = async () => {
+    if (!form.name.trim() || !form.url.trim()) return;
+    setBusy(true);
+    try {
+      await api.infragrid.createProbe({
+        name: form.name.trim(),
+        url: form.url.trim(),
+        authKind: form.authKind,
+        authName: form.authName || null,
+        authSecret: form.authSecret || null,
+        intervalSeconds: Number(form.intervalSeconds),
+        teamId: form.teamId || null,
+      });
+      setForm({ name: '', url: '', authKind: 'none', authName: '', authSecret: '', intervalSeconds: '300', teamId: '' });
+      setAdding(false);
+      onChanged();
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Could not add that check.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runNow = async (probe: Probe) => {
+    try {
+      const { result } = await api.infragrid.runProbe(probe.id);
+      if (result.ok) {
+        toast.success(`${probe.name} answered ${result.statusCode} in ${result.latencyMs}ms.`);
+      } else {
+        // The whole point of running it by hand is to see why it failed.
+        toast.error(`${probe.name}: ${result.error}`);
+      }
+      onChanged();
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Could not run that check.');
+    }
+  };
+
+  // Only these two kinds need somewhere to put a name.
+  const needsName = form.authKind === 'header' || form.authKind === 'query';
+
+  return (
+    <section className="rounded-md border surface">
+      <header className="flex items-center justify-between border-b px-4 py-2.5">
+        <div>
+          <h2 className="text-xs font-semibold">API health checks</h2>
+          <p className="mt-0.5 text-xs text-muted">
+            Polled from here. A webhook only arrives while the far end is well enough to send one.
+          </p>
+        </div>
+        {manage && (
+          <Button size="sm" variant="ghost" onClick={() => setAdding((value) => !value)}>
+            <Plus size={14} /> Add a check
+          </Button>
+        )}
+      </header>
+
+      {adding && manage && (
+        <div className="space-y-2 border-b bg-[var(--surface)] px-4 py-3">
+          <div className="flex flex-wrap items-end gap-2">
+            <Field label="Name" className="min-w-40 flex-1">
+              <Input value={form.name} onChange={set('name')} placeholder="DigitalOcean API" />
+            </Field>
+            <Field label="URL" className="min-w-64 flex-[2]">
+              <Input value={form.url} onChange={set('url')} placeholder="https://api.digitalocean.com/v2/account" />
+            </Field>
+            <Field label="Every" className="min-w-28">
+              <Select value={form.intervalSeconds} onChange={set('intervalSeconds')}>
+                <option value="60">Minute</option>
+                <option value="300">5 minutes</option>
+                <option value="900">15 minutes</option>
+                <option value="3600">Hour</option>
+              </Select>
+            </Field>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-2">
+            <Field label="Authentication" className="min-w-40 flex-1">
+              <Select value={form.authKind} onChange={set('authKind')}>
+                {PROBE_AUTH_KINDS.map((kind) => (
+                  <option key={kind} value={kind}>
+                    {AUTH_LABELS[kind]}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+
+            {needsName && (
+              <Field label={form.authKind === 'header' ? 'Header name' : 'Parameter name'} className="min-w-40 flex-1">
+                <Input value={form.authName} onChange={set('authName')} placeholder="X-Api-Key" />
+              </Field>
+            )}
+
+            {form.authKind !== 'none' && (
+              <Field
+                label={form.authKind === 'basic' ? 'user:password' : 'Value'}
+                className="min-w-48 flex-1"
+                hint={form.authKind === 'basic' ? 'Encoded for you before it is sent.' : undefined}
+              >
+                <Input
+                  type="password"
+                  value={form.authSecret}
+                  onChange={set('authSecret')}
+                  className="font-mono text-xs"
+                />
+              </Field>
+            )}
+
+            <Field label="Route to" className="min-w-36 flex-1">
+              <Select value={form.teamId} onChange={set('teamId')}>
+                <option value="">Default department</option>
+                {teams.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {team.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+
+            <Button onClick={add} loading={busy} disabled={!form.name.trim() || !form.url.trim()}>
+              Add
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {probes.length === 0 ? (
+        <p className="px-4 py-6 text-center text-xs text-muted">
+          No checks yet. Add one for any API you have credentials for — or none, if it needs no authentication.
+        </p>
+      ) : (
+        <ul className="divide-y">
+          {probes.map((probe) => (
+            <li key={probe.id} className="flex items-center gap-3 px-4 py-2.5">
+              <span
+                className={`h-2 w-2 shrink-0 rounded-full ${
+                  probe.status === 'down'
+                    ? 'bg-[var(--priority-urgent)]'
+                    : probe.status === 'up'
+                      ? 'bg-[var(--status-resolved)]'
+                      : 'bg-[var(--border-strong)]'
+                }`}
+                aria-label={probe.status}
+              />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-medium">{probe.name}</p>
+                <p className="truncate text-[11px] text-muted">
+                  {probe.url}
+                  {probe.authKind !== 'none' && ` · ${AUTH_LABELS[probe.authKind]}`}
+                </p>
+                {probe.status === 'down' && probe.lastError && (
+                  <p className="mt-0.5 text-[11px] text-[var(--priority-urgent)]">{probe.lastError}</p>
+                )}
+              </div>
+              <span className="hidden shrink-0 text-[11px] text-muted sm:block">
+                {probe.lastCheckedAt
+                  ? probe.status === 'up'
+                    ? `${probe.lastLatencyMs}ms · ${relativeTime(probe.lastCheckedAt)}`
+                    : relativeTime(probe.lastCheckedAt)
+                  : 'Not checked yet'}
+              </span>
+              {manage && (
+                <>
+                  <Button size="sm" variant="ghost" onClick={() => runNow(probe)}>
+                    Run now
+                  </Button>
+                  <button
+                    onClick={async () => {
+                      await api.infragrid.removeProbe(probe.id);
+                      onChanged();
+                    }}
+                    className="shrink-0 text-muted hover:text-[var(--priority-urgent)]"
+                    aria-label={`Delete ${probe.name}`}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+const AUTH_LABELS: Record<string, string> = {
+  none: 'No authentication',
+  bearer: 'Bearer token',
+  basic: 'Basic auth',
+  header: 'Custom header',
+  query: 'Query parameter',
+};
+
+/**
+ * Fires a synthetic alert down the real path.
+ *
+ * Each integration has a connection test of its own, but those prove the
+ * credential works - not that an alert actually reaches a person, which also
+ * depends on routing, on which events each integration subscribes to, and on
+ * a ticket being created at all. This exercises the lot.
+ */
+function TestAlert({ teams, onSent }: { teams: Team[]; onSent: () => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [teamId, setTeamId] = useState('');
+
+  const send = async () => {
+    setBusy(true);
+    try {
+      const result = await api.infragrid.testAlert({ severity: 'critical', teamId: teamId || null });
+      toast.success(
+        result.ticketReference
+          ? `Raised ${result.ticketReference}. Check email, Slack, Teams and Linear.`
+          : 'Test alert recorded.',
+      );
+      onSent();
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Could not send the test alert.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex items-end gap-2">
+      <Field label="Test alert" className="min-w-36">
+        <Select value={teamId} onChange={(event) => setTeamId(event.target.value)}>
+          <option value="">Default department</option>
+          {teams.map((team) => (
+            <option key={team.id} value={team.id}>
+              {team.name}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <Button variant="ghost" onClick={send} loading={busy}>
+        <Send size={14} /> Send one
+      </Button>
+    </div>
   );
 }

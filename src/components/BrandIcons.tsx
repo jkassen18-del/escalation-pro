@@ -11,7 +11,7 @@
  * guidelines prohibit.
  */
 import type { ReactElement, SVGProps } from 'react';
-import { Activity, Mail, Webhook } from 'lucide-react';
+import { Activity, Mail, Radar, Webhook } from 'lucide-react';
 import type { AlertSourceKind, IntegrationProvider } from '@shared/types';
 
 type IconProps = SVGProps<SVGSVGElement> & { className?: string };
@@ -221,6 +221,10 @@ export function HeartbeatIcon({ className }: { className?: string }) {
   return <Activity className={className} aria-label="Heartbeat" />;
 }
 
+export function ProbeIcon({ className }: { className?: string }) {
+  return <Radar className={className} aria-label="API probe" />;
+}
+
 export function GenericSourceIcon({ className }: { className?: string }) {
   return <Webhook className={className} aria-label="Webhook" />;
 }
@@ -235,6 +239,7 @@ const SOURCE_ICONS: Record<AlertSourceKind, (props: { className?: string }) => R
   linux: LinuxIcon,
   windows: WindowsServerIcon,
   heartbeat: HeartbeatIcon,
+  probe: ProbeIcon,
   generic: GenericSourceIcon,
 };
 
@@ -254,5 +259,6 @@ export const SOURCE_LABELS: Record<AlertSourceKind, string> = {
   linux: 'Linux servers',
   windows: 'Windows servers',
   heartbeat: 'Heartbeats',
+  probe: 'API health checks',
   generic: 'Generic webhook',
 };

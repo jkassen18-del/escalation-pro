@@ -4,6 +4,7 @@ import { getSettings } from '../repositories/settings.ts';
 import { findTicket } from '../repositories/tickets.ts';
 import { buildTicketUrl, dispatchAsync } from '../integrations/dispatcher.ts';
 import { sweepHeartbeats } from '../infragrid/sweep.ts';
+import { sweepProbes } from '../infragrid/probes.ts';
 
 const CHECK_INTERVAL_MS = Number(process.env.SLA_CHECK_INTERVAL_MS || 5 * 60 * 1000);
 
@@ -68,6 +69,9 @@ export function startSlaMonitor(): () => void {
     void checkBreaches().catch((error) => console.error('[sla] check failed', error));
     // Heartbeats ride the same timer: silence is only noticed by looking.
     void sweepHeartbeats().catch((error) => console.error('[heartbeat] sweep failed', error));
+    // And the outbound checks: the only thing that notices a service which
+    // has stopped answering altogether.
+    void sweepProbes().catch((error) => console.error('[probe] sweep failed', error));
   };
 
   // Give the server a moment to finish booting before the first sweep.

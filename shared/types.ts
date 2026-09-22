@@ -345,6 +345,7 @@ export const ALERT_SOURCE_KINDS = [
   'linux',
   'windows',
   'heartbeat',
+  'probe',
   'generic',
 ] as const;
 export type AlertSourceKind = (typeof ALERT_SOURCE_KINDS)[number];
@@ -385,6 +386,36 @@ export interface Alert {
   firstSeenAt: string;
   lastSeenAt: string;
   resolvedAt: string | null;
+}
+
+/** How a probe proves who it is. Not every API needs one. */
+export const PROBE_AUTH_KINDS = ['none', 'bearer', 'basic', 'header', 'query'] as const;
+export type ProbeAuthKind = (typeof PROBE_AUTH_KINDS)[number];
+
+export interface Probe {
+  id: string;
+  name: string;
+  url: string;
+  method: string;
+  authKind: ProbeAuthKind;
+  authName: string | null;
+  /** True when a credential is stored. The value itself never leaves the server. */
+  hasSecret: boolean;
+  expectStatus: string;
+  expectBody: string | null;
+  intervalSeconds: number;
+  timeoutMs: number;
+  failureThreshold: number;
+  severity: AlertSeverity;
+  teamId: string | null;
+  enabled: boolean;
+  status: 'unknown' | 'up' | 'down';
+  consecutiveFailures: number;
+  lastCheckedAt: string | null;
+  lastStatusCode: number | null;
+  lastLatencyMs: number | null;
+  lastError: string | null;
+  createdAt: string;
 }
 
 export interface Heartbeat {

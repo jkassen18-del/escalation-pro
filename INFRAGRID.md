@@ -83,6 +83,85 @@ Each source has a **ticket threshold**. At or above it an alert opens a
 ticket (`critical` → urgent, `warning` → high). Below it the alert is still
 recorded and still shown on the grid, but wakes nobody.
 
+## API health checks (polling)
+
+The other direction. A webhook only arrives while the far end is *well
+enough to send one*, so a service that has fallen over entirely is precisely
+what an inbound-only setup cannot see. A check calls out on a schedule.
+
+**InfraGrid → API health checks → Add a check.**
+
+Authentication is **per check**, because not every endpoint needs one:
+
+| Kind | What you supply | Sent as |
+|---|---|---|
+| **No authentication** | nothing | — |
+| **Bearer token** | the token | `Authorization: Bearer <token>` |
+| **Basic auth** | `user:password` | `Authorization: Basic <base64>`, encoded for you |
+| **Custom header** | header name + value | that header |
+| **Query parameter** | parameter name + value | appended to the URL, keeping any existing query |
+
+Credentials are encrypted at rest with the same key as every other secret
+here and are never returned to the browser — the UI only knows *whether* one
+is set.
+
+Examples:
+
+| System | URL | Auth |
+|---|---|---|
+| DigitalOcean | `https://api.digitalocean.com/v2/account` | Bearer |
+| Jenkins | `https://jenkins.internal/api/json` | Basic, `user:api-token` |
+| Azure | any app's `/health` endpoint | usually none |
+| Internal service | `http://10.0.4.12:8080/health` | whatever it wants |
+
+**Run now** calls it immediately and tells you what came back, so a typo or a
+wrong credential surfaces in a second rather than at the next sweep. It
+deliberately does not raise or clear alerts — it answers "does this work",
+not "is the service down".
+
+### What counts as unhealthy
+
+- the status code does not match (default: any `2xx`)
+- an optional **expected body** string is missing — this is what catches the
+  service that is up and answering `200` while its own health endpoint says
+  it cannot reach its database
+- nothing answers within the timeout
+
+A failure must repeat **`failureThreshold` times** (default 2) before it
+alerts. One timeout is a blip, and waking somebody for a blip is how people
+learn to ignore the alerts — which costs far more than the blip did.
+
+Recovery is immediate: the next successful check clears the alert and
+comments on the ticket.
+
+### What cannot be probed
+
+Internal and private addresses **are** allowed — checking that the internal
+Jenkins still answers is the whole point, and the outbound-webhook guard's
+refusal of private ranges would make this useless on-premises.
+
+Cloud **metadata endpoints** are blocked: `169.254.169.254`,
+`metadata.google.internal` and friends. Those are never a legitimate health
+check and are the actual prize in an SSRF — they hand out instance
+credentials to anything that asks from the right place.
+
+## Sending a test alert
+
+**InfraGrid → Test alert → Send one.**
+
+Each integration has a connection test of its own, but those prove the
+*credential* works. They do not prove an alert reaches a person, which also
+depends on the routing, on which events each integration subscribes to, and
+on a ticket being created at all.
+
+This pushes a synthetic alert down the same path a real one takes: it becomes
+an alert, opens a ticket at urgent priority, and fans out. **Wherever it
+arrives is where a genuine alert would arrive** — email, Slack, Teams, and
+Linear if the priority meets its mirror threshold.
+
+Two presses give two tickets: deduplication is right for a real condition
+re-firing and wrong for a test you are trying to watch. Close them afterwards.
+
 ## Heartbeats
 
 For jobs where **silence is the failure**. A cron that stops running sends

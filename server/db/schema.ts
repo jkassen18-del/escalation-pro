@@ -432,6 +432,52 @@ const TABLES: string[] = [
     updated_at TEXT NOT NULL
   )`,
 
+  /*
+   * APIs this system calls out to and checks.
+   *
+   * The other half of InfraGrid. Webhooks are push: they only tell you about
+   * something when the far end is well enough to send. A probe is pull, and
+   * is the only thing that notices a service that has stopped answering
+   * altogether.
+   *
+   * The credential is encrypted at rest with the same key as every other
+   * secret here, and is never returned to the browser.
+   */
+  `CREATE TABLE IF NOT EXISTS probes (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    method TEXT NOT NULL DEFAULT 'GET',
+    /* none | bearer | basic | header | query */
+    auth_kind TEXT NOT NULL DEFAULT 'none',
+    /* Header or query-parameter name, for those two kinds. */
+    auth_name TEXT,
+    auth_secret TEXT,
+    /* '2xx' for any success, or an exact code like '204'. */
+    expect_status TEXT NOT NULL DEFAULT '2xx',
+    /* Optional: text that must appear in the body for the check to pass. */
+    expect_body TEXT,
+    interval_seconds INTEGER NOT NULL DEFAULT 300,
+    timeout_ms INTEGER NOT NULL DEFAULT 10000,
+    /*
+     * How many consecutive failures before it alerts. One is a blip; the
+     * default of two is what stops a momentary timeout waking somebody.
+     */
+    failure_threshold INTEGER NOT NULL DEFAULT 2,
+    severity TEXT NOT NULL DEFAULT 'critical',
+    team_id TEXT REFERENCES teams(id) ON DELETE SET NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    /* unknown | up | down */
+    status TEXT NOT NULL DEFAULT 'unknown',
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    last_checked_at TEXT,
+    last_status_code INTEGER,
+    last_latency_ms INTEGER,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
   `CREATE TABLE IF NOT EXISTS sessions (
     sid TEXT PRIMARY KEY,
     data TEXT NOT NULL,
@@ -461,6 +507,7 @@ const INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_alerts_dedupe ON alerts(source_id, dedupe_key, status)`,
   `CREATE INDEX IF NOT EXISTS idx_alerts_last_seen ON alerts(last_seen_at)`,
   `CREATE INDEX IF NOT EXISTS idx_sources_prefix ON alert_sources(token_prefix)`,
+  `CREATE INDEX IF NOT EXISTS idx_probes_enabled ON probes(enabled, last_checked_at)`,
 ];
 
 /**

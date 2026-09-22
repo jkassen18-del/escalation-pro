@@ -19,7 +19,17 @@ import {
   updateSource,
 } from '../infragrid/store.ts';
 import { db } from '../db/index.ts';
-import { ALERT_SEVERITIES, ALERT_SOURCE_KINDS } from '../../shared/types.ts';
+import { ALERT_SEVERITIES, ALERT_SOURCE_KINDS, PROBE_AUTH_KINDS } from '../../shared/types.ts';
+import {
+  createProbe,
+  deleteProbe,
+  findProbe,
+  listProbes,
+  probeSource,
+  runProbe,
+  updateProbe,
+} from '../infragrid/probes.ts';
+import { randomId } from '../lib/crypto.ts';
 
 /**
  * InfraGrid.
@@ -256,5 +266,147 @@ infragridRouter.delete(
   asyncRoute(async (req, res) => {
     if (!(await deleteHeartbeat(req.params.id))) throw notFound('No such heartbeat.');
     res.json({ ok: true });
+  }),
+);
+
+/* --------------------------- API health probes ---------------------------- */
+
+infragridRouter.get(
+  '/probes',
+  asyncRoute(async (_req, res) => {
+    res.json({ probes: await listProbes() });
+  }),
+);
+
+infragridRouter.post(
+  '/probes',
+  requirePermission('integrations.manage'),
+  asyncRoute(async (req, res) => {
+    const actor = (req as AuthedRequest).user;
+    const probe = await createProbe({
+      name: requireString(req.body?.name, 'Name', { max: 120 }),
+      url: requireString(req.body?.url, 'URL', { max: 2000 }),
+      method: optionalString(req.body?.method, 10) ?? 'GET',
+      authKind: requireEnum(req.body?.authKind ?? 'none', PROBE_AUTH_KINDS, 'Authentication'),
+      authName: optionalString(req.body?.authName, 120),
+      authSecret: optionalString(req.body?.authSecret, 4000),
+      expectStatus: optionalString(req.body?.expectStatus, 10) ?? '2xx',
+      expectBody: optionalString(req.body?.expectBody, 200),
+      intervalSeconds: parseIntOr(req.body?.intervalSeconds, 300),
+      timeoutMs: parseIntOr(req.body?.timeoutMs, 10_000),
+      failureThreshold: parseIntOr(req.body?.failureThreshold, 2),
+      severity: requireEnum(req.body?.severity ?? 'critical', ALERT_SEVERITIES, 'Severity'),
+      teamId: optionalString(req.body?.teamId, 60),
+    });
+
+    await recordAudit({
+      actorId: actor.id,
+      actorName: actor.name,
+      entityType: 'system',
+      entityId: probe.id,
+      action: 'probe_created',
+      summary: `Added the health check "${probe.name}"`,
+      ip: clientIp(req),
+    });
+
+    res.status(201).json({ probe });
+  }),
+);
+
+infragridRouter.patch(
+  '/probes/:id',
+  requirePermission('integrations.manage'),
+  asyncRoute(async (req, res) => {
+    const probe = await updateProbe(req.params.id, {
+      name: optionalString(req.body?.name, 120) ?? undefined,
+      url: optionalString(req.body?.url, 2000) ?? undefined,
+      authKind: req.body?.authKind ? requireEnum(req.body.authKind, PROBE_AUTH_KINDS, 'Authentication') : undefined,
+      authName: req.body?.authName === undefined ? undefined : optionalString(req.body.authName, 120),
+      authSecret: optionalString(req.body?.authSecret, 4000),
+      expectStatus: optionalString(req.body?.expectStatus, 10) ?? undefined,
+      expectBody: req.body?.expectBody === undefined ? undefined : optionalString(req.body.expectBody, 200),
+      intervalSeconds: req.body?.intervalSeconds === undefined ? undefined : parseIntOr(req.body.intervalSeconds, 300),
+      failureThreshold:
+        req.body?.failureThreshold === undefined ? undefined : parseIntOr(req.body.failureThreshold, 2),
+      teamId: req.body?.teamId === undefined ? undefined : optionalString(req.body.teamId, 60),
+      enabled: typeof req.body?.enabled === 'boolean' ? req.body.enabled : undefined,
+    });
+    if (!probe) throw notFound('No such health check.');
+    res.json({ probe });
+  }),
+);
+
+infragridRouter.delete(
+  '/probes/:id',
+  requirePermission('integrations.manage'),
+  asyncRoute(async (req, res) => {
+    if (!(await deleteProbe(req.params.id))) throw notFound('No such health check.');
+    res.json({ ok: true });
+  }),
+);
+
+/**
+ * Runs one probe now and reports what came back.
+ *
+ * Without this, setting up a check is guesswork until the next sweep - and a
+ * typo in a URL or a wrong credential is invisible for five minutes. This
+ * deliberately does not raise or clear alerts: it answers "does this work",
+ * not "is the service down".
+ */
+infragridRouter.post(
+  '/probes/:id/run',
+  requirePermission('integrations.manage'),
+  asyncRoute(async (req, res) => {
+    const probe = await findProbe(req.params.id);
+    if (!probe) throw notFound('No such health check.');
+    res.json({ result: await runProbe(probe) });
+  }),
+);
+
+/**
+ * Pushes a synthetic alert through the real pipeline.
+ *
+ * The point is to see it arrive. Every integration has a connection test of
+ * its own, but those prove the credential works, not that an alert actually
+ * reaches a person - which depends on the routing, the events each
+ * integration subscribes to, and the ticket being created at all. This runs
+ * the whole path, so whatever lands in email, Slack, Teams and Linear is
+ * exactly what a real alert would produce.
+ */
+infragridRouter.post(
+  '/test-alert',
+  requirePermission('integrations.manage'),
+  asyncRoute(async (req, res) => {
+    const actor = (req as AuthedRequest).user;
+    const severity = requireEnum(req.body?.severity ?? 'critical', ALERT_SEVERITIES, 'Severity');
+    const teamId = optionalString(req.body?.teamId, 60);
+
+    const source = await probeSource();
+    const outcome = await ingestAlert(
+      { ...source, teamId: teamId ?? source.teamId, ticketThreshold: 'info' },
+      {
+        // Unique per test, so it is never folded into a previous one and is
+        // obviously disposable afterwards.
+        dedupeKey: `test:${randomId()}`,
+        title: `Test alert from ${actor.name}`,
+        body:
+          'This is a test raised from InfraGrid. It went through the same path a real alert does, ' +
+          'so wherever this arrived is where a genuine alert would arrive. Close the ticket when you are done.',
+        severity,
+        status: 'firing',
+        resource: 'infragrid-test',
+      },
+    );
+
+    await recordAudit({
+      actorId: actor.id,
+      actorName: actor.name,
+      entityType: 'system',
+      action: 'test_alert_sent',
+      summary: `Sent a ${severity} test alert`,
+      ip: clientIp(req),
+    });
+
+    res.status(201).json({ ...outcome, severity });
   }),
 );

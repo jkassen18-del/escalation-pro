@@ -209,13 +209,36 @@ function post(body: unknown, token: string | null = mintToken()) {
   });
 }
 
-/** The Adaptive Card in the last thing the bot sent, if there was one. */
-function lastCard(): any {
+/**
+ * An Adaptive Card the bot sent, chosen by what is on it.
+ *
+ * Not "the last card": raising a ticket fans out to the integrations without
+ * being awaited, and that fan-out posts a notification card into the same
+ * conversation. So the confirmation this test is about and an unrelated
+ * notification race each other into `sent`, and taking the most recent one
+ * picks the wrong card perhaps one run in four.
+ */
+function findCard(match: (card: any) => boolean): any {
   for (let i = sent.length - 1; i >= 0; i -= 1) {
     const card = sent[i].body?.attachments?.[0]?.content;
-    if (card) return card;
+    if (card && match(card)) return card;
   }
   return null;
+}
+
+/** Any card at all, for the cases where only its presence matters. */
+function lastCard(): any {
+  return findCard(() => true);
+}
+
+/** The card offering a department's intake form. */
+function formCard(): any {
+  return findCard((card) => (card.body ?? []).some((block: any) => block.id === 'subject'));
+}
+
+/** The card confirming a ticket was raised. */
+function confirmationCard(): any {
+  return findCard((card) => /Raised ESC-\d+/.test(card.body?.[0]?.text ?? ''));
 }
 
 const inputIds = (card: any): string[] =>
@@ -309,8 +332,8 @@ test('mentioning the bot with a department posts that department’s form', asyn
   const response = await post(activity({ text: '<at>InfraTicket</at> finance' }));
   assert.equal(response.status, 200);
 
-  const card = lastCard();
-  assert.ok(card, 'no card was posted');
+  const card = formCard();
+  assert.ok(card, 'no intake form was posted');
   const ids = inputIds(card);
   assert.ok(ids.includes('subject'));
   assert.ok(ids.includes('field:cost_centre'), `expected Finance fields, got ${ids.join(', ')}`);
@@ -368,7 +391,10 @@ test('a submitted card raises a ticket against the right department', async () =
   assert.equal(response.status, 200);
 
   const row = await db.get<{ id: string; subject: string; team_id: string; priority: string; source: string }>(
-    `SELECT id, subject, team_id, priority, source FROM tickets ORDER BY created_at DESC LIMIT 1`,
+    // By subject, not "the most recent": created_at has millisecond
+    // precision and two tickets can share one.
+    `SELECT id, subject, team_id, priority, source FROM tickets WHERE subject = ?`,
+    ['Duplicate invoice from Acme'],
   );
   assert.equal(row!.subject, 'Duplicate invoice from Acme');
   assert.equal(row!.team_id, financeId);
@@ -381,7 +407,8 @@ test('a submitted card raises a ticket against the right department', async () =
   assert.equal(answers.category, 'Invoice');
 
   // And the person is told, in the thread, with a link.
-  const card = lastCard();
+  const card = confirmationCard();
+  assert.ok(card, 'no confirmation card was posted');
   assert.match(card.body[0].text, /Raised ESC-\d+/);
   assert.equal(card.actions[0].type, 'Action.OpenUrl');
 });
@@ -450,7 +477,8 @@ test('a reply in a ticket’s thread becomes a comment on that ticket', async ()
   assert.equal(after, before + 1, 'the reply did not become a comment');
 
   const comment = await db.get<{ body: string; body_format: string; is_internal: number; author_id: string }>(
-    `SELECT body, body_format, is_internal, author_id FROM ticket_comments ORDER BY created_at DESC LIMIT 1`,
+    `SELECT body, body_format, is_internal, author_id FROM ticket_comments WHERE ticket_id = ? ORDER BY created_at DESC LIMIT 1`,
+    [ticket!.id],
   );
   // The HTML Teams sends is flattened, not stored as markup.
   assert.equal(comment!.body, 'Engineer booked for Tuesday.');

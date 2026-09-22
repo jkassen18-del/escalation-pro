@@ -17,6 +17,7 @@ import type {
   AlertSource,
   ApiKeySummary,
   Heartbeat,
+  Probe,
 } from '@shared/types';
 
 export class ApiError extends Error {
@@ -193,6 +194,21 @@ export const api = {
     createHeartbeat: (body: { name: string; periodSeconds: number; graceSeconds?: number; teamId?: string | null }) =>
       post<{ heartbeat: Heartbeat }>('/infragrid/heartbeats', body),
     removeHeartbeat: (id: string) => del<{ ok: true }>(`/infragrid/heartbeats/${id}`),
+
+    probes: () => get<{ probes: Probe[] }>('/infragrid/probes'),
+    createProbe: (body: Record<string, unknown>) => post<{ probe: Probe }>('/infragrid/probes', body),
+    updateProbe: (id: string, body: Record<string, unknown>) =>
+      patch<{ probe: Probe }>(`/infragrid/probes/${id}`, body),
+    removeProbe: (id: string) => del<{ ok: true }>(`/infragrid/probes/${id}`),
+    /** Calls the endpoint once and reports back, without raising an alert. */
+    runProbe: (id: string) =>
+      post<{ result: { ok: boolean; statusCode: number | null; latencyMs: number; error: string | null } }>(
+        `/infragrid/probes/${id}/run`,
+        {},
+      ),
+    /** Pushes a synthetic alert through the whole pipeline. */
+    testAlert: (body: { severity?: string; teamId?: string | null }) =>
+      post<{ status: string; ticketReference?: string | null }>('/infragrid/test-alert', body),
   },
 
   apiKeys: {

@@ -4,6 +4,7 @@ import { timingSafeCompare } from '../lib/crypto.ts';
 import { asyncRoute } from '../lib/http.ts';
 import { checkBreaches } from '../jobs/sla-monitor.ts';
 import { sweepHeartbeats } from '../infragrid/sweep.ts';
+import { sweepProbes } from '../infragrid/probes.ts';
 import { pruneAttempts } from '../lib/rate-limit.ts';
 
 export const cronRouter: Router = Router();
@@ -30,11 +31,13 @@ cronRouter.all(
 
     const notified = await checkBreaches();
     const heartbeats = await sweepHeartbeats();
+    const probes = await sweepProbes();
     await pruneAttempts();
     res.json({
       ok: true,
       breachesNotified: notified,
       heartbeats,
+      probes,
       ranAt: new Date().toISOString(),
     });
   }),

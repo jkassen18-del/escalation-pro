@@ -417,8 +417,10 @@ const ADAPTERS: Record<AlertSourceKind, (payload: Payload) => ParseResult> = {
   ansible,
   linux: server('linux'),
   windows: server('windows'),
-  // Heartbeats never arrive through the ingest endpoint; they have their own.
+  // Neither heartbeats nor probes arrive through the ingest endpoint: one is
+  // a check-in URL, the other is raised by this system calling outwards.
   heartbeat: generic,
+  probe: generic,
   generic,
 };
 

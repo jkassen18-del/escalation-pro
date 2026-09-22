@@ -574,3 +574,61 @@ test('the grid needs a session', async () => {
   const response = await fetch(`${base}/api/infragrid`);
   assert.equal(response.status, 401);
 });
+
+/* ------------------------------ Test alert -------------------------------- */
+
+test('a test alert goes down the same path a real one does', async () => {
+  /*
+   * The point of this button is to see an alert arrive. Each integration has
+   * a connection test of its own, but those prove the credential works - not
+   * that an alert reaches a person, which also depends on routing, on which
+   * events each integration subscribes to, and on a ticket being created at
+   * all. So the test alert must not take a shortcut past any of that.
+   */
+  const before = await ticketCount();
+
+  const response = await fetch(`${base}/api/infragrid/test-alert`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie },
+    body: JSON.stringify({ severity: 'critical', teamId: itTeamId }),
+  });
+  assert.equal(response.status, 201);
+
+  const payload = (await response.json()) as any;
+  assert.equal(payload.status, 'created');
+  assert.match(payload.ticketReference, /^ESC-\d+$/);
+  assert.equal(await ticketCount(), before + 1);
+
+  const ticket = await db.get<{ subject: string; team_id: string; priority: string; source: string }>(
+    `SELECT subject, team_id, priority, source FROM tickets WHERE id = (
+       SELECT ticket_id FROM alerts ORDER BY first_seen_at DESC LIMIT 1)`,
+  );
+  assert.match(ticket!.subject, /Test alert/);
+  assert.equal(ticket!.team_id, itTeamId, 'the test ignored the department it was sent to');
+  // A real critical alert is urgent, so the test one must be too, or it does
+  // not exercise the same notification rules.
+  assert.equal(ticket!.priority, 'urgent');
+});
+
+test('two test alerts do not fold into one', async () => {
+  // Deduplication is right for a real condition re-firing and wrong here:
+  // pressing the button twice should produce two visible alerts.
+  const before = await ticketCount();
+  for (let i = 0; i < 2; i += 1) {
+    await fetch(`${base}/api/infragrid/test-alert`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ severity: 'warning' }),
+    });
+  }
+  assert.equal(await ticketCount(), before + 2);
+});
+
+test('only an administrator can send one', async () => {
+  const response = await fetch(`${base}/api/infragrid/test-alert`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  assert.equal(response.status, 401);
+});
