@@ -204,3 +204,46 @@ test('the key is sent in the body, never in the URL', async () => {
   });
   assert.equal(response.status, 404, 'there must be no GET form of this endpoint');
 });
+
+/* ----------------------- The same trap, on Teams -------------------------- */
+
+async function saveTeams(config: Record<string, unknown>) {
+  const response = await fetch(`${base}/api/integrations/msteams`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', cookie },
+    body: JSON.stringify({ config }),
+  });
+  return { status: response.status, payload: (await response.json()) as any };
+}
+
+test('Teams bot credentials save without a webhook URL', async () => {
+  // Teams now has the same two modes Slack does, and therefore the same way
+  // to get this wrong: validating the webhook URL regardless of mode rejects
+  // a perfectly good bot setup over a field the person never filled in.
+  const { status, payload } = await saveTeams({
+    mode: 'bot',
+    appId: '11111111-2222-3333-4444-555555555555',
+    appPassword: 'a-client-secret',
+    tenantId: 'tenant-1',
+  });
+
+  assert.equal(status, 200, `saving bot credentials failed: ${JSON.stringify(payload)}`);
+  assert.equal(payload.integration.configured, true, 'bot credentials should count as configured');
+});
+
+test('the Teams client secret is never returned to the browser', async () => {
+  const response = await fetch(`${base}/api/integrations`, { headers: { cookie } });
+  const payload = (await response.json()) as any;
+  const teams = payload.integrations.find((row: any) => row.provider === 'msteams');
+
+  assert.ok(teams, 'Teams is missing from the integrations list');
+  assert.notEqual(teams.config.appPassword, 'a-client-secret', 'the secret was sent back in the clear');
+});
+
+test('switching Teams back to webhook mode keeps the stored bot credentials', async () => {
+  await saveTeams({ mode: 'webhook', webhookUrl: 'https://example.webhook.office.com/webhookb2/abc' });
+  const { payload } = await saveTeams({ mode: 'bot', appId: '11111111-2222-3333-4444-555555555555' });
+
+  // The secret was not re-sent, so it must still be there rather than blanked.
+  assert.equal(payload.integration.configured, true, 'switching modes lost the stored client secret');
+});

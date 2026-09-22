@@ -17,7 +17,7 @@ export const DEFAULT_EVENTS: IntegrationEventToggles = {
  */
 export const SECRET_FIELDS: Record<IntegrationProvider, string[]> = {
   slack: ['webhookUrl', 'botToken', 'signingSecret'],
-  msteams: ['webhookUrl'],
+  msteams: ['webhookUrl', 'appPassword'],
   linear: ['apiKey', 'webhookSecret'],
   email: ['password'],
 };

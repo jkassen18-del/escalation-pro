@@ -3,7 +3,6 @@ import { db } from '../db/index.ts';
 import { randomId } from '../lib/crypto.ts';
 import { isEffectivelyEmpty, sanitizeRichText } from '../lib/rich-text.ts';
 import { extractInlineImages } from '../lib/inline-images.ts';
-import { listTeamFields, saveAnswers, validateAnswers } from '../repositories/form-fields.ts';
 import {
   asyncRoute,
   badRequest,
@@ -19,22 +18,20 @@ import {
 } from '../lib/http.ts';
 import { clientIp, recordAudit } from '../lib/audit.ts';
 import { can, requireAuth, requirePermission, visibleTeamIds, type AuthedRequest } from '../middleware/auth.ts';
-import { findTeamById, pickAssignee } from '../repositories/teams.ts';
+import { findTeamById } from '../repositories/teams.ts';
 import { getSettings } from '../repositories/settings.ts';
 import {
   addLink,
   addWatcher,
-  dueDateFrom,
   findTicket,
-  insertTicket,
   listTickets,
   loadTicketDetail,
   recordEvent,
   removeWatcher,
-  slaMultiplier,
   type TicketQuery,
 } from '../repositories/tickets.ts';
 import { buildTicketUrl, dispatchAsync } from '../integrations/dispatcher.ts';
+import { createTicket } from '../services/tickets.ts';
 import { loadIntegration } from '../integrations/store.ts';
 import { commentOnLinearIssue, createLinearIssue } from '../integrations/linear.ts';
 import { notifyUsers } from '../lib/notifications.ts';
@@ -152,119 +149,31 @@ ticketsRouter.post(
     const user = (req as AuthedRequest).user;
     const settings = await getSettings();
 
-    const subject = requireString(req.body?.subject, 'Subject', { max: 200 });
-
     /*
-     * Rich text arrives as HTML. It is sanitised here rather than trusted from
-     * the editor, because a request never has to come from the editor at all.
-     * The larger cap reflects markup overhead, not more prose - and inline
-     * images are pulled out into attachments straight after the insert.
+     * Parsing and permissions are the route's job; everything after it is the
+     * same work whether the ticket came from this form, a Slack command or a
+     * Teams card, and lives in the service so the three cannot drift.
      */
     const isHtml = req.body?.descriptionFormat === 'html';
-    const rawDescription = optionalString(req.body?.description, isHtml ? 400_000 : 20_000) ?? '';
-    const description = isHtml ? sanitizeRichText(rawDescription) : rawDescription;
-    const descriptionFormat: 'text' | 'html' = isHtml && !isEffectivelyEmpty(description) ? 'html' : 'text';
-    const storedDescription = descriptionFormat === 'html' ? description : isHtml ? '' : description;
-    const teamId = optionalString(req.body?.teamId, 60) ?? settings.defaultTeamId;
-    const priority = requireEnum(req.body?.priority ?? settings.defaultPriority, TICKET_PRIORITIES, 'Priority');
-    const type = requireEnum(req.body?.type ?? 'request', TICKET_TYPES, 'Type');
-    const source = requireEnum(req.body?.source ?? 'web', TICKET_SOURCES, 'Source');
 
-    const team = teamId ? await findTeamById(teamId) : null;
-    if (teamId && !team) throw badRequest('That team no longer exists.', { teamId: 'Unknown' });
-
-    // Validated up front so an invalid date fails before any write begins.
-    const explicitDueAt = optionalDate(req.body?.dueAt, 'Due date');
-
-    /*
-     * The department's own questions. Checked here rather than in the browser
-     * because the form is data - a request can omit a required answer or send
-     * a choice that is not on the list, and neither should reach the database.
-     */
-    const formFields = team ? await listTeamFields(team.id) : [];
-    const answers = validateAnswers(
-      formFields,
-      (req.body?.customFields ?? {}) as Record<string, unknown>,
-    );
-
-    const result = await db.transaction(async () => {
-      // Explicit assignee wins; otherwise fall back to the team's routing rule.
-      let assigneeId = optionalString(req.body?.assigneeId, 60);
-      if (!assigneeId && team && team.autoAssign !== 'none') {
-        assigneeId = await pickAssignee(team.id, team.autoAssign);
-      }
-
-      const resolveMins = team?.slaResolveMins ?? settings.slaResolveMins;
-      const dueAt = explicitDueAt ?? dueDateFrom(Math.round(resolveMins * slaMultiplier(priority)));
-
-      const created = await insertTicket({
-        subject,
-        description: storedDescription,
-        descriptionFormat,
-        teamId: team?.id ?? null,
+    const ticket = await createTicket(
+      {
+        subject: requireString(req.body?.subject, 'Subject', { max: 200 }),
+        // The larger cap reflects markup overhead, not more prose.
+        description: optionalString(req.body?.description, isHtml ? 400_000 : 20_000) ?? '',
+        descriptionFormat: isHtml ? 'html' : 'text',
+        teamId: optionalString(req.body?.teamId, 60) ?? settings.defaultTeamId,
         requesterId: optionalString(req.body?.requesterId, 60) ?? user.id,
-        assigneeId,
-        status: 'open',
-        priority,
-        type,
-        source,
-        tags: toStringArray(req.body?.tags, 20).map((tag) => tag.toLowerCase()),
-        dueAt,
-        createdBy: user.id,
-      });
-
-      if (descriptionFormat === 'html') {
-        const rewritten = await extractInlineImages(storedDescription, {
-          ticketId: created.id,
-          uploadedBy: user.id,
-        });
-        if (rewritten !== storedDescription) {
-          await db.run(`UPDATE tickets SET description = ? WHERE id = ?`, [rewritten, created.id]);
-        }
-      }
-
-      if (answers.length > 0) await saveAnswers(created.id, answers);
-
-      await recordEvent(created.id, user.id, 'created', null, null, subject);
-      if (assigneeId) {
-        await recordEvent(created.id, user.id, 'assigned', 'assignee', null, assigneeId);
-        await addWatcher(created.id, assigneeId);
-      }
-      await addWatcher(created.id, user.id);
-      return created;
-    });
-
-    const ticket = await findTicket(result.id, settings.ticketPrefix);
-    if (!ticket) throw new Error('Ticket creation failed.');
-
-    await recordAudit({
-      actorId: user.id,
-      actorName: user.name,
-      entityType: 'ticket',
-      entityId: ticket.id,
-      action: 'ticket_created',
-      summary: `Created ${ticket.reference}: ${ticket.subject}`,
-      meta: { priority, teamId: ticket.teamId, assigneeId: ticket.assigneeId },
-      ip: clientIp(req),
-    });
-
-    if (ticket.assigneeId && ticket.assigneeId !== user.id) {
-      await notifyUsers([ticket.assigneeId], {
-        ticketId: ticket.id,
-        type: 'assigned',
-        title: `${ticket.reference} assigned to you`,
-        body: ticket.subject,
-      });
-    }
-
-    dispatchAsync({
-      event: 'ticketCreated',
-      ticket,
-      actorName: user.name,
-      headline: `New ${priority} ${type}: ${ticket.reference}`,
-      detail: description.slice(0, 1500) || undefined,
-      ticketUrl: await buildTicketUrl(ticket, `${req.protocol}://${req.get('host')}`),
-    });
+        assigneeId: optionalString(req.body?.assigneeId, 60),
+        priority: requireEnum(req.body?.priority ?? settings.defaultPriority, TICKET_PRIORITIES, 'Priority'),
+        type: requireEnum(req.body?.type ?? 'request', TICKET_TYPES, 'Type'),
+        source: requireEnum(req.body?.source ?? 'web', TICKET_SOURCES, 'Source'),
+        tags: toStringArray(req.body?.tags, 20),
+        dueAt: optionalDate(req.body?.dueAt, 'Due date'),
+        customFields: (req.body?.customFields ?? {}) as Record<string, unknown>,
+      },
+      { actor: user, ip: clientIp(req), origin: `${req.protocol}://${req.get('host')}` },
+    );
 
     res.status(201).json({ ticket });
   }),

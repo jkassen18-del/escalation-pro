@@ -3,6 +3,7 @@ import { db } from '../db/index.ts';
 import { TERMINAL_STATUSES, type TicketStatus } from '../../shared/types.ts';
 import { recordEvent } from '../repositories/tickets.ts';
 import { resolveSlackAuthor } from './slack-events.ts';
+import type { SlackView } from './slack-modal.ts';
 import { can } from '../middleware/auth.ts';
 import type { Permission, PublicUser } from '../../shared/types.ts';
 import { findUserById } from '../repositories/users.ts';
@@ -94,7 +95,14 @@ export interface SlackInteractivePayload {
   channel?: { id?: string };
   message?: { ts?: string; thread_ts?: string };
   response_url?: string;
-  actions?: Array<{ action_id?: string; value?: string }>;
+  actions?: Array<{
+    action_id?: string;
+    value?: string;
+    /** Present when the control is a select rather than a button. */
+    selected_option?: { value?: string } | null;
+  }>;
+  /** Present on a modal's own actions and on its submission. */
+  view?: SlackView;
 }
 
 /**

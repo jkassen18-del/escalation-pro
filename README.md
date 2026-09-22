@@ -240,19 +240,41 @@ what came back.
 Not every provider can carry traffic in both directions. What each one actually
 supports:
 
-| | Notifications out | Reply to a ticket | Change its status |
-|---|---|---|---|
-| **Slack** (bot token) | yes | yes, in the ticket's thread | yes, from the buttons on the message |
-| **Slack** (incoming webhook) | yes | no — a webhook cannot receive | no |
-| **Linear** | yes, as a mirrored issue | yes, comments sync both ways | yes, moving the issue moves the ticket |
-| **Microsoft Teams** | yes | no | no |
-| **Email** | yes | no | no |
+| | Raise a ticket | Notifications out | Reply to a ticket | Change its status |
+|---|---|---|---|---|
+| **Slack** (bot) | `/gml finance` opens the form | yes | yes, in the ticket's thread | yes, buttons on the message |
+| **Slack** (webhook) | no | yes | no — a webhook cannot receive | no |
+| **Teams** (bot) | `@Service Desk finance` posts the form | yes | yes, in the ticket's thread | via the link on the card |
+| **Teams** (webhook) | no | yes | no | no |
+| **Linear** | raise an issue in a mapped team | yes, as a mirrored issue | yes, comments sync both ways | yes, moving the issue moves the ticket |
+| **Email** | no | yes | no | no |
 
-Teams is one-way because an incoming webhook is a URL you post *to*; Microsoft
-provides no callback on it. Accepting replies or status changes from Teams would
-mean registering a full Teams bot (an Azure app registration, a Bot Service
-resource, and a messaging endpoint), which this app does not do. Every card
-links back to the ticket.
+The form each one opens is the **department's own form** — the questions
+configured under Teams → Intake form, not a generic three fields. Answers are
+validated against the real field definitions on the way in, whichever tool they
+were typed into, because a chat submission is an HTTP request and can claim
+anything.
+
+Each platform's way in is the idiomatic one for that platform, which is not the
+same shape in all three:
+
+- **Slack** has real slash commands, so `/gml` is one. It takes the department
+  as an argument rather than registering `/gml-finance`, `/gml-hr` and so on:
+  Slack commands are fixed in the app manifest and cannot be wildcarded, so a
+  command per department would mean editing the Slack app and reinstalling it
+  every time somebody adds a department. With one command, a department added
+  in the admin UI works immediately.
+- **Teams has no slash commands for third-party apps.** Typing `/` opens Teams'
+  own palette, not ours. Mentioning the bot is the equivalent, and the command
+  list in the app manifest is what makes it discoverable.
+- **Linear has no user-invocable commands for third-party apps at all.** The
+  equivalent is raising an issue the normal way in a Linear team mapped to a
+  department.
+
+Teams needs a real bot for any of this — an Azure app registration, a Bot
+Service resource and an app package. An incoming webhook is a URL you post *to*
+and Microsoft provides no callback on one, so in webhook mode Teams stays
+one-way. See `deploy/teams/README.md`.
 
 ### Slack
 
@@ -277,6 +299,16 @@ With a bot token, Slack can also send work back:
 - **Resolve, Close and Reopen.** Each message carries buttons. Turn on Slack →
   *Interactivity & Shortcuts* and point it at
   `https://your-host/api/webhooks/slack/interactive`.
+- **Raising tickets.** Add a slash command `/gml` pointing at
+  `https://your-host/api/webhooks/slack/commands`. `/gml finance` opens
+  Finance's own intake form as a modal; `/gml` asks which department first, and
+  switching the picker rebuilds the form around the new department without
+  losing what has already been typed. The department name is matched
+  forgivingly — `finance`, `Finance`, `gml-finance` and `fin` all work.
+
+The whole app can be created from [deploy/slack/manifest.yml](deploy/slack/manifest.yml)
+rather than clicking through the settings: Slack API → Your apps → Create New
+App → From an app manifest.
 
 A click is only honoured when the clicker's Slack email matches an active
 account here that holds the *Update tickets* permission — the buttons are
@@ -286,10 +318,32 @@ written to the audit trail against the person who made it.
 
 ### Microsoft Teams
 
-In Teams: channel → **⋯** → **Workflows** → *Post to a channel when a webhook
-request is received*. Paste the generated URL.
+Two modes, and they are not equivalent.
 
-This is send-only — see the table above.
+**Bot** (two-way). Needs an Azure app registration, an Azure Bot resource whose
+messaging endpoint is `https://your-host/api/webhooks/msteams`, and the app
+package installed into the tenant. Step-by-step in
+[deploy/teams/README.md](deploy/teams/README.md); the manifest is beside it.
+
+Once it is installed in a channel:
+
+- `@Service Desk finance` posts Finance's intake form as an Adaptive Card.
+- `@Service Desk` lists the departments.
+- Ticket updates arrive in that channel, threaded one thread per ticket.
+- Replying in a ticket's thread adds a comment to that ticket.
+
+The endpoint must be reachable **by Microsoft**, with a certificate Microsoft
+trusts. An internal CA that only your own machines trust will not do: Microsoft
+is the client here and is not on your network.
+
+A click or a mention is only honoured when the Teams account's email matches an
+active user here with the right permission — anyone in the channel can type, so
+the message itself proves nothing. Set a **tenant id** to refuse activities from
+any other Microsoft tenant even when Microsoft signed them.
+
+**Incoming webhook** (one-way). In Teams: channel → **⋯** → **Workflows** →
+*Post to a channel when a webhook request is received*. Paste the generated URL.
+Notifications only — see the table above.
 
 Microsoft is retiring the older Office 365 connectors in favour of Workflows,
 and the two accept different payloads. InfraTicket detects which one your URL
@@ -307,6 +361,10 @@ team that mirrored issues should be filed against.
 - Set a **webhook secret** and point a Linear webhook at
   `https://your-host/api/webhooks/linear` to sync issue status back. Deliveries
   are verified with an HMAC-SHA256 signature; unsigned requests are rejected.
+- An issue **raised in Linear** becomes a ticket here, in the department mapped
+  to that Linear team under Teams → Routing. An issue in an unmapped team is
+  left alone rather than dumped into a queue nobody is watching, and an issue
+  this app created never comes back as a second ticket.
 
 ### Email (SMTP)
 

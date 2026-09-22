@@ -32,7 +32,9 @@ function isConfigured(provider: IntegrationProvider, config: Record<string, unkn
     case 'slack':
       return config.mode === 'bot' ? Boolean(config.botToken && config.channel) : Boolean(config.webhookUrl);
     case 'msteams':
-      return Boolean(config.webhookUrl);
+      return config.mode === 'bot'
+        ? Boolean(config.appId && config.appPassword)
+        : Boolean(config.webhookUrl);
     case 'linear':
       return Boolean(config.apiKey && config.teamId);
     case 'email':
@@ -103,12 +105,12 @@ integrationsRouter.patch(
      * of a leftover value in a field the mode never looks at - and the error
      * named a field the person was not filling in.
      */
-    const slackMode =
-      provider === 'slack'
-        ? (((incoming?.mode as string) ?? (await loadIntegration(provider)).config.mode ?? 'webhook') as string)
-        : null;
+    const modal = provider === 'slack' || provider === 'msteams';
+    const mode = modal
+      ? (((incoming?.mode as string) ?? (await loadIntegration(provider)).config.mode ?? 'webhook') as string)
+      : null;
 
-    if (incoming && slackMode === 'bot') {
+    if (incoming && mode === 'bot') {
       // Not the credential being configured, so this request does not carry
       // it. Anything already stored is left alone, so switching back works.
       delete incoming.webhookUrl;

@@ -302,6 +302,29 @@ const TABLES: string[] = [
     updated_at TEXT NOT NULL
   )`,
 
+  /*
+   * Where the Teams bot has been installed.
+   *
+   * A bot cannot start a conversation out of nowhere: Microsoft only accepts
+   * a message addressed to a conversation it has already seen, so the
+   * reference is recorded the first time the bot is added to a channel and
+   * reused for every notification afterwards. Without this row a department's
+   * tickets have nowhere in Teams to go.
+   */
+  `CREATE TABLE IF NOT EXISTS teams_conversations (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL UNIQUE,
+    /* Replies must be posted back to the host that sent the activity, which
+       differs per tenant and per cloud. */
+    service_url TEXT NOT NULL,
+    tenant_id TEXT,
+    /* For the admin UI to show something recognisable in the picker. */
+    channel_name TEXT,
+    team_name TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
   `CREATE TABLE IF NOT EXISTS sessions (
     sid TEXT PRIMARY KEY,
     data TEXT NOT NULL,

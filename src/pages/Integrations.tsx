@@ -455,37 +455,109 @@ function SlackFields({ config, set }: { config: Record<string, unknown>; set: (k
 }
 
 function TeamsFields({ config, set }: { config: Record<string, unknown>; set: (k: string, v: unknown) => void }) {
+  const mode = (config.mode as string) ?? 'webhook';
+
   return (
     <div className="space-y-3">
-      <p className="rounded-sm border border-[var(--border)] bg-[var(--surface)] px-2.5 py-2 text-xs leading-relaxed text-muted">
-        Teams notifications are one-way. An incoming webhook can be posted to but cannot call back, so replying to a
-        card or closing a ticket from Teams is not possible without registering a full Teams bot. Use Slack, or the
-        link on each card, for those.
-      </p>
-
-      <Field
-        label="Webhook URL"
-        hint="In Teams: channel → ⋯ → Workflows → 'Post to a channel when a webhook request is received'."
-      >
-        <Input
-          type="password"
-          value={(config.webhookUrl as string) ?? ''}
-          onChange={(event) => set('webhookUrl', event.target.value)}
-          placeholder={secretPlaceholder(config, 'webhookUrl', 'https://prod-00.westeurope.logic.azure.com:443/workflows/…')}
-          className="font-mono text-xs"
-        />
-      </Field>
-
-      <Field
-        label="Card format"
-        hint="Auto detects the right format from the URL. Microsoft is retiring the older Office 365 connectors in favour of Workflows."
-      >
-        <Select value={(config.format as string) ?? 'auto'} onChange={(event) => set('format', event.target.value)}>
-          <option value="auto">Detect automatically</option>
-          <option value="adaptive">Adaptive card (Power Automate Workflows)</option>
-          <option value="messagecard">Message card (legacy Office 365 connector)</option>
+      <Field label="Connection method">
+        <Select
+          value={mode}
+          onChange={(event) => {
+            const next = event.target.value;
+            set('mode', next);
+            // Clear the other method's field so the save is not rejected on a
+            // credential this method never reads. Empty leaves stored values alone.
+            set(next === 'bot' ? 'webhookUrl' : 'appPassword', '');
+          }}
+        >
+          <option value="webhook">Incoming webhook — one-way notifications only</option>
+          <option value="bot">Bot — two-way: forms, replies and closing tickets</option>
         </Select>
       </Field>
+
+      {mode === 'webhook' ? (
+        <>
+          <p className="rounded-sm border border-[var(--border)] bg-[var(--surface)] px-2.5 py-2 text-xs leading-relaxed text-muted">
+            An incoming webhook is a URL you post to. Microsoft provides no callback on one, so nobody can reply to a
+            card or raise a ticket from Teams this way. Switch to <strong>Bot</strong> for that — it needs an Azure
+            app registration.
+          </p>
+
+          <Field
+            label="Webhook URL"
+            hint="In Teams: channel → ⋯ → Workflows → 'Post to a channel when a webhook request is received'."
+          >
+            <Input
+              type="password"
+              value={(config.webhookUrl as string) ?? ''}
+              onChange={(event) => set('webhookUrl', event.target.value)}
+              placeholder={secretPlaceholder(config, 'webhookUrl', 'https://prod-00.westeurope.logic.azure.com:443/workflows/…')}
+              className="font-mono text-xs"
+            />
+          </Field>
+
+          <Field
+            label="Card format"
+            hint="Auto detects the right format from the URL. Microsoft is retiring the older Office 365 connectors in favour of Workflows."
+          >
+            <Select value={(config.format as string) ?? 'auto'} onChange={(event) => set('format', event.target.value)}>
+              <option value="auto">Detect automatically</option>
+              <option value="adaptive">Adaptive card (Power Automate Workflows)</option>
+              <option value="messagecard">Message card (legacy Office 365 connector)</option>
+            </Select>
+          </Field>
+        </>
+      ) : (
+        <>
+          <p className="rounded-sm border border-[var(--border)] bg-[var(--surface)] px-2.5 py-2 text-xs leading-relaxed text-muted">
+            Bot mode needs an Azure Bot registration and the app package installed in Teams. See the Teams section in
+            DEPLOY.md — the manifest is in <code>deploy/teams/</code>.
+          </p>
+
+          <Field label="Microsoft app id" hint="Azure portal → your Bot → Configuration → Microsoft App ID.">
+            <Input
+              value={(config.appId as string) ?? ''}
+              onChange={(event) => set('appId', event.target.value)}
+              placeholder="00000000-0000-0000-0000-000000000000"
+              className="font-mono text-xs"
+            />
+          </Field>
+
+          <Field label="Client secret" hint="Azure portal → App registrations → your app → Certificates & secrets.">
+            <Input
+              type="password"
+              value={(config.appPassword as string) ?? ''}
+              onChange={(event) => set('appPassword', event.target.value)}
+              placeholder={secretPlaceholder(config, 'appPassword', 'Paste the client secret')}
+              className="font-mono text-xs"
+            />
+          </Field>
+
+          <Field
+            label="Tenant id"
+            hint="Optional. Set it to refuse activities from any other Microsoft tenant, even ones Microsoft signed."
+          >
+            <Input
+              value={(config.tenantId as string) ?? ''}
+              onChange={(event) => set('tenantId', event.target.value)}
+              placeholder="Leave empty to accept any tenant"
+              className="font-mono text-xs"
+            />
+          </Field>
+
+          <Field
+            label="Messaging endpoint"
+            hint="Azure portal → your Bot → Configuration → Messaging endpoint. Paste this there, then add the app to a channel and run the connection test."
+          >
+            <Input
+              readOnly
+              value={`${window.location.origin}/api/webhooks/msteams`}
+              onFocus={(event) => event.currentTarget.select()}
+              className="font-mono text-xs"
+            />
+          </Field>
+        </>
+      )}
     </div>
   );
 }

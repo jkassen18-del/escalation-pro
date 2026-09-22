@@ -208,3 +208,72 @@ export function mapLinearStateToStatus(stateType: string): TicketStatus | null {
       return null;
   }
 }
+
+/* ------------------- Issues raised in Linear, coming back ------------------ */
+
+/**
+ * Which department an issue belongs to.
+ *
+ * Linear has no slash commands for third-party apps, so the way somebody
+ * raises a ticket from there is to raise an issue in the normal way. The
+ * department is worked out from the Linear team it was raised in, using the
+ * same per-department routing that decides where a ticket's issues are
+ * mirrored to - so the mapping is configured once and read in both
+ * directions.
+ */
+export async function departmentForLinearTeam(linearTeamId: string): Promise<string | null> {
+  const { db } = await import('../db/index.ts');
+  const row = await db.get<{ team_id: string }>(
+    `SELECT team_id FROM team_routing WHERE provider = 'linear' AND target = ?`,
+    [linearTeamId],
+  );
+  return row?.team_id ?? null;
+}
+
+/**
+ * The user here who corresponds to a Linear user, by email.
+ *
+ * Linear's webhook payload does not carry the actor's email, only an id and
+ * a name, so it is looked up. Without a match the ticket is still raised,
+ * requested by whoever the deployment treats as the fallback - losing the
+ * issue because its author is not a user here would be worse.
+ */
+export async function findUserForLinearActor(
+  apiKey: string,
+  linearUserId: string,
+): Promise<{ id: string; name: string } | null> {
+  try {
+    const data = await graphql<{ user: { email?: string; name?: string } | null }>(
+      apiKey,
+      `query Actor($id: String!) { user(id: $id) { email name } }`,
+      { id: linearUserId },
+    );
+    const email = data.user?.email?.trim().toLowerCase();
+    if (!email) return null;
+
+    const { db } = await import('../db/index.ts');
+    const row = await db.get<{ id: string; name: string }>(
+      `SELECT id, name FROM users WHERE LOWER(email) = ? AND status = 'active'`,
+      [email],
+    );
+    return row ?? null;
+  } catch {
+    // A key without read access to users is survivable; attribution is not
+    // worth dropping the issue over.
+    return null;
+  }
+}
+
+/** Linear's numeric priority, back to ours. */
+export function priorityFromLinear(value: number | null | undefined): TicketPriority {
+  switch (Number(value)) {
+    case 1:
+      return 'urgent';
+    case 2:
+      return 'high';
+    case 4:
+      return 'low';
+    default:
+      return 'normal';
+  }
+}
