@@ -332,6 +332,20 @@ export interface ReportSummary {
   slaCompliancePct: number | null;
 }
 
+/** An API key as the admin UI sees it: never the token, never the hash. */
+export interface ApiKeySummary {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: Permission[];
+  defaultTeamId: string | null;
+  createdBy: string | null;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+}
+
 export type Permission =
   | 'tickets.view_all'
   | 'tickets.create'

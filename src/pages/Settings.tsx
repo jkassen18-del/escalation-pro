@@ -9,14 +9,14 @@ import { Field, Input, Select } from '@/components/ui/Field';
 import { LoadingPane } from '@/components/ui/Feedback';
 import { LogoUploader } from '@/components/LogoUploader';
 import { useBranding, useDocumentTitle } from '@/state/branding';
-import { TICKET_PRIORITIES, type AppSettings, type Team } from '@shared/types';
+import { TICKET_PRIORITIES, type ApiKeySummary, type AppSettings, type Team } from '@shared/types';
 
 const SLA_PRESETS = [30, 60, 120, 240, 480, 1440, 2880, 4320, 10080];
 
 export function SettingsPage() {
   useDocumentTitle('Settings');
   const toast = useToast();
-  const { refresh } = useAuth();
+  const { refresh, can } = useAuth();
   const { refresh: refreshBranding } = useBranding();
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -168,8 +168,135 @@ export function SettingsPage() {
             </Select>
           </Field>
         </Section>
+
+        <ApiKeys canManage={can('settings.manage')} teams={teams} />
       </div>
     </div>
+  );
+}
+
+/**
+ * Keys for the HTTPS API.
+ *
+ * The token is shown once, in full, and then never again - so the UI has to
+ * make that unmissable rather than leave someone to discover it by closing
+ * the panel.
+ */
+function ApiKeys({ canManage, teams }: { canManage: boolean; teams: Team[] }) {
+  const toast = useToast();
+  const [keys, setKeys] = useState<ApiKeySummary[]>([]);
+  const [name, setName] = useState('');
+  const [defaultTeamId, setDefaultTeamId] = useState('');
+  const [issued, setIssued] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  const load = () => {
+    if (!canManage) return;
+    api.apiKeys
+      .list()
+      .then((data) => setKeys(data.keys))
+      .catch(() => undefined);
+  };
+
+  useEffect(load, [canManage]);
+
+  if (!canManage) return null;
+
+  const create = async () => {
+    if (!name.trim()) return;
+    setCreating(true);
+    try {
+      const created = await api.apiKeys.create({
+        name: name.trim(),
+        scopes: ['tickets.create'],
+        defaultTeamId: defaultTeamId || null,
+      });
+      setIssued(created.token);
+      setName('');
+      setDefaultTeamId('');
+      load();
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Could not create the key.');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const revoke = async (id: string, keyName: string) => {
+    try {
+      await api.apiKeys.revoke(id);
+      toast.success(`Revoked "${keyName}".`);
+      load();
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Could not revoke the key.');
+    }
+  };
+
+  const live = keys.filter((key) => !key.revokedAt);
+
+  return (
+    <Section
+      title="API keys"
+      description="For raising tickets over HTTPS from a monitoring tool, a script, or another system."
+    >
+      {issued && (
+        <div className="rounded-sm border border-[var(--status-open)] bg-[var(--status-open)]/5 px-3 py-2.5">
+          <p className="text-xs font-semibold">Copy this now — it is not shown again.</p>
+          <code className="mt-1.5 block break-all rounded-sm bg-[var(--surface)] px-2 py-1.5 font-mono text-xs">
+            {issued}
+          </code>
+          <Button size="sm" variant="ghost" className="mt-2" onClick={() => setIssued(null)}>
+            Done
+          </Button>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-end gap-2">
+        <Field label="Name" className="min-w-40 flex-1">
+          <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Monitoring" />
+        </Field>
+        <Field label="Default department" className="min-w-40 flex-1">
+          <Select value={defaultTeamId} onChange={(event) => setDefaultTeamId(event.target.value)}>
+            <option value="">None</option>
+            {teams.map((team) => (
+              <option key={team.id} value={team.id}>
+                {team.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Button onClick={create} loading={creating} disabled={!name.trim()}>
+          Create key
+        </Button>
+      </div>
+
+      {live.length === 0 ? (
+        <p className="text-xs text-muted">No keys yet.</p>
+      ) : (
+        <ul className="divide-y rounded-sm border">
+          {live.map((key) => (
+            <li key={key.id} className="flex items-center justify-between gap-3 px-3 py-2">
+              <div className="min-w-0">
+                <p className="truncate text-xs font-medium">{key.name}</p>
+                <p className="font-mono text-[11px] text-muted">
+                  {key.prefix}…{' '}
+                  {key.lastUsedAt ? `last used ${new Date(key.lastUsedAt).toLocaleDateString()}` : 'never used'}
+                </p>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => revoke(key.id, key.name)}>
+                Revoke
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p className="text-xs text-muted">
+        Send it as <code className="font-mono">Authorization: Bearer …</code> to{' '}
+        <code className="font-mono">POST /api/v1/tickets</code>. Pass a{' '}
+        <code className="font-mono">dedupeKey</code> so a tool that retries does not open the same ticket twice.
+      </p>
+    </Section>
   );
 }
 

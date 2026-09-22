@@ -230,6 +230,26 @@ convenience, not the security boundary.
 
 ---
 
+## The HTTPS API
+
+Anything that can make an HTTPS request can raise a ticket — a monitoring
+tool, a cron job, an intranet form, a script:
+
+```bash
+curl -X POST https://tickets.example.internal/api/v1/tickets \
+  -H "Authorization: Bearer $INFRATICKET_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"subject":"Disk 94% on db-01","team":"it","priority":"urgent","dedupeKey":"disk-db-01"}'
+```
+
+Keys are created under **Settings → API keys**, shown once, stored hashed,
+and can never hold more than the person who made them. Pass a `dedupeKey` and
+a tool that retries will not open the same ticket twice.
+
+Full reference: [API.md](API.md).
+
+---
+
 ## Integrations
 
 Configure these in **Integrations** while signed in as an administrator. Every

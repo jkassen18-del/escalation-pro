@@ -24,6 +24,7 @@ import { dataSourcesRouter } from './routes/data-sources.ts';
 import { reportsRouter } from './routes/reports.ts';
 import { auditRouter } from './routes/audit.ts';
 import { webhooksRouter } from './routes/webhooks.ts';
+import { publicApiRouter } from './routes/public-api.ts';
 import { cronRouter } from './routes/cron.ts';
 import { startSlaMonitor } from './jobs/sla-monitor.ts';
 import { pruneAttempts } from './lib/rate-limit.ts';
@@ -129,6 +130,14 @@ export async function createApp() {
   app.use('/api/branding', brandingRouter);
   app.use('/api/webhooks', webhooksRouter);
   app.use('/api/cron', cronRouter);
+
+  /*
+   * Mounted before attachUser: the API authenticates with a bearer key and
+   * has no session, so letting the cookie middleware run first would mean a
+   * request carrying both a stale cookie and a valid key could be answered as
+   * the cookie's owner.
+   */
+  app.use('/api/v1', publicApiRouter);
 
   // Everything below needs a resolved session user.
   app.use('/api', attachUser);

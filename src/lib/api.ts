@@ -13,6 +13,7 @@ import type {
   Team,
   Ticket,
   TicketDetail,
+  ApiKeySummary,
 } from '@shared/types';
 
 export class ApiError extends Error {
@@ -175,6 +176,14 @@ export const api = {
   settings: {
     get: () => get<{ settings: AppSettings }>('/settings'),
     update: (body: Partial<AppSettings>) => patch<{ settings: AppSettings }>('/settings', body),
+  },
+
+  apiKeys: {
+    list: () => get<{ keys: ApiKeySummary[] }>('/settings/api-keys'),
+    /** The token comes back once here and is never retrievable again. */
+    create: (body: { name: string; scopes: string[]; defaultTeamId?: string | null }) =>
+      post<{ key: ApiKeySummary; token: string }>('/settings/api-keys', body),
+    revoke: (id: string) => del<{ ok: true }>(`/settings/api-keys/${id}`),
   },
 
   dataSources: {

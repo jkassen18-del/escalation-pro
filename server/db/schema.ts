@@ -325,6 +325,33 @@ const TABLES: string[] = [
     updated_at TEXT NOT NULL
   )`,
 
+  /*
+   * Keys for the HTTPS API.
+   *
+   * The secret is never stored - only a SHA-256 of it, the way a password is
+   * handled, so a copy of this table does not let anyone raise tickets. The
+   * prefix is kept in the clear purely so a key can be recognised in the UI
+   * and in the audit trail without being reversible.
+   */
+  `CREATE TABLE IF NOT EXISTS api_keys (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    /* The visible half, e.g. "itk_9f3a2b1c". Unique so a lookup is one row. */
+    prefix TEXT NOT NULL UNIQUE,
+    token_hash TEXT NOT NULL,
+    /* JSON array of permissions this key may exercise, never more than the
+       person who created it holds. */
+    scopes TEXT NOT NULL DEFAULT '[]',
+    /* Tickets raised with this key default to this department. */
+    default_team_id TEXT REFERENCES teams(id) ON DELETE SET NULL,
+    created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    last_used_at TEXT,
+    expires_at TEXT,
+    revoked_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
   `CREATE TABLE IF NOT EXISTS sessions (
     sid TEXT PRIMARY KEY,
     data TEXT NOT NULL,
@@ -350,6 +377,7 @@ const INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_form_fields_team ON team_form_fields(team_id, position)`,
   `CREATE INDEX IF NOT EXISTS idx_field_values_ticket ON ticket_field_values(ticket_id, position)`,
   `CREATE INDEX IF NOT EXISTS idx_login_attempts ON login_attempts(key, created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(prefix)`,
 ];
 
 /**
