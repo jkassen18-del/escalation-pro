@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, CircleAlert, CircleDashed, ExternalLink, RefreshCw } from 'lucide-react';
+import { CheckCircle2, CircleAlert, CircleDashed, Download, ExternalLink, RefreshCw } from 'lucide-react';
 import { ProviderIcon } from '@/components/BrandIcons';
 import { DataSourcePanel } from '@/components/DataSourcePanel';
 import { api, ApiError } from '@/lib/api';
@@ -454,6 +454,41 @@ function SlackFields({ config, set }: { config: Record<string, unknown>; set: (k
   );
 }
 
+/**
+ * Downloads the ready-to-upload Teams app package.
+ *
+ * A plain link rather than fetch-and-blob: the browser handles the download,
+ * the Content-Disposition filename is honoured, and there is no object URL to
+ * leak. The cost is that a refusal arrives as a page rather than a toast, so
+ * the button is disabled until the one thing that always causes one - a
+ * missing app id - is filled in.
+ */
+function TeamsAppPackage({ appId }: { appId: string }) {
+  const ready = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(appId.trim());
+
+  return (
+    <Field
+      label="Teams app package"
+      hint="Upload this in Teams: Apps → Manage your apps → Upload an app → Upload a custom app. It carries the app id, this host and your current departments."
+    >
+      {ready ? (
+        <a
+          href="/api/integrations/msteams/app-package"
+          download
+          className="inline-flex items-center gap-2 rounded-sm border border-[var(--border-strong)] px-3 py-2 text-xs font-medium hover:bg-[var(--surface)]"
+        >
+          <Download size={14} />
+          Download the app package
+        </a>
+      ) : (
+        <p className="text-xs text-muted">
+          Save a valid Microsoft app id above, then this becomes a download.
+        </p>
+      )}
+    </Field>
+  );
+}
+
 function TeamsFields({ config, set }: { config: Record<string, unknown>; set: (k: string, v: unknown) => void }) {
   const mode = (config.mode as string) ?? 'webhook';
 
@@ -514,6 +549,14 @@ function TeamsFields({ config, set }: { config: Record<string, unknown>; set: (k
             DEPLOY.md — the manifest is in <code>deploy/teams/</code>.
           </p>
 
+          <Field label="Bot name" hint="What the app is called in Teams, and how people mention it.">
+            <Input
+              value={(config.botName as string) ?? ''}
+              onChange={(event) => set('botName', event.target.value)}
+              placeholder="InfraBot"
+            />
+          </Field>
+
           <Field label="Microsoft app id" hint="Azure portal → your Bot → Configuration → Microsoft App ID.">
             <Input
               value={(config.appId as string) ?? ''}
@@ -556,6 +599,8 @@ function TeamsFields({ config, set }: { config: Record<string, unknown>; set: (k
               className="font-mono text-xs"
             />
           </Field>
+
+          <TeamsAppPackage appId={(config.appId as string) ?? ''} />
         </>
       )}
     </div>

@@ -29,6 +29,8 @@ export interface MsTeamsConfig {
   appPassword?: string;
   /** Bot mode: restricts inbound activities to one tenant when set. */
   tenantId?: string;
+  /** Bot mode: what the app is called in Teams. */
+  botName?: string;
 }
 
 function readConfig(record: IntegrationRecord): MsTeamsConfig {

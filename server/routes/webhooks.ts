@@ -669,7 +669,7 @@ webhooksRouter.post(
           {
             text:
               `Connected. Mention me with a department to raise a ticket — for example ` +
-              `**@${activity.recipient?.name ?? 'InfraTicket'} finance**.\n\n` +
+              `**@${config.botName || activity.recipient?.name || 'InfraBot'} finance**.\n\n` +
               `Departments: ${names}`,
           },
         );
@@ -715,7 +715,7 @@ async function handleTeamsCommand(
     return res.json({ ok: true });
   }
 
-  const asked = stripMention(activity.text, activity.recipient?.name);
+  const asked = stripMention(activity.text, config.botName || activity.recipient?.name);
   const team = matchTeam(asked, teams);
 
   if (!team) {

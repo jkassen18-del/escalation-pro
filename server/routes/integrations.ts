@@ -21,6 +21,10 @@ import {
   type IntegrationProvider,
   type IntegrationSummary,
 } from '../../shared/types.ts';
+import { buildTeamsAppPackage, ManifestError } from '../integrations/teams-manifest.ts';
+import { listTeams } from '../repositories/teams.ts';
+import { getSettings } from '../repositories/settings.ts';
+import type { MsTeamsConfig } from '../integrations/msteams.ts';
 
 export const integrationsRouter: Router = Router();
 
@@ -227,5 +231,50 @@ integrationsRouter.post(
     const url = optionalString(req.body?.webhookUrl, 500);
     if (!url) throw badRequest('Provide a webhook URL.');
     res.json({ format: detectFormat(url) });
+  }),
+);
+
+/**
+ * The Teams app package, built from what this deployment is configured with.
+ *
+ * Teams installs an app from a zip of a manifest and two icons, and the
+ * values in that manifest are the ones easiest to get wrong by hand: the app
+ * id appears twice, the host three times, and a mismatch is rejected with a
+ * message that does not say which field. Generating it means the package
+ * always matches the bot it is for, and the command menu lists the
+ * departments that actually exist.
+ */
+integrationsRouter.get(
+  '/msteams/app-package',
+  asyncRoute(async (_req, res) => {
+    const record = await loadIntegration('msteams');
+    const config = record.config as MsTeamsConfig;
+    const settings = await getSettings();
+
+    const appUrl = settings.appUrl || process.env.APP_URL || '';
+    if (!appUrl) {
+      throw badRequest(
+        'Set the app URL in Settings first. Teams needs to know where this deployment lives, and Microsoft has to be able to reach it.',
+      );
+    }
+
+    try {
+      const { filename, zip } = buildTeamsAppPackage({
+        appId: config.appId ?? '',
+        appUrl,
+        botName: config.botName,
+        organizationName: settings.organizationName,
+        teams: await listTeams(),
+      });
+
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      // A stale package installs a bot pointing at the wrong place.
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(zip);
+    } catch (error) {
+      if (error instanceof ManifestError) throw badRequest(error.message);
+      throw error;
+    }
   }),
 );

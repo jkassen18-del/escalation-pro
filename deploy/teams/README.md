@@ -1,74 +1,123 @@
-# The Teams app package
+# InfraBot — the Teams app
 
-Teams needs three things: an Azure app registration, a Bot Service resource
-pointing at this application, and an app package installed into the tenant.
-There is no shortcut — an incoming webhook cannot do any of this, because
-Microsoft provides no callback on one.
+Teams installs an app from a zip holding a manifest and two icons. **You do
+not have to assemble it**: the application builds the package for you, with
+the app id, this deployment's host and your current departments already in
+it. Those are the three things that are easy to get wrong by hand, and Teams
+rejects a mismatch with a message that does not say which field is at fault.
 
-## 1. Register the app
+Order matters — the Azure pieces come first, because the package needs the
+app id they produce.
 
-Azure portal → **App registrations** → New registration (single tenant is
-fine for an internal deployment). Keep the **Application (client) ID**.
+## 1. Register the app in Azure
 
-Then **Certificates & secrets** → New client secret. Keep the value; it is
-shown once.
+Azure portal → **App registrations** → New registration. Single tenant is
+fine for an internal deployment. Keep the **Application (client) ID**: it is
+the bot id, and it goes in the manifest twice.
+
+Then **Certificates & secrets** → New client secret. Keep the value; Azure
+shows it once.
 
 ## 2. Create the bot
 
 Azure portal → **Azure Bot** → Create, using the app registration above
-rather than a new identity. Under **Configuration**, set the messaging
-endpoint to:
+rather than letting it make a new identity. Under **Configuration**, set the
+messaging endpoint to:
 
 ```
-https://tickets.example.internal/api/webhooks/msteams
+https://<your-host>/api/webhooks/msteams
 ```
 
 Then **Channels** → add **Microsoft Teams**.
 
-The endpoint must be reachable from Microsoft with a certificate it trusts.
-An internal CA that only your machines trust will fail here — Microsoft is
-the client, and it is not on your network. Use a publicly trusted
-certificate for this host, or put the endpoint behind one.
+> **This endpoint must be reachable by Microsoft**, with a certificate
+> Microsoft trusts. An internal CA that only your own machines trust will
+> not do — Microsoft is the client here and it is not on your network. This
+> is the one part of an on-premises deployment that needs a publicly trusted
+> certificate and a route in from outside.
 
 ## 3. Tell the application
 
-In the app: **Integrations → Microsoft Teams → Bot**. Paste the app id and
-client secret, and optionally the tenant id (which makes the endpoint refuse
-activities from any other tenant, even ones Microsoft signed).
+In the app: **Integrations → Microsoft Teams**, set the connection method to
+**Bot**, and fill in:
 
-## 4. Build and install the package
+- **Bot name** — what it is called in Teams. `InfraBot` unless you want
+  something else.
+- **Microsoft app id** — from step 1.
+- **Client secret** — from step 1. Encrypted at rest.
+- **Tenant id** — optional, and worth setting: it makes the endpoint refuse
+  activities from any other Microsoft tenant, even ones Microsoft signed.
 
-Edit `manifest.json`: replace both `REPLACE-WITH-YOUR-AZURE-APP-ID` values
-with the app id, set `validDomains` and the developer URLs to your host, and
-edit the command list to your actual departments — the commands are only the
-menu Teams shows when the bot is mentioned, so any department works whether
-or not it is listed.
+Also set the **app URL** under Settings if you have not already. The package
+needs to know where this deployment lives.
 
-Add two icons beside the manifest: `color.png` (192×192) and `outline.png`
-(32×32, transparent with a white glyph). Then:
+## 4. Download the package
+
+**Integrations → Microsoft Teams → Teams app package → Download.**
+
+You get `infrabot-teams.zip`, containing:
+
+- `manifest.json` — your app id, your host, and a command menu listing your
+  actual departments
+- `color.png` (192×192) and `outline.png` (32×32)
+
+Re-download it whenever you add a department and want it in the menu. The bot
+answers any department whether or not it is listed — the menu is only what
+Teams shows when somebody mentions the bot.
+
+### Without a running app
+
+For a developer setting Teams up before the deployment exists, or a CI job
+that wants the package as a build artefact:
 
 ```bash
-zip -j infraticket-teams.zip manifest.json color.png outline.png
+npm run build:teams-app -- \
+  --app-id 00000000-0000-0000-0000-000000000000 \
+  --url https://tickets.example.internal \
+  --name InfraBot \
+  --org "Your Company" \
+  --departments finance,hr,it
 ```
 
-Teams admin centre → **Teams apps → Manage apps → Upload new app**, or for
-testing, a team → **Apps → Manage apps → Upload a custom app**.
+### Replacing the icons
 
-## 5. Add it to a channel, then test
+The icons are generated, and they are deliberately plain. To use your own,
+unzip the package, swap the two PNGs keeping the names and the exact sizes
+(192×192 and 32×32, both PNG, the outline one white-on-transparent because
+Teams tints it), and zip the three files back up **flat** — no folder inside
+the archive, or Teams will not find the manifest.
 
-The app has to be added to the channel it will post in. Microsoft will not
+## 5. Upload it to Teams
+
+Either:
+
+- **Just you, for testing** — Teams → **Apps** → *Manage your apps* →
+  **Upload an app** → *Upload a customised app*.
+- **Everyone** — Teams admin centre → **Teams apps → Manage apps → Upload
+  new app**. This needs the custom-app upload policy to be enabled for the
+  tenant; if the option is missing, that policy is why.
+
+## 6. Add it to a channel, then test
+
+The app has to be added to each channel it will post in. Microsoft will not
 let a bot message a conversation it has never seen, so until it is added
 there is nowhere for notifications to go — and the connection test says
 exactly that rather than reporting success.
 
-Once it is added, run **Test connection**. It posts a real message.
+Channel → **Apps** → add InfraBot. Then run **Test connection** in the
+application; it posts a real message.
 
 ## Using it
 
-- `@Service Desk finance` — raises a ticket on the Finance form.
-- `@Service Desk` — lists the departments.
+- `@InfraBot finance` — posts Finance's intake form as a card.
+- `@InfraBot` — lists the departments.
+- Ticket updates arrive in the channel, one thread per ticket.
 - Replying in a ticket's thread adds a comment to that ticket.
 
-Teams has no slash commands for third-party apps: typing `/` opens Teams'
-own palette, not ours. Mentioning the bot is the equivalent, and the command
-list in the manifest is what makes it discoverable.
+Teams has no slash commands for third-party apps — typing `/` opens Teams'
+own palette, not ours — so mentioning the bot is the equivalent, and the
+command list is what makes it discoverable.
+
+A mention is only acted on when the Teams account's email matches an active
+user here with permission to raise tickets. Anyone in a channel can type, so
+the message alone proves nothing.

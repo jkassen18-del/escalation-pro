@@ -323,7 +323,19 @@ Two modes, and they are not equivalent.
 **Bot** (two-way). Needs an Azure app registration, an Azure Bot resource whose
 messaging endpoint is `https://your-host/api/webhooks/msteams`, and the app
 package installed into the tenant. Step-by-step in
-[deploy/teams/README.md](deploy/teams/README.md); the manifest is beside it.
+[deploy/teams/README.md](deploy/teams/README.md).
+
+You do not assemble the package by hand. Once the app id and secret are saved,
+**Integrations → Microsoft Teams → Download the app package** gives you
+`infrabot-teams.zip` — manifest and both icons, carrying this deployment's app
+id and host and a command menu listing your actual departments. Upload it in
+Teams under *Apps → Manage your apps → Upload an app*. There is a CLI for
+builds that happen before the app is running:
+
+```bash
+npm run build:teams-app -- --app-id <guid> --url https://tickets.example.internal \
+  --name InfraBot --departments finance,hr,it
+```
 
 Once it is installed in a channel:
 
