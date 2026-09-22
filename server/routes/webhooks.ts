@@ -6,7 +6,18 @@ import { recordAudit } from '../lib/audit.ts';
 import { notifyUsers } from '../lib/notifications.ts';
 import { loadIntegration } from '../integrations/store.ts';
 import { mapLinearStateToStatus, type LinearConfig } from '../integrations/linear.ts';
-import { recordEvent } from '../repositories/tickets.ts';
+import { findTicketBySlackThread, type SlackConfig } from '../integrations/slack.ts';
+import {
+  isThreadReply,
+  resolveSlackAuthor,
+  slackTextToPlain,
+  verifySlackSignature,
+  type SlackEventEnvelope,
+} from '../integrations/slack-events.ts';
+import { dispatch, buildTicketUrl } from '../integrations/dispatcher.ts';
+import { findTicket, recordEvent } from '../repositories/tickets.ts';
+import { getSettings } from '../repositories/settings.ts';
+import { randomId } from '../lib/crypto.ts';
 
 export const webhooksRouter: Router = Router();
 
@@ -100,5 +111,133 @@ webhooksRouter.post(
     });
 
     res.json({ ok: true, status: nextStatus });
+  }),
+);
+
+/* --------------------------- Slack replies -------------------------------- */
+
+/**
+ * Inbound Slack events.
+ *
+ * Every ticket gets one thread in the channel, and a reply typed there becomes
+ * a comment on that ticket - so the people who work in Slack do not have to
+ * open the app to answer, and the requester still gets told.
+ */
+webhooksRouter.post(
+  '/slack',
+  asyncRoute(async (req, res) => {
+    const envelope = req.body as SlackEventEnvelope;
+
+    const record = await loadIntegration('slack');
+    const config = record.config as SlackConfig;
+
+    /*
+     * Slack verifies the URL by posting a challenge when it is first saved.
+     * This is answered before the enabled/secret checks, because otherwise the
+     * endpoint cannot be registered until the integration is already working -
+     * and the secret it would be verified with is the one being set up.
+     */
+    if (envelope.type === 'url_verification') {
+      if (!envelope.challenge) return res.status(400).json({ error: 'No challenge supplied' });
+      return res.json({ challenge: envelope.challenge });
+    }
+
+    if (!record.enabled) return res.status(503).json({ error: 'Slack integration is disabled' });
+    if (!config.signingSecret) return res.status(400).json({ error: 'No Slack signing secret configured' });
+
+    const verified = verifySlackSignature(req, config.signingSecret);
+    if (!verified.ok) return res.status(401).json({ error: verified.reason });
+
+    // Everything past here is accepted with 200 whatever happens: Slack retries
+    // anything else, and a retry would post the same comment a second time.
+    if (envelope.type !== 'event_callback' || !isThreadReply(envelope.event)) {
+      return res.json({ ok: true, ignored: true });
+    }
+
+    const event = envelope.event!;
+    const ticketId = await findTicketBySlackThread(event.thread_ts!);
+    if (!ticketId) return res.json({ ok: true, ignored: true });
+
+    const settings = await getSettings();
+    const ticket = await findTicket(ticketId, settings.ticketPrefix);
+    if (!ticket) return res.json({ ok: true, ignored: true });
+
+    /*
+     * Slack redelivers on any non-2xx and on its own timeouts, so the message
+     * timestamp - unique per message - is what stops a retry becoming a second
+     * comment. Checked before writing rather than after.
+     */
+    const seen = await db.get<{ id: string }>(
+      `SELECT id FROM ticket_links WHERE provider = 'slack_reply' AND external_id = ?`,
+      [event.ts!],
+    );
+    if (seen) return res.json({ ok: true, duplicate: true });
+
+    const author = await resolveSlackAuthor(config.botToken ?? '', event.user!);
+    const body = slackTextToPlain(event.text ?? '');
+    if (!body) return res.json({ ok: true, ignored: true });
+
+    const now = new Date().toISOString();
+    const commentId = randomId();
+
+    await db.run(
+      `INSERT INTO ticket_comments (id, ticket_id, author_id, body, body_format, is_internal, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'text', 0, ?, ?)`,
+      [
+        commentId,
+        ticket.id,
+        author.userId,
+        // Named in the body when the writer is not a user here, so the comment
+        // is never silently anonymous.
+        author.userId ? body : `${author.displayName} replied in Slack:\n\n${body}`,
+        now,
+        now,
+      ],
+    );
+
+    await db.run(`INSERT INTO ticket_links (id, ticket_id, provider, external_id, external_key, url, created_at)
+       VALUES (?, ?, 'slack_reply', ?, ?, ?, ?)`,
+      [randomId(), ticket.id, event.ts!, commentId, '', now]);
+
+    await recordEvent(ticket.id, author.userId, 'commented', 'source', null, 'slack');
+
+    /*
+     * Tell the people who are waiting on this ticket. The author is left out:
+     * they just wrote it.
+     */
+    const recipients = [ticket.requesterId, ticket.assigneeId, ...ticket.watcherIds].filter(
+      (id): id is string => Boolean(id) && id !== author.userId,
+    );
+    await notifyUsers(recipients, {
+      ticketId: ticket.id,
+      type: 'comment',
+      title: `${author.displayName} replied to ${ticket.reference} in Slack`,
+      body: body.slice(0, 280),
+    });
+
+    await recordAudit({
+      actorId: author.userId,
+      actorName: author.displayName,
+      entityType: 'ticket',
+      entityId: ticket.id,
+      action: 'comment_from_slack',
+      summary: `${author.displayName} replied to ${ticket.reference} from Slack`,
+    });
+
+    // Out to the other channels, but not back to Slack - that is where it came
+    // from, and the thread already shows it.
+    await dispatch(
+      {
+        event: 'ticketCommented',
+        ticket,
+        actorName: author.displayName,
+        headline: `${author.displayName} replied in Slack`,
+        detail: body,
+        ticketUrl: await buildTicketUrl(ticket),
+      },
+      { exclude: ['slack'] },
+    );
+
+    res.json({ ok: true, ticket: ticket.reference });
   }),
 );

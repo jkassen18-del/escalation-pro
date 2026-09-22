@@ -1,5 +1,7 @@
 import { postJson, type DeliveryResult, type NotificationContext, type TestResult, PRIORITY_HEX } from './types.ts';
 import type { IntegrationRecord } from './store.ts';
+import { db } from '../db/index.ts';
+import { addLink } from '../repositories/tickets.ts';
 
 export interface SlackConfig {
   /** Incoming webhook URL (https://hooks.slack.com/services/...). */
@@ -10,10 +12,27 @@ export interface SlackConfig {
   channel?: string;
   /** Prefer the bot token over the webhook when both are present. */
   mode?: 'webhook' | 'bot';
+  /**
+   * Slack's app signing secret, used to verify inbound events.
+   *
+   * Separate from the bot token: the token is how this app talks to Slack,
+   * this is how it knows a request really came from Slack.
+   */
+  signingSecret?: string;
 }
 
 function readConfig(record: IntegrationRecord): SlackConfig {
   return record.config as SlackConfig;
+}
+
+/**
+ * A link to the thread.
+ *
+ * Built rather than fetched: chat.getPermalink is another round trip, and this
+ * form redirects correctly for any workspace.
+ */
+function threadPermalink(channel: string, ts: string): string {
+  return `https://slack.com/archives/${encodeURIComponent(channel)}/p${ts.replace('.', '')}`;
 }
 
 /**
@@ -164,6 +183,32 @@ export async function testSlack(record: IntegrationRecord): Promise<TestResult> 
   return { ok: false, message: `Slack returned ${status}: ${text.slice(0, 200)}` };
 }
 
+/**
+ * The Slack message that started this ticket's thread, if there is one.
+ *
+ * Stored as a ticket_link rather than a column on `tickets`: links already
+ * exist for exactly this - tying a ticket to something in another system -
+ * and a deployment whose tables were created by another database user cannot
+ * add columns anyway.
+ */
+export async function findSlackThread(ticketId: string): Promise<{ ts: string; channel: string | null } | null> {
+  const row = await db.get<{ external_id: string; external_key: string | null }>(
+    `SELECT external_id, external_key FROM ticket_links
+     WHERE ticket_id = ? AND provider = 'slack' ORDER BY created_at LIMIT 1`,
+    [ticketId],
+  );
+  return row ? { ts: row.external_id, channel: row.external_key } : null;
+}
+
+/** Finds the ticket a Slack thread belongs to. */
+export async function findTicketBySlackThread(threadTs: string): Promise<string | null> {
+  const row = await db.get<{ ticket_id: string }>(
+    `SELECT ticket_id FROM ticket_links WHERE provider = 'slack' AND external_id = ?`,
+    [threadTs],
+  );
+  return row?.ticket_id ?? null;
+}
+
 export async function sendSlack(record: IntegrationRecord, ctx: NotificationContext): Promise<DeliveryResult> {
   const config = readConfig(record);
   const message = buildMessage(ctx);
@@ -173,15 +218,40 @@ export async function sendSlack(record: IntegrationRecord, ctx: NotificationCont
       if (!config.botToken || !config.channel) {
         return { ok: false, statusCode: null, error: 'Bot token or channel is not configured' };
       }
+
+      /*
+       * One thread per ticket.
+       *
+       * The first notification starts a thread in the channel; everything
+       * afterwards replies inside it. That keeps a ticket's history together
+       * instead of scattering it down the channel, and - the reason it is
+       * done here - it gives people somewhere to reply that can be traced
+       * back to the ticket.
+       */
+      const existing = await findSlackThread(ctx.ticket.id);
+
       const response = await fetch('https://slack.com/api/chat.postMessage', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${config.botToken}`,
           'Content-Type': 'application/json; charset=utf-8',
         },
-        body: JSON.stringify({ channel: config.channel, ...message }),
+        body: JSON.stringify({
+          channel: existing?.channel ?? config.channel,
+          ...message,
+          ...(existing ? { thread_ts: existing.ts } : {}),
+        }),
       });
-      const body = (await response.json()) as { ok: boolean; error?: string };
+      const body = (await response.json()) as { ok: boolean; error?: string; ts?: string; channel?: string };
+
+      if (body.ok && body.ts && !existing) {
+        // Remember the root message so replies to it can find this ticket.
+        // Recorded best-effort: losing the thread must not fail the delivery.
+        await addLink(ctx.ticket.id, 'slack', body.ts, body.channel ?? config.channel, threadPermalink(body.channel ?? config.channel, body.ts)).catch(
+          () => undefined,
+        );
+      }
+
       return {
         ok: body.ok,
         statusCode: response.status,

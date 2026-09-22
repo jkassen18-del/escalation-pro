@@ -401,6 +401,43 @@ function SlackFields({ config, set }: { config: Record<string, unknown>; set: (k
           </Field>
         </div>
       )}
+
+      {mode === 'bot' && (
+        <div className="space-y-3 rounded-sm border border-dashed p-3">
+          <div>
+            <p className="text-xs font-medium">Replies from Slack</p>
+            <p className="mt-0.5 text-2xs text-muted">
+              Each ticket gets its own thread in the channel. Set this up and a reply in that thread becomes a
+              comment on the ticket, and the requester, assignee and watchers are notified.
+            </p>
+          </div>
+
+          <Field
+            label="Signing secret"
+            hint="Slack API → your app → Basic Information → App Credentials → Signing Secret."
+          >
+            <Input
+              type="password"
+              value={(config.signingSecret as string) ?? ''}
+              onChange={(event) => set('signingSecret', event.target.value)}
+              placeholder={secretPlaceholder(config, 'signingSecret', 'Paste the signing secret')}
+              className="font-mono text-xs"
+            />
+          </Field>
+
+          <Field
+            label="Request URL"
+            hint="Slack API → Event Subscriptions → Enable Events. Save the signing secret here first, then paste this there: Slack verifies the URL immediately. Subscribe to message.channels, and add the users:read and users:read.email scopes so replies are attributed to the right person."
+          >
+            <Input
+              readOnly
+              value={`${window.location.origin}/api/webhooks/slack`}
+              onFocus={(event) => event.currentTarget.select()}
+              className="font-mono text-xs"
+            />
+          </Field>
+        </div>
+      )}
     </div>
   );
 }

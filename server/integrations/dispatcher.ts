@@ -49,10 +49,21 @@ async function emailRecipients(ticket: Ticket): Promise<string[]> {
  * Failures are recorded and swallowed: a Slack outage must never roll back a
  * ticket update or surface as a 500 to the person who made the change.
  */
-export async function dispatch(ctx: NotificationContext): Promise<void> {
+export async function dispatch(
+  ctx: NotificationContext,
+  options: { exclude?: IntegrationProvider[] } = {},
+): Promise<void> {
   const event: IntegrationEvent = ctx.event;
 
-  const providers: IntegrationProvider[] = ['slack', 'msteams', 'email'];
+  /*
+   * `exclude` exists for events that arrived *from* one of these providers.
+   * A reply typed in Slack should still reach the people who watch by email,
+   * but sending it back to Slack would post the message into the thread it
+   * came from.
+   */
+  const providers: IntegrationProvider[] = (['slack', 'msteams', 'email'] as const).filter(
+    (provider) => !options.exclude?.includes(provider),
+  );
   await Promise.all(
     providers.map(async (provider) => {
       try {
