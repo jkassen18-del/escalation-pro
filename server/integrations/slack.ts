@@ -88,10 +88,55 @@ export async function testSlack(record: IntegrationRecord): Promise<TestResult> 
     if (!config.channel) {
       return { ok: false, message: `Token is valid for workspace "${body.team}", but no channel is set.` };
     }
+
+    /*
+     * Actually post, rather than stopping at auth.test.
+     *
+     * A valid token proves the app exists, not that it can write to this
+     * channel: chat.postMessage fails with not_in_channel when the bot has
+     * not been invited and lacks chat:write.public. Reporting "connection
+     * verified" on auth.test alone meant the test passed while every real
+     * notification was refused - which is worse than no test at all.
+     */
+    const posted = await fetch('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.botToken}`,
+        'Content-Type': 'application/json; charset=utf-8',
+      },
+      body: JSON.stringify({
+        channel: config.channel,
+        text: 'Escalation Pro connection test',
+        blocks: [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: '*Escalation Pro is connected.*\nThis channel will receive ticket notifications.',
+            },
+          },
+        ],
+      }),
+    });
+    const postBody = (await posted.json()) as { ok: boolean; error?: string; channel?: string };
+
+    if (!postBody.ok) {
+      // Slack's error codes are terse, so the common ones get an explanation.
+      const hint =
+        postBody.error === 'not_in_channel'
+          ? ` Invite the app to ${config.channel} in Slack, or add the chat:write.public scope and reinstall.`
+          : postBody.error === 'channel_not_found'
+            ? ` No channel "${config.channel}" is visible to this app. Use the channel ID, and make sure the app is installed in that workspace.`
+            : postBody.error === 'missing_scope'
+              ? ' The bot token is missing the chat:write scope. Add it and reinstall the app.'
+              : '';
+      return { ok: false, message: `Slack refused the message: ${postBody.error ?? 'unknown error'}.${hint}` };
+    }
+
     return {
       ok: true,
-      message: `Connected to Slack workspace "${body.team}" as ${body.user}. Messages will post to ${config.channel}.`,
-      details: { team: body.team, user: body.user },
+      message: `Connected to "${body.team}" as ${body.user}, and a test message was posted to ${config.channel}.`,
+      details: { team: body.team, user: body.user, channel: postBody.channel },
     };
   }
 
