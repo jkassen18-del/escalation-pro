@@ -230,6 +230,20 @@ convenience, not the security boundary.
 
 ---
 
+## InfraGrid
+
+Monitoring systems raise alerts here, and alerts become tickets. DigitalOcean,
+Jenkins, Azure, AWS, CrowdStrike, Ansible, Linux and Windows each get their own
+ingest URL; their payloads are normalised, repeats fold into one alert rather
+than a queue full of duplicates, and a recovery closes the loop.
+
+Plus **heartbeats**, for jobs where silence is the failure — a cron that stops
+running sends nothing, so the only way to notice is to come looking.
+
+Full reference: [INFRAGRID.md](INFRAGRID.md).
+
+---
+
 ## The HTTPS API
 
 Anything that can make an HTTPS request can raise a ticket — a monitoring

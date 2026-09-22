@@ -12,6 +12,7 @@ import {
   Monitor,
   Moon,
   Plug,
+  Radar,
   ScrollText,
   Settings as SettingsIcon,
   Sun,
@@ -48,6 +49,7 @@ const PRIMARY_NAV: NavItem[] = [
 ];
 
 const MANAGE_NAV: NavItem[] = [
+  { to: '/infragrid', label: 'InfraGrid', icon: Radar },
   { to: '/reports', label: 'Reports', icon: ScrollText, permission: 'reports.view' },
   { to: '/people', label: 'People', icon: UsersIcon, permission: 'users.view' },
   { to: '/teams', label: 'Teams', icon: Building2, permission: 'teams.manage' },

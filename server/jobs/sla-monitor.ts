@@ -3,6 +3,7 @@ import { notifyUsers } from '../lib/notifications.ts';
 import { getSettings } from '../repositories/settings.ts';
 import { findTicket } from '../repositories/tickets.ts';
 import { buildTicketUrl, dispatchAsync } from '../integrations/dispatcher.ts';
+import { sweepHeartbeats } from '../infragrid/sweep.ts';
 
 const CHECK_INTERVAL_MS = Number(process.env.SLA_CHECK_INTERVAL_MS || 5 * 60 * 1000);
 
@@ -65,6 +66,8 @@ export async function checkBreaches(): Promise<number> {
 export function startSlaMonitor(): () => void {
   const run = () => {
     void checkBreaches().catch((error) => console.error('[sla] check failed', error));
+    // Heartbeats ride the same timer: silence is only noticed by looking.
+    void sweepHeartbeats().catch((error) => console.error('[heartbeat] sweep failed', error));
   };
 
   // Give the server a moment to finish booting before the first sweep.

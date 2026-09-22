@@ -13,7 +13,10 @@ import type {
   Team,
   Ticket,
   TicketDetail,
+  Alert,
+  AlertSource,
   ApiKeySummary,
+  Heartbeat,
 } from '@shared/types';
 
 export class ApiError extends Error {
@@ -176,6 +179,20 @@ export const api = {
   settings: {
     get: () => get<{ settings: AppSettings }>('/settings'),
     update: (body: Partial<AppSettings>) => patch<{ settings: AppSettings }>('/settings', body),
+  },
+
+  infragrid: {
+    overview: () =>
+      get<{ sources: AlertSource[]; alerts: Alert[]; heartbeats: Heartbeat[] }>('/infragrid'),
+    /** The ingest token comes back once here and is never retrievable again. */
+    createSource: (body: { name: string; kind: string; teamId?: string | null; ticketThreshold?: string }) =>
+      post<{ source: AlertSource; token: string }>('/infragrid/sources', body),
+    updateSource: (id: string, body: Record<string, unknown>) =>
+      patch<{ source: AlertSource }>(`/infragrid/sources/${id}`, body),
+    removeSource: (id: string) => del<{ ok: true }>(`/infragrid/sources/${id}`),
+    createHeartbeat: (body: { name: string; periodSeconds: number; graceSeconds?: number; teamId?: string | null }) =>
+      post<{ heartbeat: Heartbeat }>('/infragrid/heartbeats', body),
+    removeHeartbeat: (id: string) => del<{ ok: true }>(`/infragrid/heartbeats/${id}`),
   },
 
   apiKeys: {

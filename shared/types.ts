@@ -332,6 +332,77 @@ export interface ReportSummary {
   slaCompliancePct: number | null;
 }
 
+/* ----------------------------- InfraGrid ---------------------------------- */
+
+/** The monitoring systems InfraGrid knows how to read. */
+export const ALERT_SOURCE_KINDS = [
+  'digitalocean',
+  'jenkins',
+  'azure',
+  'aws',
+  'crowdstrike',
+  'ansible',
+  'linux',
+  'windows',
+  'heartbeat',
+  'generic',
+] as const;
+export type AlertSourceKind = (typeof ALERT_SOURCE_KINDS)[number];
+
+export const ALERT_SEVERITIES = ['critical', 'warning', 'info'] as const;
+export type AlertSeverity = (typeof ALERT_SEVERITIES)[number];
+
+export interface AlertSource {
+  id: string;
+  name: string;
+  kind: AlertSourceKind;
+  tokenPrefix: string;
+  teamId: string | null;
+  teamName?: string | null;
+  ticketThreshold: AlertSeverity;
+  enabled: boolean;
+  lastEventAt: string | null;
+  /** Derived: whether anything is currently firing from this source. */
+  firingCount?: number;
+  createdAt: string;
+}
+
+export interface Alert {
+  id: string;
+  sourceId: string;
+  sourceName?: string;
+  sourceKind?: AlertSourceKind;
+  dedupeKey: string;
+  title: string;
+  body: string | null;
+  severity: AlertSeverity;
+  status: 'firing' | 'resolved';
+  resource: string | null;
+  externalUrl: string | null;
+  ticketId: string | null;
+  ticketReference?: string | null;
+  occurrences: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  resolvedAt: string | null;
+}
+
+export interface Heartbeat {
+  id: string;
+  name: string;
+  slug: string;
+  periodSeconds: number;
+  graceSeconds: number;
+  severity: AlertSeverity;
+  teamId: string | null;
+  enabled: boolean;
+  lastBeatAt: string | null;
+  status: 'ok' | 'missed' | 'new';
+  /** Derived: when it stops being considered on time. */
+  dueAt?: string | null;
+  createdAt: string;
+}
+
 /** An API key as the admin UI sees it: never the token, never the hash. */
 export interface ApiKeySummary {
   id: string;

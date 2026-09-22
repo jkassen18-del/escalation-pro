@@ -25,6 +25,7 @@ import { reportsRouter } from './routes/reports.ts';
 import { auditRouter } from './routes/audit.ts';
 import { webhooksRouter } from './routes/webhooks.ts';
 import { publicApiRouter } from './routes/public-api.ts';
+import { infragridRouter, ingestRouter } from './routes/infragrid.ts';
 import { cronRouter } from './routes/cron.ts';
 import { startSlaMonitor } from './jobs/sla-monitor.ts';
 import { pruneAttempts } from './lib/rate-limit.ts';
@@ -139,6 +140,12 @@ export async function createApp() {
    */
   app.use('/api/v1', publicApiRouter);
 
+  /*
+   * Also before attachUser: monitoring systems authenticate with a per-source
+   * ingest token and never carry a session.
+   */
+  app.use('/api/ingest', ingestRouter);
+
   // Everything below needs a resolved session user.
   app.use('/api', attachUser);
   app.use('/api/users', usersRouter);
@@ -151,6 +158,7 @@ export async function createApp() {
   app.use('/api/data-sources', dataSourcesRouter);
   app.use('/api/reports', reportsRouter);
   app.use('/api/audit', auditRouter);
+  app.use('/api/infragrid', infragridRouter);
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API endpoint' }));
 

@@ -424,7 +424,9 @@ test('a viewer cannot raise a ticket by posting a card submission directly', asy
 });
 
 test('a reply in a ticket’s thread becomes a comment on that ticket', async () => {
-  const ticket = await db.get<{ id: string }>(`SELECT id FROM tickets ORDER BY created_at DESC LIMIT 1`);
+  const ticket = await db.get<{ id: string }>(`SELECT id FROM tickets WHERE subject = ?`, [
+    'Duplicate invoice from Acme',
+  ]);
 
   /*
    * The thread is the one the ticket's own notification created when it was
@@ -471,7 +473,9 @@ test('a notification threads onto the ticket’s existing Teams message', async 
   const { sendMsTeams } = await import('../server/integrations/msteams.ts');
   const { findTicket } = await import('../server/repositories/tickets.ts');
 
-  const row = await db.get<{ id: string }>(`SELECT id FROM tickets ORDER BY created_at DESC LIMIT 1`);
+  const row = await db.get<{ id: string }>(`SELECT id FROM tickets WHERE subject = ?`, [
+    'Duplicate invoice from Acme',
+  ]);
   const ticket = await findTicket(row!.id, 'ESC');
 
   sent = [];

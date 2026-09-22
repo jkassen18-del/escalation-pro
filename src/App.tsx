@@ -13,6 +13,7 @@ import { ReportsPage } from '@/pages/Reports';
 import { IntegrationsPage } from '@/pages/Integrations';
 import { SettingsPage } from '@/pages/Settings';
 import { AuditLogPage } from '@/pages/AuditLog';
+import { InfraGridPage } from '@/pages/InfraGrid';
 import { ProfilePage } from '@/pages/Profile';
 import type { Permission } from '@shared/types';
 
@@ -40,6 +41,7 @@ export function App() {
         <Route path="/people" element={<Guard permission="users.view"><PeoplePage /></Guard>} />
         <Route path="/teams" element={<Guard permission="teams.manage"><TeamsPage /></Guard>} />
         <Route path="/reports" element={<Guard permission="reports.view"><ReportsPage /></Guard>} />
+        <Route path="/infragrid" element={<InfraGridPage />} />
         <Route
           path="/integrations"
           element={<Guard permission="integrations.manage"><IntegrationsPage /></Guard>}

@@ -352,6 +352,86 @@ const TABLES: string[] = [
     updated_at TEXT NOT NULL
   )`,
 
+  /*
+   * InfraGrid: the monitoring systems that can raise alerts here.
+   *
+   * Each connected system gets its own ingest credential rather than sharing
+   * one, so a compromised Jenkins cannot impersonate CrowdStrike, and any one
+   * of them can be turned off without touching the others.
+   */
+  `CREATE TABLE IF NOT EXISTS alert_sources (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    /* Which vendor's payload shape to expect. */
+    kind TEXT NOT NULL,
+    /* The visible half of the ingest credential, for the UI and the logs. */
+    token_prefix TEXT NOT NULL UNIQUE,
+    token_hash TEXT NOT NULL,
+    /* Where this system's alerts are routed. */
+    team_id TEXT REFERENCES teams(id) ON DELETE SET NULL,
+    /* Alerts at or above this severity open a ticket; below it they are
+       recorded and shown but do not wake anybody. */
+    ticket_threshold TEXT NOT NULL DEFAULT 'warning',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_event_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
+  /*
+   * One row per condition, not per notification.
+   *
+   * A monitor re-fires while a condition persists, so repeats fold into the
+   * row that is already firing and only advance its counter. The alternative
+   * is a table that grows by thousands of rows for one bad disk.
+   */
+  `CREATE TABLE IF NOT EXISTS alerts (
+    id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL REFERENCES alert_sources(id) ON DELETE CASCADE,
+    /* Stable per condition, so repeats and the eventual recovery match up. */
+    dedupe_key TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT,
+    /* critical | warning | info */
+    severity TEXT NOT NULL DEFAULT 'warning',
+    /* firing | resolved */
+    status TEXT NOT NULL DEFAULT 'firing',
+    /* The host, service or pipeline it is about. */
+    resource TEXT,
+    /* A link back into the system that raised it. */
+    external_url TEXT,
+    ticket_id TEXT REFERENCES tickets(id) ON DELETE SET NULL,
+    occurrences INTEGER NOT NULL DEFAULT 1,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    resolved_at TEXT
+  )`,
+
+  /*
+   * Dead-man's switches.
+   *
+   * The inverse of an alert: silence is the failure. A cron job that stops
+   * running sends nothing at all, so nothing else in this system would ever
+   * notice. A heartbeat that misses its window raises an alert like any other.
+   */
+  `CREATE TABLE IF NOT EXISTS heartbeats (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    /* The token that appears in the check-in URL. */
+    slug TEXT NOT NULL UNIQUE,
+    /* How often it is expected, and how late it may be before that counts. */
+    period_seconds INTEGER NOT NULL DEFAULT 3600,
+    grace_seconds INTEGER NOT NULL DEFAULT 300,
+    severity TEXT NOT NULL DEFAULT 'warning',
+    team_id TEXT REFERENCES teams(id) ON DELETE SET NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_beat_at TEXT,
+    /* ok | missed | new */
+    status TEXT NOT NULL DEFAULT 'new',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
   `CREATE TABLE IF NOT EXISTS sessions (
     sid TEXT PRIMARY KEY,
     data TEXT NOT NULL,
@@ -378,6 +458,9 @@ const INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_field_values_ticket ON ticket_field_values(ticket_id, position)`,
   `CREATE INDEX IF NOT EXISTS idx_login_attempts ON login_attempts(key, created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(prefix)`,
+  `CREATE INDEX IF NOT EXISTS idx_alerts_dedupe ON alerts(source_id, dedupe_key, status)`,
+  `CREATE INDEX IF NOT EXISTS idx_alerts_last_seen ON alerts(last_seen_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_sources_prefix ON alert_sources(token_prefix)`,
 ];
 
 /**
