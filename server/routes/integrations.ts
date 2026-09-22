@@ -94,6 +94,26 @@ integrationsRouter.patch(
         ? ({ ...req.body.config } as Record<string, unknown>)
         : undefined;
 
+    /*
+     * Slack posts either through an incoming webhook or a bot token, and only
+     * the selected mode's credential is ever read.
+     *
+     * So the webhook URL is validated only when that is the mode in use.
+     * Checking it regardless rejected a perfectly good bot-token setup because
+     * of a leftover value in a field the mode never looks at - and the error
+     * named a field the person was not filling in.
+     */
+    const slackMode =
+      provider === 'slack'
+        ? (((incoming?.mode as string) ?? (await loadIntegration(provider)).config.mode ?? 'webhook') as string)
+        : null;
+
+    if (incoming && slackMode === 'bot') {
+      // Not the credential being configured, so this request does not carry
+      // it. Anything already stored is left alone, so switching back works.
+      delete incoming.webhookUrl;
+    }
+
     // Reject URLs that would let an outbound webhook reach internal services.
     if (incoming && typeof incoming.webhookUrl === 'string' && incoming.webhookUrl) {
       incoming.webhookUrl =
@@ -172,13 +192,23 @@ integrationsRouter.post(
   }),
 );
 
-/** Populates the Linear team dropdown once an API key has been saved. */
-integrationsRouter.get(
+/**
+ * Populates the Linear team dropdown.
+ *
+ * POST rather than GET, and the key travels in the body: a key in a query
+ * string ends up in access logs and browser history.
+ *
+ * A key typed but not yet saved is accepted, because requiring a save first
+ * made the buttons order-dependent - the person had to guess that "Save" came
+ * before "Load teams", and got an empty list when they guessed wrong.
+ */
+integrationsRouter.post(
   '/linear/teams',
-  asyncRoute(async (_req, res) => {
-    const record = await loadIntegration('linear');
-    const apiKey = record.config.apiKey as string | undefined;
-    if (!apiKey) throw badRequest('Save a Linear API key first.');
+  asyncRoute(async (req, res) => {
+    const typed = optionalString(req.body?.apiKey, 200);
+    const stored = (await loadIntegration('linear')).config.apiKey as string | undefined;
+    const apiKey = typed || stored;
+    if (!apiKey) throw badRequest('Enter a Linear API key first.', { apiKey: 'Required' });
 
     try {
       res.json({ teams: await listLinearTeams(apiKey) });

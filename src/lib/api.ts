@@ -212,7 +212,9 @@ export const api = {
         `/integrations/${provider}/test`,
         body,
       ),
-    linearTeams: () => get<{ teams: Array<{ id: string; key: string; name: string }> }>('/integrations/linear/teams'),
+    /** The key is optional: without it the server uses the saved one. */
+    linearTeams: (apiKey?: string) =>
+      post<{ teams: Array<{ id: string; key: string; name: string }> }>('/integrations/linear/teams', { apiKey }),
     deliveries: () =>
       get<{
         deliveries: Array<{

@@ -348,7 +348,21 @@ function SlackFields({ config, set }: { config: Record<string, unknown>; set: (k
   return (
     <div className="space-y-3">
       <Field label="Connection method">
-        <Select value={mode} onChange={(event) => set('mode', event.target.value)}>
+        <Select
+          value={mode}
+          onChange={(event) => {
+            const next = event.target.value;
+            set('mode', next);
+            /*
+             * Clear whatever was typed into the other method's field. It is
+             * not the credential being configured, and carrying it along
+             * failed the save on a field this method never reads. An empty
+             * value leaves anything already stored untouched, so switching
+             * back does not lose a saved webhook or token.
+             */
+            set(next === 'bot' ? 'webhookUrl' : 'botToken', '');
+          }}
+        >
           <option value="webhook">Incoming webhook — simplest, posts to one channel</option>
           <option value="bot">Bot token — lets you change channel without a new URL</option>
         </Select>
@@ -432,6 +446,7 @@ function LinearFields({
   teams: Array<{ id: string; key: string; name: string }>;
   setTeams: (teams: Array<{ id: string; key: string; name: string }>) => void;
 }) {
+  const toast = useToast();
   const [loadingTeams, setLoadingTeams] = useState(false);
 
   return (
@@ -472,10 +487,24 @@ function LinearFields({
             onClick={async () => {
               setLoadingTeams(true);
               try {
-                const result = await api.integrations.linearTeams();
+                // Send whatever is currently typed, so the key does not have to
+                // be saved before the list can be loaded.
+                const result = await api.integrations.linearTeams((config.apiKey as string) || undefined);
                 setTeams(result.teams);
-              } catch {
-                // The test-connection button reports the reason in detail.
+                if (result.teams.length === 0) {
+                  toast.error('That key works, but it can see no teams in Linear.');
+                }
+              } catch (caught) {
+                /*
+                 * Say what went wrong. This used to swallow the error on the
+                 * grounds that the test button would explain it, which left
+                 * the button spinning, stopping, and the list still empty with
+                 * nothing said.
+                 */
+                toast.error(
+                  'Could not load teams',
+                  caught instanceof ApiError ? caught.message : 'Linear could not be reached.',
+                );
               } finally {
                 setLoadingTeams(false);
               }
