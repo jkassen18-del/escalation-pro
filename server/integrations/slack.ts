@@ -84,10 +84,10 @@ function buildMessage(ctx: NotificationContext, mention?: string | null) {
   });
 
   /*
-      * Resolve/Close/Reopen alongside the link. Whether a click is honoured is
-      * decided when it arrives, not here: the buttons are visible to everyone
-      * who can see the channel.
-      */
+   * Resolve/Close/Reopen alongside the link. Whether a click is honoured is
+   * decided when it arrives, not here: the buttons are visible to everyone
+   * who can see the channel.
+   */
   blocks.push(ticketActionButtons(ticket, ctx.ticketUrl));
 
   return {

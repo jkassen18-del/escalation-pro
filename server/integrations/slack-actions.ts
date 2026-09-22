@@ -202,14 +202,21 @@ export async function applyStatus(
  * be a member of the channel.
  */
 export async function respondEphemeral(responseUrl: string, text: string): Promise<void> {
+  // Bounded, because this sits in front of the reply to Slack and Slack gives
+  // the whole request three seconds before it warns the person it failed.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2_000);
   try {
     await fetch(responseUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ response_type: 'ephemeral', replace_original: false, text }),
+      signal: controller.signal,
     });
   } catch {
     // The ticket has already been updated by this point. Failing to say so in
     // Slack is worth a silent miss, not an error the person cannot act on.
+  } finally {
+    clearTimeout(timer);
   }
 }

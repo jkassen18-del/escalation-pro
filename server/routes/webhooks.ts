@@ -327,19 +327,16 @@ webhooksRouter.post(
       body: `Changed from ${change.from.replace('_', ' ')} in Slack.`,
     });
 
-    // Answer the click before fanning out: the ephemeral reply is what the
-    // person is waiting on, and Teams, Linear and email are not.
-    if (responseUrl) {
-      await respondEphemeral(
-        responseUrl,
-        `${ticket.reference} is now *${next.replace('_', ' ')}*. Everyone watching it has been told.`,
-      );
-    }
-    res.json({ ok: true, ticket: ticket.reference, status: next });
-
+    /*
+     * Fanned out before the reply rather than after it. On a serverless host
+     * the function can be frozen the moment the response ends, so work left
+     * running past it may simply never happen - and Linear, Teams and email
+     * would silently miss the change. Slack may time out its three seconds
+     * and retry, which is safe: applyStatus is a no-op the second time.
+     */
     const updated = await findTicket(ticket.id, settings.ticketPrefix);
     if (updated) {
-      void dispatch({
+      await dispatch({
         event: 'ticketStatusChanged',
         ticket: updated,
         actorName: actor.user.name,
@@ -348,5 +345,13 @@ webhooksRouter.post(
         ticketUrl: await buildTicketUrl(updated),
       });
     }
+
+    if (responseUrl) {
+      await respondEphemeral(
+        responseUrl,
+        `${ticket.reference} is now *${next.replace('_', ' ')}*. Everyone watching it has been told.`,
+      );
+    }
+    res.json({ ok: true, ticket: ticket.reference, status: next });
   }),
 );
