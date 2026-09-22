@@ -317,34 +317,118 @@ const INDEXES: string[] = [
  * clause and rejects it as a syntax error. Re-running is handled by treating
  * "already exists" as success, which both engines report.
  */
-const ADDITIVE_COLUMNS: string[] = [
-  `ALTER TABLE ticket_attachments ADD COLUMN content TEXT`,
-  /*
-   * Rich text arrived after plain text, so every existing row holds plain
-   * text and must keep rendering as such. The format travels with the value
-   * rather than being inferred: guessing by sniffing for tags would mangle a
-   * plain-text description that happens to mention <html>.
-   */
-  `ALTER TABLE tickets ADD COLUMN description_format TEXT NOT NULL DEFAULT 'text'`,
-  `ALTER TABLE ticket_comments ADD COLUMN body_format TEXT NOT NULL DEFAULT 'text'`,
+interface AdditiveColumn {
+  table: string;
+  column: string;
+  definition: string;
+  why: string;
+}
+
+/**
+ * Columns added after the first release, so an existing database upgrades in
+ * place without a migration tool.
+ */
+const ADDITIVE_COLUMNS: AdditiveColumn[] = [
+  {
+    table: 'ticket_attachments',
+    column: 'content',
+    definition: 'TEXT',
+    why: 'holds attachment bytes where there is no persistent disk',
+  },
+  {
+    table: 'tickets',
+    column: 'description_format',
+    definition: `TEXT NOT NULL DEFAULT 'text'`,
+    why: 'rich text arrived after plain text, and existing rows must keep rendering as plain',
+  },
+  {
+    table: 'ticket_comments',
+    column: 'body_format',
+    definition: `TEXT NOT NULL DEFAULT 'text'`,
+    why: 'same, for comment bodies',
+  },
 ];
+
+/**
+ * Whether a column is already present.
+ *
+ * Asked before altering rather than altering and interpreting the error.
+ * ALTER TABLE requires *ownership* of the table, not merely privileges on it,
+ * so a deployment whose tables were created by a different role gets
+ * "must be owner" for a column that is simply already there - and the two
+ * cases need opposite responses.
+ */
+async function columnExists(driver: DbDriver, table: string, column: string): Promise<boolean> {
+  if (driver.dialect === 'postgres') {
+    const row = await driver.get<{ n: number | string }>(
+      `SELECT COUNT(*) AS n FROM information_schema.columns
+       WHERE table_name = ? AND column_name = ? AND table_schema = current_schema()`,
+      [table, column],
+    );
+    return Number(row?.n ?? 0) > 0;
+  }
+
+  // Table names here are constants in this file, never user input.
+  const rows = await driver.all<{ name: string }>(`PRAGMA table_info(${table})`);
+  return rows.some((row) => row.name === column);
+}
+
+async function applyAdditiveColumns(driver: DbDriver): Promise<void> {
+  for (const { table, column, definition, why } of ADDITIVE_COLUMNS) {
+    if (await columnExists(driver, table, column)) continue;
+
+    const ddl = `ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`;
+    try {
+      await driver.run(ddl);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      // Raced with another instance starting at the same time.
+      if (/duplicate column|already exists/i.test(message)) continue;
+
+      /*
+       * Almost always ownership: the database user can read and write the
+       * table but did not create it, and only its owner may alter it. Nothing
+       * the app can do about that, so say exactly what to run instead of
+       * failing with a message that names neither the cause nor the cure.
+       */
+      throw new Error(
+        `Could not add the "${column}" column to "${table}" (${why}).\n` +
+          `  ${message}\n\n` +
+          `The application's database user can read and write this table but does not own it, ` +
+          `and PostgreSQL only lets a table's owner alter it. Run this once as the owner ` +
+          `(or as a superuser):\n\n` +
+          `  ${ddl.replace(' ADD COLUMN ', ' ADD COLUMN IF NOT EXISTS ')};\n\n` +
+          `To stop this recurring, give the table to the application's user:\n\n` +
+          `  ALTER TABLE ${table} OWNER TO <the user in DATABASE_URL>;`,
+      );
+    }
+  }
+}
 
 export async function migrate(driver: DbDriver): Promise<void> {
   for (const statement of TABLES) {
     await driver.run(statement);
   }
-  for (const statement of ADDITIVE_COLUMNS) {
+  await applyAdditiveColumns(driver);
+  /*
+   * Indexes are best-effort.
+   *
+   * CREATE INDEX also requires ownership of the table - and refuses on that
+   * ground even when the index already exists, so a deployment whose tables
+   * were created by another role cannot get past this. A missing index makes
+   * queries slower; it does not make them wrong, and refusing to start over
+   * one helps nobody. Missing *columns* are different and still fail hard,
+   * because writes against them are broken.
+   */
+  for (const statement of INDEXES) {
     try {
       await driver.run(statement);
     } catch (error) {
-      // Expected on every run after the first, and on a fresh database where
-      // CREATE TABLE above already declared the column.
       const message = error instanceof Error ? error.message : String(error);
-      if (!/duplicate column|already exists/i.test(message)) throw error;
+      if (!/must be owner|permission denied|already exists/i.test(message)) throw error;
+      console.warn(`[db] skipped an index: ${message.split('\n')[0]}`);
     }
-  }
-  for (const statement of INDEXES) {
-    await driver.run(statement);
   }
   await driver.run(
     `INSERT INTO counters (name, value) VALUES ('ticket_number', 1000)

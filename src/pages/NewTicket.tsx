@@ -36,19 +36,41 @@ export function NewTicketPage() {
   });
 
   useEffect(() => {
-    void Promise.all([api.teams.list(), api.users.directory(), api.settings.get(), api.teams.allForms()])
-      .then(([teamResult, directoryResult, settingsResult, formResult]) => {
-        setTeams(teamResult.teams);
-        setDirectory(directoryResult.users);
-        setForms(formResult.forms);
+    /*
+     * allSettled, not all: with Promise.all a failure in any one of these
+     * rejected the whole thing, and the catch discarded it - so one broken
+     * endpoint left the team picker silently empty with nothing said. Each
+     * piece is now applied on its own, and a failure is reported.
+     */
+    void Promise.allSettled([
+      api.teams.list(),
+      api.users.directory(),
+      api.settings.get(),
+      api.teams.allForms(),
+    ]).then(([teamResult, directoryResult, settingsResult, formResult]) => {
+      if (teamResult.status === 'fulfilled') {
+        setTeams(teamResult.value.teams);
+      } else {
+        // The one failure that stops a ticket being raised at all.
+        toast.error(
+          'Could not load teams',
+          teamResult.reason instanceof ApiError ? teamResult.reason.message : 'The server did not respond.',
+        );
+      }
+
+      if (directoryResult.status === 'fulfilled') setDirectory(directoryResult.value.users);
+      // Department questions are optional; without them the standard fields still work.
+      if (formResult.status === 'fulfilled') setForms(formResult.value.forms);
+
+      if (settingsResult.status === 'fulfilled') {
         // Pre-select the organisation default so the common path is one click.
         setForm((current) => ({
           ...current,
-          teamId: current.teamId || (settingsResult.settings.defaultTeamId ?? ''),
-          priority: settingsResult.settings.defaultPriority,
+          teamId: current.teamId || (settingsResult.value.settings.defaultTeamId ?? ''),
+          priority: settingsResult.value.settings.defaultPriority,
         }));
-      })
-      .catch(() => undefined);
+      }
+    });
   }, []);
 
   const set = (key: keyof typeof form) => (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
