@@ -1,4 +1,5 @@
 import type { DbDriver } from './driver.ts';
+import { addColumnToMysql, indexToMysql, tableToMysql } from './mysql-dialect.ts';
 
 /**
  * One portable schema for both engines.
@@ -378,6 +379,15 @@ const ADDITIVE_COLUMNS: AdditiveColumn[] = [
  * cases need opposite responses.
  */
 async function columnExists(driver: DbDriver, table: string, column: string): Promise<boolean> {
+  if (driver.dialect === 'mysql') {
+    const row = await driver.get<{ n: number | string }>(
+      `SELECT COUNT(*) AS n FROM information_schema.columns
+       WHERE table_name = ? AND column_name = ? AND table_schema = DATABASE()`,
+      [table, column],
+    );
+    return Number(row?.n ?? 0) > 0;
+  }
+
   if (driver.dialect === 'postgres') {
     const row = await driver.get<{ n: number | string }>(
       `SELECT COUNT(*) AS n FROM information_schema.columns
@@ -396,7 +406,10 @@ async function applyAdditiveColumns(driver: DbDriver): Promise<void> {
   for (const { table, column, definition, why } of ADDITIVE_COLUMNS) {
     if (await columnExists(driver, table, column)) continue;
 
-    const ddl = `ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`;
+    const ddl =
+      driver.dialect === 'mysql'
+        ? addColumnToMysql(table, column, definition)
+        : `ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`;
     try {
       await driver.run(ddl);
     } catch (error) {
@@ -411,23 +424,42 @@ async function applyAdditiveColumns(driver: DbDriver): Promise<void> {
        * the app can do about that, so say exactly what to run instead of
        * failing with a message that names neither the cause nor the cure.
        */
+      const remedy =
+        driver.dialect === 'mysql'
+          ? `The application's database user lacks ALTER on this table. Run this once as a user ` +
+            `that has it:\n\n  ${ddl};\n\nTo stop this recurring:\n\n` +
+            `  GRANT ALTER ON <database>.* TO '<the user in DATABASE_URL>'@'<host>';`
+          : `The application's database user can read and write this table but does not own it, ` +
+            `and PostgreSQL only lets a table's owner alter it. Run this once as the owner ` +
+            `(or as a superuser):\n\n  ${ddl.replace(' ADD COLUMN ', ' ADD COLUMN IF NOT EXISTS ')};\n\n` +
+            `To stop this recurring, give the table to the application's user:\n\n` +
+            `  ALTER TABLE ${table} OWNER TO <the user in DATABASE_URL>;`;
+
       throw new Error(
-        `Could not add the "${column}" column to "${table}" (${why}).\n` +
-          `  ${message}\n\n` +
-          `The application's database user can read and write this table but does not own it, ` +
-          `and PostgreSQL only lets a table's owner alter it. Run this once as the owner ` +
-          `(or as a superuser):\n\n` +
-          `  ${ddl.replace(' ADD COLUMN ', ' ADD COLUMN IF NOT EXISTS ')};\n\n` +
-          `To stop this recurring, give the table to the application's user:\n\n` +
-          `  ALTER TABLE ${table} OWNER TO <the user in DATABASE_URL>;`,
+        `Could not add the "${column}" column to "${table}" (${why}).\n` + `  ${message}\n\n` + remedy,
       );
     }
   }
 }
 
+/**
+ * Whether an index is already there.
+ *
+ * Only MySQL needs asking: it has no CREATE INDEX IF NOT EXISTS, and re-running
+ * a bare CREATE INDEX on an existing one is an error rather than a no-op.
+ */
+async function indexExists(driver: DbDriver, table: string, name: string): Promise<boolean> {
+  const row = await driver.get<{ n: number | string }>(
+    `SELECT COUNT(*) AS n FROM information_schema.statistics
+     WHERE table_name = ? AND index_name = ? AND table_schema = DATABASE()`,
+    [table, name],
+  );
+  return Number(row?.n ?? 0) > 0;
+}
+
 export async function migrate(driver: DbDriver): Promise<void> {
   for (const statement of TABLES) {
-    await driver.run(statement);
+    await driver.run(driver.dialect === 'mysql' ? tableToMysql(statement, INDEXES) : statement);
   }
   await applyAdditiveColumns(driver);
   /*
@@ -442,6 +474,13 @@ export async function migrate(driver: DbDriver): Promise<void> {
    */
   for (const statement of INDEXES) {
     try {
+      if (driver.dialect === 'mysql') {
+        const index = indexToMysql(statement);
+        if (!index) continue;
+        if (await indexExists(driver, index.table, index.name)) continue;
+        await driver.run(index.sql);
+        continue;
+      }
       await driver.run(statement);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

@@ -32,7 +32,10 @@ export function pickAvatarColor(seed: string): string {
 
 /** SQLite and Postgres spell case-insensitive ordering differently. */
 function nameOrder(): string {
-  return db.dialect === 'postgres' ? 'LOWER(name)' : 'name COLLATE NOCASE';
+  if (db.dialect === 'postgres') return 'LOWER(name)';
+  // MySQL's default collation is already case-insensitive; SQLite's is not.
+  if (db.dialect === 'mysql') return 'name';
+  return 'name COLLATE NOCASE';
 }
 
 async function loadRelations() {

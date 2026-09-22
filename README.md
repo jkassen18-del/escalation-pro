@@ -60,6 +60,17 @@ docker compose up -d
 docker compose up -d app
 ```
 
+### MySQL
+
+MySQL 8.0.13+ or MariaDB 10.2+, created as `utf8mb4`:
+
+```bash
+DATABASE_URL=mysql://infraticket:pass@127.0.0.1:3306/infraticket npm start
+```
+
+The schema is created on first boot. For a full internal deployment behind
+Apache, see the MySQL and Apache runbook in [DEPLOY.md](DEPLOY.md).
+
 ### PostgreSQL
 
 Set `DATABASE_URL` and restart. The schema is created automatically:

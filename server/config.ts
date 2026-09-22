@@ -49,14 +49,24 @@ export const paths = {
 };
 
 /**
- * Postgres is used when DATABASE_URL (or the discrete PG* vars) are present.
- * Otherwise the app falls back to an embedded SQLite file so that a plain
- * `npm install && npm run dev` works with nothing else installed.
+ * Which engine to talk to.
+ *
+ * DB_DRIVER decides when it is set. Otherwise the scheme of DATABASE_URL does,
+ * and then the discrete per-engine variables. With none of them the app falls
+ * back to an embedded SQLite file, so a plain `npm install && npm run dev`
+ * works with nothing else installed.
  */
-function resolveDriver(): 'postgres' | 'sqlite' {
+function resolveDriver(): 'postgres' | 'mysql' | 'sqlite' {
   const explicit = (process.env.DB_DRIVER || '').toLowerCase();
   if (explicit === 'postgres' || explicit === 'sqlite') return explicit;
-  if (process.env.DATABASE_URL || process.env.PGHOST || process.env.PGDATABASE) return 'postgres';
+  if (explicit === 'mysql' || explicit === 'mariadb') return 'mysql';
+
+  const url = process.env.DATABASE_URL || '';
+  if (/^mysql(2)?:\/\//i.test(url) || /^mariadb:\/\//i.test(url)) return 'mysql';
+  if (url) return 'postgres';
+
+  if (process.env.MYSQL_HOST || process.env.MYSQL_DATABASE) return 'mysql';
+  if (process.env.PGHOST || process.env.PGDATABASE) return 'postgres';
   return 'sqlite';
 }
 
@@ -74,7 +84,7 @@ export function assertDatabaseConfigured(): void {
     throw new Error(
       'DATABASE_URL is not set. A serverless deployment needs an external database: ' +
         'the embedded SQLite file requires a persistent filesystem, which this platform ' +
-        'does not provide. Set DATABASE_URL to a pooled Postgres connection string.',
+        'does not provide. Set DATABASE_URL to a pooled Postgres or MySQL connection string.',
     );
   }
 }

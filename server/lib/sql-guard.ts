@@ -147,6 +147,7 @@ export function bindSearchToken(
   const text = sql.split(SEARCH_TOKEN).reduce((accumulator, part, index) => {
     if (index === 0) return part;
     count += 1;
+    // MySQL and SQLite both take positional `?`; only Postgres numbers them.
     return accumulator + (dialect === 'postgres' ? `$${count}` : '?') + part;
   }, '');
   return { text, count };

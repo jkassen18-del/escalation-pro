@@ -151,6 +151,125 @@ profile in `docker-compose.yml` and the Cloudflare section in the README.
 
 ---
 
+## On your own servers: MySQL and Apache
+
+The usual internal launch. Apache owns ports 80 and 443 and terminates TLS;
+the application is a Node process bound to loopback behind it; MySQL holds the
+data. Apache cannot run this app itself — there is no PHP here and no CGI —
+so its role is reverse proxy, which is `mod_proxy_http` and nothing exotic.
+
+Ready-made files: `deploy/apache/infraticket.conf` and
+`deploy/systemd/infraticket.service`.
+
+### 1. MySQL
+
+**MySQL 8.0.13+ or MariaDB 10.2+.** Older servers reject a `DEFAULT` on a long
+text column, which several tables here need; the app checks the version on
+startup and refuses with that message rather than half-creating a schema.
+
+```sql
+CREATE DATABASE infraticket CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'infraticket'@'localhost' IDENTIFIED BY '<a long random password>';
+GRANT ALL PRIVILEGES ON infraticket.* TO 'infraticket'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+`utf8mb4` is not optional. A database created with `utf8mb3` rejects emoji
+outright, and one defaulting to `latin1` mangles any accented character
+someone types into a ticket. The app declares the charset on every table it
+creates, so this only matters for the database itself.
+
+Grant for `'localhost'` specifically if the app connects to `127.0.0.1` —
+MySQL matches that as `localhost`, so a `'%'`-only grant is refused.
+
+`ALL PRIVILEGES` is only needed for the first boot, which creates the schema.
+Afterwards you can narrow it to `SELECT, INSERT, UPDATE, DELETE` — but leave
+`ALTER` and `INDEX` if you intend to upgrade in place, because a release that
+adds a column will need them and will tell you so by name if it cannot.
+
+### 2. The application
+
+```bash
+sudo useradd --system --home /opt/infraticket --shell /usr/sbin/nologin infraticket
+sudo git clone <this repo> /opt/infraticket && cd /opt/infraticket
+sudo -u infraticket npm ci && sudo -u infraticket npm run build
+```
+
+`/opt/infraticket/.env`, owned by that user and mode `0640` — it holds the
+database password and the key that every integration secret is encrypted with:
+
+```bash
+DATABASE_URL=mysql://infraticket:<password>@127.0.0.1:3306/infraticket
+APP_URL=https://tickets.example.internal
+SESSION_SECRET=$(openssl rand -hex 32)   # signs session cookies
+SECRET_KEY=$(openssl rand -hex 32)       # encrypts integration credentials
+SETUP_TOKEN=$(openssl rand -hex 16)      # gates first-run setup
+SESSION_COOKIE_SECURE=true               # Apache terminates TLS
+```
+
+No `CRON_SECRET` and no `ATTACHMENT_STORE` here: on a long-running server the
+SLA sweep runs in-process and uploads go to disk under `data/`, both of which
+only need working around on serverless.
+
+`SESSION_COOKIE_SECURE=true` is right behind Apache's TLS and **breaks sign-in
+over plain HTTP**, because the browser refuses to store the cookie. Set
+`SETUP_TOKEN` because the first-run screen creates an administrator, and on a
+reachable address the first person to load the page would otherwise claim it.
+
+**Keep `SECRET_KEY` safe.** Integration credentials are encrypted with it; lose
+it and every stored Slack token, Linear key and SMTP password becomes
+unreadable and has to be entered again.
+
+```bash
+sudo cp deploy/systemd/infraticket.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now infraticket
+curl -s localhost:3000/health     # {"status":"ok","database":"mysql",...}
+```
+
+Check `database` says `mysql` before going further. If it says `sqlite`, the
+unit is not reading your `.env` and the app is quietly writing to a file.
+
+### 3. Apache
+
+```bash
+sudo a2enmod proxy proxy_http headers ssl rewrite
+sudo cp deploy/apache/infraticket.conf /etc/apache2/sites-available/
+sudo a2ensite infraticket
+sudo apachectl configtest && sudo systemctl reload apache2
+```
+
+Edit `ServerName` and the two certificate paths first. On RHEL or Rocky the
+modules are built in — drop the file into `/etc/httpd/conf.d/` and reload
+`httpd` instead.
+
+The two `RequestHeader set X-Forwarded-*` lines in that file are load-bearing.
+The app calls `app.set('trust proxy', 1)` and believes them: without them
+every audit entry records Apache's own address instead of the person's, and
+the session cookie is issued without `Secure` because the app thinks the
+request arrived over plain HTTP.
+
+### 4. Confirm it, then claim the account
+
+```bash
+curl -sk https://tickets.example.internal/health
+```
+
+Then open the site. An empty database shows the first-run screen, which asks
+for the setup token and creates your administrator. Everyone else is added
+from the People page afterwards — there is no public sign-up.
+
+### Moving an existing deployment onto MySQL
+
+There is no built-in export/import between engines, and I would not pretend
+otherwise: the schema is portable but the data is not copied for you. For a
+deployment that already has tickets in Postgres or SQLite, move the rows with
+your own tooling (`pgloader` handles Postgres to MySQL well) against a schema
+this app has already created, so the column types match what it expects.
+
+Starting fresh is considerably less work if the current data is disposable.
+
+---
+
 ## Notes
 
 **Cloudflare Workers is not a supported target.** Workers cannot load native

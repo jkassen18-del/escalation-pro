@@ -1,0 +1,50 @@
+# systemd unit for the Node process Apache proxies to.
+#
+#   useradd --system --home /opt/infraticket --shell /usr/sbin/nologin infraticket
+#   install -o infraticket -g infraticket -m 0640 /opt/infraticket/.env ...
+#   cp deploy/systemd/infraticket.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now infraticket
+
+[Unit]
+Description=InfraTicket
+Documentation=file:///opt/infraticket/DEPLOY.md
+After=network-online.target mysql.service mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=infraticket
+Group=infraticket
+WorkingDirectory=/opt/infraticket
+
+# Loopback only. Apache is the front door; nothing should be able to reach
+# Node directly and skip TLS.
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=3000
+EnvironmentFile=/opt/infraticket/.env
+
+ExecStart=/usr/bin/node dist/server/index.mjs
+Restart=always
+RestartSec=5
+
+# The app writes uploads, exports and the SQLite file (unused on MySQL) under
+# data/. Everything else stays read-only.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/infraticket/data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=true
+LockPersonality=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=infraticket
+
+[Install]
+WantedBy=multi-user.target

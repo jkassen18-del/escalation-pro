@@ -20,6 +20,7 @@ so a plain `npm test` is always green:
 | --- | --- | --- |
 | `dropdown-colours.test.ts` | a Chromium binary | skipped |
 | `data-sources.test.ts` | a local Postgres and MySQL/MariaDB | those cases skip |
+| `mysql-driver.test.ts` | a MySQL/MariaDB at `MYSQL_TEST_URL` | the whole file skips |
 
 A skipped suite is reported as `# skipped`, never as a pass — if you are
 changing either area, start the dependency and confirm the count goes up.
@@ -33,6 +34,29 @@ a browser at `$CHROMIUM_PATH` first, then the usual Playwright locations.
 ```bash
 CHROMIUM_PATH=/path/to/chrome npm test
 ```
+
+### MySQL for the driver tests
+
+`mysql-driver.test.ts` runs the schema and the real API against a live server,
+because everything it checks is enforced by MySQL and not by this code: that a
+key column is a type MySQL will index, that a 200 KB attachment is not
+truncated at TEXT's 64 KB, that `ON CONFLICT` was translated into something
+MySQL understands, and that a second startup does not trip over the missing
+`CREATE INDEX IF NOT EXISTS`.
+
+It looks for `MYSQL_TEST_URL`, defaulting to
+`mysql://ticket_app:app-pass@127.0.0.1:33307/infraticket_test`, and **drops
+every table in that database on each run** — point it at a scratch database,
+never a real one.
+
+```sql
+CREATE DATABASE infraticket_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'ticket_app'@'localhost' IDENTIFIED BY 'app-pass';
+GRANT ALL ON infraticket_test.* TO 'ticket_app'@'localhost';
+```
+
+Grant for `localhost` as well as `%`, for the same reason the data-source
+tests need it: a connection to `127.0.0.1` is matched as `localhost`.
 
 ### Postgres and MySQL for the data-source tests
 
