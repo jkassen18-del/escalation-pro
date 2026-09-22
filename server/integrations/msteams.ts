@@ -1,3 +1,4 @@
+import { findTeamRoute } from '../repositories/team-routing.ts';
 import { postJson, type DeliveryResult, type NotificationContext, type TestResult, PRIORITY_HEX } from './types.ts';
 import type { IntegrationRecord } from './store.ts';
 
@@ -158,10 +159,13 @@ export async function testMsTeams(record: IntegrationRecord): Promise<TestResult
 
 export async function sendMsTeams(record: IntegrationRecord, ctx: NotificationContext): Promise<DeliveryResult> {
   const config = readConfig(record);
-  if (!config.webhookUrl) return { ok: false, statusCode: null, error: 'Webhook URL is not configured' };
+  // A department may post into its own Teams channel, via its own workflow URL.
+  const route = await findTeamRoute(ctx.ticket.teamId, 'msteams');
+  const webhookUrl = route?.target || config.webhookUrl;
+  if (!webhookUrl) return { ok: false, statusCode: null, error: 'Webhook URL is not configured' };
 
   try {
-    const { status, text } = await postJson(config.webhookUrl, buildPayload(config, ctx));
+    const { status, text } = await postJson(webhookUrl, buildPayload({ ...config, webhookUrl }, ctx));
     return {
       ok: isSuccess(status, text),
       statusCode: status,

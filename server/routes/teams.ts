@@ -14,8 +14,9 @@ import {
 import { clientIp, recordAudit } from '../lib/audit.ts';
 import { requireAuth, requirePermission, type AuthedRequest } from '../middleware/auth.ts';
 import { listAllFields, listTeamFields, replaceTeamForm } from '../repositories/form-fields.ts';
+import { listTeamRoutes, setTeamRoute } from '../repositories/team-routing.ts';
 import { createTeam, findTeamById, keyInUse, listTeams, setTeamMembers } from '../repositories/teams.ts';
-import { AUTO_ASSIGN_MODES, TICKET_PRIORITIES } from '../../shared/types.ts';
+import { AUTO_ASSIGN_MODES, INTEGRATION_PROVIDERS, TICKET_PRIORITIES } from '../../shared/types.ts';
 
 export const teamsRouter: Router = Router();
 
@@ -218,5 +219,52 @@ teamsRouter.put(
     });
 
     res.json({ fields });
+  }),
+);
+
+/* ------------------------- notification routing --------------------------- */
+
+/**
+ * Where this team's tickets are announced.
+ *
+ * Readable by any signed-in user so the team screen can show it; only a
+ * channel name or team id, never a credential.
+ */
+teamsRouter.get(
+  '/:id/routing',
+  asyncRoute(async (req, res) => {
+    res.json({ routes: await listTeamRoutes(req.params.id) });
+  }),
+);
+
+teamsRouter.put(
+  '/:id/routing',
+  requirePermission('teams.manage'),
+  asyncRoute(async (req, res) => {
+    const actor = (req as AuthedRequest).user;
+    const team = await findTeamById(req.params.id);
+    if (!team) throw notFound('That team does not exist.');
+
+    const submitted = Array.isArray(req.body?.routes) ? req.body.routes : [];
+    for (const route of submitted) {
+      const provider = requireEnum(route?.provider, INTEGRATION_PROVIDERS, 'Provider');
+      // Email has no per-team destination: it goes to the ticket's own people.
+      if (provider === 'email') continue;
+      await setTeamRoute(team.id, provider, String(route?.target ?? ''), route?.mention ?? null);
+    }
+
+    const routes = await listTeamRoutes(team.id);
+    await recordAudit({
+      actorId: actor.id,
+      actorName: actor.name,
+      entityType: 'team',
+      entityId: team.id,
+      action: 'routing_updated',
+      summary: `${actor.name} updated where ${team.name} tickets are announced`,
+      meta: { providers: routes.map((route) => route.provider) },
+      ip: clientIp(req),
+    });
+
+    res.json({ routes });
   }),
 );

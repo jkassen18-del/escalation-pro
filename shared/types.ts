@@ -51,6 +51,15 @@ export interface PublicUser {
   extraPermissions: Permission[];
 }
 
+/** Where a department's tickets are announced, overriding the defaults. */
+export interface TeamRoute {
+  provider: IntegrationProvider;
+  /** Slack channel id, Teams webhook URL, or Linear team id. */
+  target: string;
+  /** Slack only: who to ping, in Slack's mention syntax. */
+  mention: string | null;
+}
+
 export interface Team {
   id: string;
   key: string;

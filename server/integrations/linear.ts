@@ -1,5 +1,6 @@
 import type { DeliveryResult, NotificationContext, TestResult } from './types.ts';
 import type { IntegrationRecord } from './store.ts';
+import { findTeamRoute } from '../repositories/team-routing.ts';
 import type { TicketPriority, TicketStatus } from '../../shared/types.ts';
 
 const LINEAR_API = 'https://api.linear.app/graphql';
@@ -111,7 +112,14 @@ export async function createLinearIssue(
 ): Promise<LinearIssueResult> {
   const config = record.config as LinearConfig;
   if (!config.apiKey) return { ok: false, error: 'Linear API key is not configured' };
-  if (!config.teamId) return { ok: false, error: 'No Linear team selected' };
+  /*
+   * A department may mirror into its own Linear team - HR tickets into the HR
+   * team rather than everything landing in one. No override means the
+   * integration's default team, as before.
+   */
+  const route = await findTeamRoute(ctx.ticket.teamId, 'linear');
+  const targetTeamId = route?.target || config.teamId;
+  if (!targetTeamId) return { ok: false, error: 'No Linear team selected' };
 
   const description = [
     ctx.ticket.description,
@@ -137,7 +145,7 @@ export async function createLinearIssue(
        }`,
       {
         input: {
-          teamId: config.teamId,
+          teamId: targetTeamId,
           title: `[${ctx.ticket.reference}] ${ctx.ticket.subject}`,
           description,
           priority: PRIORITY_MAP[ctx.ticket.priority],

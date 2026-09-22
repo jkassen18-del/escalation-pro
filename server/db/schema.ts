@@ -231,6 +231,25 @@ const TABLES: string[] = [
   )`,
 
   /*
+   * Where each department's tickets are announced.
+   *
+   * One row per team per provider, overriding the integration's default. HR
+   * tickets go to the HR channel and ping the HR group; IT tickets go to IT.
+   * Without a row a team simply uses the default, so this is additive and a
+   * deployment that wants one channel for everything needs no rows at all.
+   */
+  `CREATE TABLE IF NOT EXISTS team_routing (
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    /* Slack channel id, Teams webhook URL, or Linear team id. */
+    target TEXT NOT NULL DEFAULT '',
+    /* Slack only: who to mention, e.g. a user group or @here. */
+    mention TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (team_id, provider)
+  )`,
+
+  /*
    * Per-department intake forms. Each team defines the questions its own
    * tickets should answer, on top of the fields every ticket has.
    */

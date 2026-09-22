@@ -1,5 +1,6 @@
 import type {
   DataSourceSummary,
+  TeamRoute,
   TeamFormField,
   AppSettings,
   AuditEntry,
@@ -159,6 +160,9 @@ export const api = {
     remove: (id: string) => del<{ ok: true }>(`/teams/${id}`),
     form: (id: string) => get<{ fields: TeamFormField[] }>(`/teams/${id}/form`),
     allForms: () => get<{ forms: Record<string, TeamFormField[]> }>('/teams/forms/all'),
+    routing: (id: string) => get<{ routes: TeamRoute[] }>(`/teams/${id}/routing`),
+    saveRouting: (id: string, routes: unknown[]) =>
+      request<{ routes: TeamRoute[] }>(`/teams/${id}/routing`, { method: 'PUT', body: JSON.stringify({ routes }) }),
     saveForm: (id: string, fields: unknown[]) =>
       request<{ fields: TeamFormField[] }>(`/teams/${id}/form`, { method: 'PUT', body: JSON.stringify({ fields }) }),
   },

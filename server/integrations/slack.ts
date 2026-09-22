@@ -2,6 +2,7 @@ import { postJson, type DeliveryResult, type NotificationContext, type TestResul
 import type { IntegrationRecord } from './store.ts';
 import { db } from '../db/index.ts';
 import { addLink } from '../repositories/tickets.ts';
+import { findTeamRoute } from '../repositories/team-routing.ts';
 
 export interface SlackConfig {
   /** Incoming webhook URL (https://hooks.slack.com/services/...). */
@@ -39,8 +40,11 @@ function threadPermalink(channel: string, ts: string): string {
  * Block Kit payload. Slack renders `blocks`; `text` is the notification
  * fallback shown in the sidebar and on mobile push.
  */
-function buildMessage(ctx: NotificationContext) {
+function buildMessage(ctx: NotificationContext, mention?: string | null) {
   const { ticket } = ctx;
+  // Slack only notifies when the mention is in the message body, so it leads
+  // the headline rather than sitting in a footer nobody is pinged by.
+  const lead = mention ? `${mention} ` : '';
   const fields = [
     `*Status*\n${ticket.status.replace('_', ' ')}`,
     `*Priority*\n${ticket.priority}`,
@@ -51,7 +55,10 @@ function buildMessage(ctx: NotificationContext) {
   const blocks: unknown[] = [
     {
       type: 'section',
-      text: { type: 'mrkdwn', text: `*${ctx.headline}*\n<${ctx.ticketUrl}|${ticket.reference}> · ${ticket.subject}` },
+      text: {
+        type: 'mrkdwn',
+        text: `${lead}*${ctx.headline}*\n<${ctx.ticketUrl}|${ticket.reference}> · ${ticket.subject}`,
+      },
     },
     { type: 'section', fields: fields.map((text) => ({ type: 'mrkdwn', text })) },
   ];
@@ -81,7 +88,8 @@ function buildMessage(ctx: NotificationContext) {
   });
 
   return {
-    text: `${ctx.headline}: ${ticket.reference} ${ticket.subject}`,
+    // Also the push-notification line, so a phone shows who is being asked.
+    text: `${lead}${ctx.headline}: ${ticket.reference} ${ticket.subject}`,
     blocks,
     attachments: [{ color: PRIORITY_HEX[ticket.priority] ?? '#667085', blocks: [] }],
   };
@@ -211,7 +219,15 @@ export async function findTicketBySlackThread(threadTs: string): Promise<string 
 
 export async function sendSlack(record: IntegrationRecord, ctx: NotificationContext): Promise<DeliveryResult> {
   const config = readConfig(record);
-  const message = buildMessage(ctx);
+
+  /*
+   * Departments announce in their own place: an HR ticket goes to the HR
+   * channel and pings the HR group. A team with no override falls back to the
+   * single channel configured on the integration, so this changes nothing for
+   * a deployment that wants one channel for everything.
+   */
+  const route = await findTeamRoute(ctx.ticket.teamId, 'slack');
+  const message = buildMessage(ctx, route?.mention);
 
   try {
     if (config.mode === 'bot') {
@@ -229,6 +245,11 @@ export async function sendSlack(record: IntegrationRecord, ctx: NotificationCont
        * back to the ticket.
        */
       const existing = await findSlackThread(ctx.ticket.id);
+      // The thread wins over routing: once a ticket's conversation lives in a
+      // channel, later notifications must not split off into another one.
+      // `||` not `??`: a route may exist purely to set a mention, leaving the
+      // channel empty. An empty string is "no override", not "send nowhere".
+      const channel = existing?.channel || route?.target || config.channel;
 
       const response = await fetch('https://slack.com/api/chat.postMessage', {
         method: 'POST',
@@ -237,7 +258,7 @@ export async function sendSlack(record: IntegrationRecord, ctx: NotificationCont
           'Content-Type': 'application/json; charset=utf-8',
         },
         body: JSON.stringify({
-          channel: existing?.channel ?? config.channel,
+          channel,
           ...message,
           ...(existing ? { thread_ts: existing.ts } : {}),
         }),
@@ -247,7 +268,8 @@ export async function sendSlack(record: IntegrationRecord, ctx: NotificationCont
       if (body.ok && body.ts && !existing) {
         // Remember the root message so replies to it can find this ticket.
         // Recorded best-effort: losing the thread must not fail the delivery.
-        await addLink(ctx.ticket.id, 'slack', body.ts, body.channel ?? config.channel, threadPermalink(body.channel ?? config.channel, body.ts)).catch(
+        const posted = body.channel ?? channel;
+        await addLink(ctx.ticket.id, 'slack', body.ts, posted, threadPermalink(posted, body.ts)).catch(
           () => undefined,
         );
       }
