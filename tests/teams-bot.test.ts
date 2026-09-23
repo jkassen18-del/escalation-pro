@@ -121,6 +121,11 @@ before(async () => {
       if (!person) return new Response('not found', { status: 404 });
       return Response.json(person);
     }
+    // A Power Automate flow URL, for the webhook-mode payload test.
+    if (url.includes('logic.azure.com')) {
+      sent.push({ url, body: JSON.parse(String(init?.body ?? '{}')) });
+      return new Response('', { status: 202 });
+    }
     // Anything else on the service URL is the bot talking back.
     if (url.startsWith(SERVICE_URL) || url.includes('/v3/conversations/')) {
       sent.push({ url, body: JSON.parse(String(init?.body ?? '{}')) });
@@ -522,4 +527,88 @@ test('a notification threads onto the ticket’s existing Teams message', async 
     sent.at(-1)!.url.endsWith(`/activities/${rootActivityId}`),
     `expected a reply to ${rootActivityId}, got ${sent.at(-1)!.url}`,
   );
+});
+
+test('a notification card is an Adaptive Card, not a message envelope', async () => {
+  /*
+   * Regression. sendViaBot passed buildAdaptiveCard(ctx) straight in as the
+   * attachment's `content`, but that function returns the whole outbound
+   * message - {type:'message', attachments:[...]} - so the attachment
+   * contained an envelope where Teams expected a card, and rendered nothing.
+   * Stubbing the HTTP hid it: the earlier test only checked the URL.
+   */
+  const { loadIntegration } = await import('../server/integrations/store.ts');
+  const { sendMsTeams } = await import('../server/integrations/msteams.ts');
+  const { findTicket } = await import('../server/repositories/tickets.ts');
+
+  const row = await db.get<{ id: string }>(`SELECT id FROM tickets WHERE subject = ?`, [
+    'Duplicate invoice from Acme',
+  ]);
+  const ticket = await findTicket(row!.id, 'ESC');
+
+  sent = [];
+  await sendMsTeams(await loadIntegration('msteams'), {
+    event: 'ticketStatusChanged',
+    ticket: ticket!,
+    actorName: 'Ada Agent',
+    headline: 'Moved to in progress',
+    ticketUrl: 'https://example.internal/tickets/1',
+  });
+
+  const card = sent.at(-1)!.body.attachments[0].content;
+  assert.equal(card.type, 'AdaptiveCard', `expected a card, got ${card.type}`);
+  assert.ok(Array.isArray(card.body), 'the card has no body');
+  assert.equal(card.attachments, undefined, 'a whole message envelope was sent as the card');
+});
+
+test('the webhook payload carries routing metadata a flow can switch on', async () => {
+  /*
+   * Webhook mode specifically: that is what a Power Automate flow receives,
+   * and a Switch there has to branch on something. The department used to be
+   * reachable only as body[2].facts[3].value, which points at the wrong field
+   * as soon as a block or a fact is added.
+   *
+   * Bot mode sends the card alone and needs none of this - the app has
+   * already chosen the conversation itself.
+   */
+  const { saveIntegration, loadIntegration } = await import('../server/integrations/store.ts');
+  const { sendMsTeams } = await import('../server/integrations/msteams.ts');
+  const { findTicket } = await import('../server/repositories/tickets.ts');
+
+  const row = await db.get<{ id: string }>(`SELECT id FROM tickets WHERE subject = ?`, [
+    'Duplicate invoice from Acme',
+  ]);
+  const ticket = await findTicket(row!.id, 'ESC');
+
+  await saveIntegration('msteams', {
+    enabled: true,
+    config: {
+      mode: 'webhook',
+      webhookUrl: 'https://prod-00.westeurope.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=x',
+    },
+  });
+
+  sent = [];
+  await sendMsTeams(await loadIntegration('msteams'), {
+    event: 'ticketCreated',
+    ticket: ticket!,
+    actorName: 'Ada Agent',
+    headline: 'New ticket',
+    ticketUrl: 'https://example.internal/tickets/1',
+  });
+
+  // Put the bot configuration back for anything that runs after this.
+  await saveIntegration('msteams', {
+    enabled: true,
+    config: { mode: 'bot', appId: APP_ID, appPassword: 'secret', tenantId: 'tenant-1' },
+  });
+
+  const routing = sent.at(-1)!.body.ticket;
+  assert.ok(routing, 'no routing metadata was sent');
+  // The key, not the display name: renaming a department must not reroute it.
+  assert.equal(routing.teamKey, 'FINANCE');
+  assert.equal(routing.teamName, 'Finance');
+  assert.match(routing.reference, /^ESC-\d+$/);
+  assert.equal(routing.priority, ticket!.priority);
+  assert.equal(routing.event, 'ticketCreated');
 });

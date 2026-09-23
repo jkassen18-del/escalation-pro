@@ -69,7 +69,37 @@ function facts(ctx: NotificationContext) {
   ];
 }
 
-function buildAdaptiveCard(ctx: NotificationContext) {
+/**
+ * Routing metadata, alongside the card rather than inside it.
+ *
+ * A Power Automate Switch has to branch on something, and the only place the
+ * department appeared was a fact inside the card body - reachable only as
+ * body[2].facts[3].value, which silently points at the wrong field the moment
+ * a block or a fact is added. These are flat, named, and stable.
+ *
+ * `teamKey` rather than the display name on purpose: renaming a department in
+ * the admin UI would otherwise send its tickets down the default branch of
+ * every flow that switched on it.
+ */
+function routingFields(ctx: NotificationContext, teamKey: string | null) {
+  return {
+    ticket: {
+      reference: ctx.ticket.reference,
+      subject: ctx.ticket.subject,
+      url: ctx.ticketUrl,
+      teamKey,
+      teamName: ctx.ticket.teamName ?? null,
+      teamId: ctx.ticket.teamId ?? null,
+      status: ctx.ticket.status,
+      priority: ctx.ticket.priority,
+      type: ctx.ticket.type,
+      assignee: ctx.ticket.assigneeName ?? null,
+      event: ctx.event,
+    },
+  };
+}
+
+function buildAdaptiveCard(ctx: NotificationContext, teamKey: string | null = null) {
   const body: unknown[] = [
     {
       type: 'TextBlock',
@@ -92,6 +122,9 @@ function buildAdaptiveCard(ctx: NotificationContext) {
 
   return {
     type: 'message',
+    // Ours, not Microsoft's: ignored by the card renderer, available to a
+    // flow as triggerBody()?['ticket']?['teamKey'].
+    ...routingFields(ctx, teamKey),
     attachments: [
       {
         contentType: 'application/vnd.microsoft.card.adaptive',
@@ -133,8 +166,25 @@ function buildMessageCard(ctx: NotificationContext) {
   };
 }
 
-function buildPayload(config: MsTeamsConfig, ctx: NotificationContext) {
-  return resolveFormat(config) === 'messagecard' ? buildMessageCard(ctx) : buildAdaptiveCard(ctx);
+function buildPayload(config: MsTeamsConfig, ctx: NotificationContext, teamKey: string | null = null) {
+  /*
+   * Only the adaptive payload carries the routing fields. A legacy Office 365
+   * connector validates MessageCard strictly and rejects properties it does
+   * not know, and those connectors cannot drive a flow anyway.
+   */
+  return resolveFormat(config) === 'messagecard' ? buildMessageCard(ctx) : buildAdaptiveCard(ctx, teamKey);
+}
+
+/** The department's stable key, which the ticket itself does not carry. */
+async function teamKeyFor(ctx: NotificationContext): Promise<string | null> {
+  if (!ctx.ticket.teamId) return null;
+  try {
+    const { findTeamById } = await import('../repositories/teams.ts');
+    return (await findTeamById(ctx.ticket.teamId))?.key ?? null;
+  } catch {
+    // Routing metadata is a convenience; losing it must not lose the message.
+    return null;
+  }
 }
 
 /** Workflows returns 202 with an empty body; legacy connectors return 200 "1". */
@@ -330,7 +380,7 @@ async function sendViaBot(config: MsTeamsConfig, ctx: NotificationContext): Prom
       conversationId: conversation.conversationId,
       replyToId: existing?.activityId ?? null,
     },
-    { attachments: [{ contentType: 'application/vnd.microsoft.card.adaptive', content: buildAdaptiveCard(ctx) }] },
+    { attachments: [{ contentType: 'application/vnd.microsoft.card.adaptive', content: buildAdaptiveCard(ctx, await teamKeyFor(ctx)).attachments[0].content }] },
   );
 
   // The first message for a ticket becomes its thread; later ones reply to it.
@@ -352,7 +402,8 @@ export async function sendMsTeams(record: IntegrationRecord, ctx: NotificationCo
   if (!webhookUrl) return { ok: false, statusCode: null, error: 'Webhook URL is not configured' };
 
   try {
-    const { status, text } = await postJson(webhookUrl, buildPayload({ ...config, webhookUrl }, ctx));
+    const teamKey = await teamKeyFor(ctx);
+    const { status, text } = await postJson(webhookUrl, buildPayload({ ...config, webhookUrl }, ctx, teamKey));
     return {
       ok: isSuccess(status, text),
       statusCode: status,
