@@ -247,3 +247,50 @@ test('switching Teams back to webhook mode keeps the stored bot credentials', as
   // The secret was not re-sent, so it must still be there rather than blanked.
   assert.equal(payload.integration.configured, true, 'switching modes lost the stored client secret');
 });
+
+/* ------------------ The Power Automate URL that cannot work --------------- */
+
+/** The exact shape Power Automate hands out when the flow is OAuth-gated. */
+const UNSIGNED_FLOW_URL =
+  'https://default5ce5a05851b8428fa61f1702373e3c.fa.environment.api.powerplatform.com:443' +
+  '/powerautomate/automations/direct/cu/31/workflows/80726eafa2094ba0acc0eca728939749' +
+  '/triggers/manual/paths/invoke?api-version=1';
+
+/** The same URL as it looks once the flow signs it. */
+const SIGNED_FLOW_URL = `${UNSIGNED_FLOW_URL}&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=abc123signaturegoeshere`;
+
+test('a Power Automate URL with no signature is refused on the way in', async () => {
+  /*
+   * It can never work: Microsoft answers it with a 401 naming an error code
+   * nobody outside Microsoft knows. Saying so while the URL is still on
+   * screen beats letting somebody save it and then puzzle over the test.
+   */
+  const { status, payload } = await saveTeams({ mode: 'webhook', webhookUrl: UNSIGNED_FLOW_URL });
+
+  assert.equal(status, 400);
+  assert.match(payload.error, /sig=/, 'the message should name the missing part');
+  assert.match(payload.error, /Anyone|Bot mode/, 'and say what to do about it');
+});
+
+test('the signed form of the same URL saves', async () => {
+  const { status } = await saveTeams({ mode: 'webhook', webhookUrl: SIGNED_FLOW_URL });
+  assert.equal(status, 200, 'a properly signed flow URL must still be accepted');
+});
+
+test('the check only applies to Power Automate hosts', async () => {
+  // A legacy Office 365 connector URL has no signature and does not need one.
+  const { status } = await saveTeams({
+    mode: 'webhook',
+    webhookUrl: 'https://acme.webhook.office.com/webhookb2/abc-def/IncomingWebhook/123/456',
+  });
+  assert.equal(status, 200, 'a legacy connector URL was wrongly rejected');
+});
+
+test("Microsoft's OAuth refusal is explained rather than relayed", async () => {
+  const { isUnsignedPowerAutomateUrl } = await import('../server/integrations/msteams.ts');
+
+  assert.equal(isUnsignedPowerAutomateUrl(UNSIGNED_FLOW_URL), true);
+  assert.equal(isUnsignedPowerAutomateUrl(SIGNED_FLOW_URL), false);
+  // Not a Power Automate host, so not this check's business either way.
+  assert.equal(isUnsignedPowerAutomateUrl('https://acme.webhook.office.com/webhookb2/x'), false);
+});

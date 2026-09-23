@@ -143,6 +143,63 @@ function isSuccess(status: number, text: string): boolean {
   return status === 202;
 }
 
+/**
+ * True when a Power Automate URL is missing its signature.
+ *
+ * A working "when a webhook request is received" URL is signed: it carries
+ * sp, sv and a long sig. A URL with only api-version has either been
+ * truncated on the way out of Power Automate - the signature is at the end,
+ * so a partial copy loses exactly that - or the flow is set to require an
+ * OAuth token instead, which an incoming webhook cannot provide.
+ */
+export function isUnsignedPowerAutomateUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    if (!/powerplatform\.com$|logic\.azure\.com$/i.test(url.hostname)) return false;
+    return !url.searchParams.get('sig');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Turns Microsoft's refusal into something actionable.
+ *
+ * A raw 401 with a JSON body names a code nobody outside Microsoft knows.
+ * The two failures that actually happen here have specific, different fixes,
+ * and relaying the body leaves somebody to search for the code themselves.
+ */
+function explainTeamsFailure(status: number, text: string, webhookUrl: string): string {
+  const raw = text.slice(0, 250);
+
+  if (/DirectApiAuthorizationRequired|OAuth authorization scheme is required/i.test(text)) {
+    return (
+      'Power Automate is refusing this because the flow requires an OAuth token, which an incoming ' +
+      'webhook cannot provide. In Power Automate open the flow, edit the "When a Teams webhook request ' +
+      'is received" trigger, and set "Who can trigger the flow?" to Anyone. Save it, then copy the URL ' +
+      'again - the new one ends with a long "sig=" signature. ' +
+      (isUnsignedPowerAutomateUrl(webhookUrl)
+        ? 'The URL saved here has no "sig=" at all, which is consistent with that setting. '
+        : '') +
+      'Alternatively, switch this integration to Bot mode, which authenticates properly and is two-way.'
+    );
+  }
+
+  if (status === 401 || status === 403) {
+    return (
+      `Microsoft Teams refused the request (${status}). The webhook URL is usually either expired or ` +
+      `incomplete - copy it again from the flow, making sure you take the whole thing including the ` +
+      `"sig=" signature at the end. Microsoft said: ${raw}`
+    );
+  }
+
+  if (status === 404) {
+    return `Microsoft Teams could not find that flow (404). It may have been deleted or turned off. ${raw}`;
+  }
+
+  return `Microsoft Teams returned ${status}: ${raw}`;
+}
+
 export async function testMsTeams(record: IntegrationRecord): Promise<TestResult> {
   const config = readConfig(record);
 
@@ -179,7 +236,7 @@ export async function testMsTeams(record: IntegrationRecord): Promise<TestResult
         details: { format },
       };
     }
-    return { ok: false, message: `Microsoft Teams returned ${status}: ${text.slice(0, 250)}` };
+    return { ok: false, message: explainTeamsFailure(status, text, config.webhookUrl) };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : String(error) };
   }

@@ -13,7 +13,7 @@ import {
 import { listDeliveries } from '../integrations/dispatcher.ts';
 import { assertSafeWebhookUrl, assertSlackWebhookUrl } from '../integrations/url-guard.ts';
 import { testSlack } from '../integrations/slack.ts';
-import { detectFormat, testMsTeams } from '../integrations/msteams.ts';
+import { detectFormat, isUnsignedPowerAutomateUrl, testMsTeams } from '../integrations/msteams.ts';
 import { listLinearTeams, testLinear } from '../integrations/linear.ts';
 import { testEmail } from '../integrations/email.ts';
 import {
@@ -126,6 +126,24 @@ integrationsRouter.patch(
         provider === 'slack'
           ? assertSlackWebhookUrl(incoming.webhookUrl)
           : assertSafeWebhookUrl(incoming.webhookUrl, 'Webhook URL');
+
+      /*
+       * Caught on the way in rather than at the first test.
+       *
+       * A Power Automate URL without its signature can never work, and the
+       * failure it produces is a 401 naming a Microsoft error code - so
+       * somebody saves a truncated URL, tests it, and is told nothing useful.
+       * Saying it here points at the cause while the URL is still on screen.
+       */
+      if (provider === 'msteams' && isUnsignedPowerAutomateUrl(String(incoming.webhookUrl))) {
+        throw badRequest(
+          'That Power Automate URL has no "sig=" signature, so Microsoft will refuse it. Copy the whole URL ' +
+            'from the flow - the signature is at the end and is easy to cut off. If the URL genuinely has no ' +
+            'signature, the flow\'s trigger is set to require an OAuth token: set "Who can trigger the flow?" ' +
+            'to Anyone, or use Bot mode instead.',
+          { webhookUrl: 'Missing signature' },
+        );
+      }
     }
 
     const record = await saveIntegration(provider, {
