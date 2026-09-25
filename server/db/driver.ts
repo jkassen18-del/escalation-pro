@@ -8,6 +8,15 @@ export interface DbDriver {
   all<T = Record<string, unknown>>(sql: string, params?: SqlParam[]): Promise<T[]>;
   get<T = Record<string, unknown>>(sql: string, params?: SqlParam[]): Promise<T | undefined>;
   run(sql: string, params?: SqlParam[]): Promise<void>;
+  /**
+   * Like `run`, but reports how many rows the statement matched.
+   *
+   * All three engines are configured to count rows *matched* rather than rows
+   * whose values actually changed, so an UPDATE that writes a column's
+   * existing value reports 1 on every engine rather than 1 on some and 0 on
+   * MySQL. Callers use this to tell "no such row" from "nothing to do".
+   */
+  runWithCount(sql: string, params?: SqlParam[]): Promise<number>;
   /** Runs `fn` inside a transaction, rolling back if it throws. */
   transaction<T>(fn: () => Promise<T>): Promise<T>;
   close(): Promise<void>;
@@ -72,6 +81,9 @@ async function createSqliteDriver(): Promise<DbDriver> {
     },
     async run(sql: string, params: SqlParam[] = []) {
       database.prepare(sql).run(...params);
+    },
+    async runWithCount(sql: string, params: SqlParam[] = []) {
+      return database.prepare(sql).run(...params).changes;
     },
     async transaction<T>(fn: () => Promise<T>) {
       // better-sqlite3's own `transaction()` helper is synchronous-only, so we
@@ -152,6 +164,10 @@ async function createPostgresDriver(): Promise<DbDriver> {
     },
     async run(sql: string, params: SqlParam[] = []) {
       await exec(sql, params);
+    },
+    async runWithCount(sql: string, params: SqlParam[] = []) {
+      const result = await exec(sql, params);
+      return result.rowCount ?? 0;
     },
     async transaction<T>(fn: () => Promise<T>) {
       if (txClient) return fn();
@@ -254,6 +270,13 @@ async function createMysqlDriver(): Promise<DbDriver> {
         }),
     ...(dbConfig.ssl ? { ssl: dbConfig.ssl as object } : {}),
     connectionLimit: IS_SERVERLESS ? 1 : 10,
+    /*
+     * Without this MySQL reports only the rows whose values actually changed,
+     * so re-saving a ticket with no edits would report 0 where SQLite and
+     * Postgres both report 1. Callers cannot tell "no such row" from "no
+     * change" if the engines disagree.
+     */
+    flags: ['+FOUND_ROWS'],
     // Dates and numbers come back as strings otherwise, and every repository
     // here already expects the ISO strings it wrote.
     dateStrings: true,
@@ -294,6 +317,10 @@ async function createMysqlDriver(): Promise<DbDriver> {
     },
     async run(sql: string, params: SqlParam[] = []) {
       await exec(sql, params);
+    },
+    async runWithCount(sql: string, params: SqlParam[] = []) {
+      const rows = await exec(sql, params);
+      return (rows as { affectedRows?: number }).affectedRows ?? 0;
     },
     async transaction<T>(fn: () => Promise<T>) {
       if (txConnection) return fn();

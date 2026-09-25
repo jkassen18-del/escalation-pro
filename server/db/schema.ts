@@ -12,7 +12,7 @@ import { addColumnToMysql, indexToMysql, tableToMysql } from './mysql-dialect.ts
  *
  * That avoids jsonb/boolean/timestamptz dialect drift entirely.
  */
-const TABLES: string[] = [
+export const TABLES: string[] = [
   `CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
@@ -485,7 +485,7 @@ const TABLES: string[] = [
   )`,
 ];
 
-const INDEXES: string[] = [
+export const INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)`,
   `CREATE INDEX IF NOT EXISTS idx_tickets_team ON tickets(team_id)`,
   `CREATE INDEX IF NOT EXISTS idx_tickets_assignee ON tickets(assignee_id)`,

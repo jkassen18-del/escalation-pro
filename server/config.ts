@@ -56,18 +56,33 @@ export const paths = {
  * back to an embedded SQLite file, so a plain `npm install && npm run dev`
  * works with nothing else installed.
  */
-function resolveDriver(): 'postgres' | 'mysql' | 'sqlite' {
+function resolveDriver(): 'postgres' | 'mysql' | 'sqlite' | 'mongodb' {
   const explicit = (process.env.DB_DRIVER || '').toLowerCase();
   if (explicit === 'postgres' || explicit === 'sqlite') return explicit;
   if (explicit === 'mysql' || explicit === 'mariadb') return 'mysql';
+  if (explicit === 'mongodb' || explicit === 'mongo') return 'mongodb';
 
   const url = process.env.DATABASE_URL || '';
+  if (/^mongodb(\+srv)?:\/\//i.test(url)) return 'mongodb';
   if (/^mysql(2)?:\/\//i.test(url) || /^mariadb:\/\//i.test(url)) return 'mysql';
   if (url) return 'postgres';
 
+  if (process.env.MONGODB_URI) return 'mongodb';
   if (process.env.MYSQL_HOST || process.env.MYSQL_DATABASE) return 'mysql';
   if (process.env.PGHOST || process.env.PGDATABASE) return 'postgres';
   return 'sqlite';
+}
+
+/**
+ * The database name is normally the path segment of the URI. Atlas connection
+ * strings are routinely copied out of the console without one, which would
+ * otherwise put every collection in `test`, so it can be named separately and
+ * falls back to something recognisable.
+ */
+function resolveMongoDatabase(uri: string): string {
+  if (process.env.MONGODB_DATABASE) return process.env.MONGODB_DATABASE;
+  const path = uri.replace(/^mongodb(\+srv)?:\/\/[^/]*/i, '').replace(/\?.*$/, '').replace(/^\//, '');
+  return decodeURIComponent(path) || 'infraticket';
 }
 
 /**
@@ -80,6 +95,12 @@ function resolveDriver(): 'postgres' | 'mysql' | 'sqlite' {
  * /health to explain what is actually wrong.
  */
 export function assertDatabaseConfigured(): void {
+  if (dbConfig.driver === 'mongodb' && !dbConfig.mongoUri) {
+    throw new Error(
+      'MongoDB is selected but no connection string was given. Set MONGODB_URI (or a ' +
+        'mongodb:// DATABASE_URL) to an Atlas cluster or a replica set.',
+    );
+  }
   if (IS_SERVERLESS && dbConfig.driver === 'sqlite') {
     throw new Error(
       'DATABASE_URL is not set. A serverless deployment needs an external database: ' +
@@ -143,11 +164,17 @@ function stripSslMode(url: string): string {
   return url.replace(/([?&])sslmode=[^&]*&?/, (_match, sep) => (sep === '?' ? '?' : '&')).replace(/[?&]$/, '');
 }
 
+const MONGO_URI =
+  process.env.MONGODB_URI ||
+  (/^mongodb(\+srv)?:\/\//i.test(process.env.DATABASE_URL || '') ? process.env.DATABASE_URL! : '');
+
 export const dbConfig = {
   driver: resolveDriver(),
   connectionString: stripSslMode(process.env.DATABASE_URL || ''),
   sqlitePath: path.join(paths.data, process.env.SQLITE_FILE || 'escalation-pro.db'),
   ssl: resolveSslConfig(process.env.DATABASE_URL || ''),
+  mongoUri: MONGO_URI,
+  mongoDatabase: resolveMongoDatabase(MONGO_URI),
 };
 
 const SESSION_SECRET_FILE = path.join(paths.data, '.session-secret');
