@@ -112,15 +112,29 @@ async function createPostgresDriver(): Promise<DbDriver> {
     ? { max: 1, idleTimeoutMillis: 10_000, connectionTimeoutMillis: 10_000 }
     : { max: 10 };
 
+  /**
+   * DB_SCHEMA keeps this app's tables in their own Postgres schema, so it can
+   * share a database with other applications whose table names overlap
+   * (users, sessions, ...). It is sent as a startup parameter, which a session
+   * pooler and a direct connection both honour; transaction poolers may not.
+   */
+  const schema = (process.env.DB_SCHEMA || '').trim();
+  if (schema && !/^[a-z_][a-z0-9_]*$/i.test(schema)) {
+    throw new Error(`DB_SCHEMA must be a plain identifier, got "${schema}"`);
+  }
+  const schemaOptions = schema ? { options: `-c search_path=${schema}` } : {};
+
   const pool = new Pool(
     dbConfig.connectionString
       ? {
           connectionString: dbConfig.connectionString,
           ssl: dbConfig.ssl,
+          ...schemaOptions,
           ...poolTuning,
         }
       : {
           ...poolTuning,
+          ...schemaOptions,
           host: process.env.PGHOST || 'localhost',
           port: Number(process.env.PGPORT || 5432),
           database: process.env.PGDATABASE || 'escalation_pro',
@@ -131,6 +145,16 @@ async function createPostgresDriver(): Promise<DbDriver> {
   );
 
   await pool.query('SELECT 1');
+  if (schema) {
+    await pool.query(`CREATE SCHEMA IF NOT EXISTS "${schema}"`);
+    const { rows } = await pool.query('SHOW search_path');
+    if (!String(rows[0]?.search_path || '').includes(schema)) {
+      throw new Error(
+        `DB_SCHEMA is set to "${schema}" but the connection's search_path is "${rows[0]?.search_path}". ` +
+          'The pooler is not passing startup options through; use the session pooler (port 5432) or a direct connection.',
+      );
+    }
+  }
 
   // Postgres has no ambient connection, so a transaction has to pin one client
   // and route every nested query through it for the duration of the block.
