@@ -13,6 +13,7 @@ import {
   type LinearConfig,
 } from '../integrations/linear.ts';
 import { findUserById } from '../repositories/users.ts';
+import { can } from '../middleware/auth.ts';
 import { findTicketBySlackThread, type SlackConfig } from '../integrations/slack.ts';
 import {
   isThreadReply,
@@ -53,8 +54,9 @@ import { listTeamFields } from '../repositories/form-fields.ts';
 import { createTicket } from '../services/tickets.ts';
 import { dispatch, buildTicketUrl } from '../integrations/dispatcher.ts';
 import { addLink, findTicket, recordEvent } from '../repositories/tickets.ts';
-import type { TicketPriority } from '../../shared/types.ts';
+import { TERMINAL_STATUSES, type Ticket, type TicketPriority, type TicketStatus } from '../../shared/types.ts';
 import { getSettings } from '../repositories/settings.ts';
+import { RESOLVE_REACTIONS, saysResolved } from '../integrations/resolve-intent.ts';
 import { randomId } from '../lib/crypto.ts';
 
 export const webhooksRouter: Router = Router();
@@ -74,6 +76,64 @@ function verifyLinearSignature(req: Request, secret: string): boolean {
   const b = Buffer.from(expected);
   if (a.length !== b.length) return false;
   return crypto.timingSafeEqual(a, b);
+}
+
+/**
+ * Everything that follows a status change made from outside the app: the
+ * audit entry, the people waiting on the ticket, and the other integrations.
+ *
+ * Shared by the Slack buttons, a resolving reply or reaction in Slack, and a
+ * resolving comment in Linear, so a ticket resolved from any of them looks
+ * the same afterwards.
+ *
+ * The fan-out is awaited rather than left running. On a serverless host the
+ * function can be frozen the moment the response ends, so work left running
+ * past it may simply never happen - and Linear, Teams and email would
+ * silently miss the change. A retried delivery is safe: applyStatus is a
+ * no-op the second time, so this is never reached twice for one change.
+ */
+async function announceStatusChange(
+  ticket: Ticket,
+  next: TicketStatus,
+  from: TicketStatus,
+  actor: { id: string; name: string },
+  source: 'Slack' | 'Linear',
+  how = '',
+): Promise<void> {
+  const label = (status: string) => status.replace('_', ' ');
+
+  await recordAudit({
+    actorId: actor.id,
+    actorName: actor.name,
+    entityType: 'ticket',
+    entityId: ticket.id,
+    action: `status_changed_from_${source.toLowerCase()}`,
+    summary: `${actor.name} moved ${ticket.reference} to ${next} from ${source}${how ? ` (${how})` : ''}`,
+    meta: { from, to: next },
+  });
+
+  const watchers = [ticket.requesterId, ticket.assigneeId, ...ticket.watcherIds].filter(
+    (id): id is string => Boolean(id) && id !== actor.id,
+  );
+  await notifyUsers(watchers, {
+    ticketId: ticket.id,
+    type: 'status',
+    title: `${actor.name} marked ${ticket.reference} ${label(next)}`,
+    body: `Changed from ${label(from)} in ${source}.`,
+  });
+
+  const settings = await getSettings();
+  const updated = await findTicket(ticket.id, settings.ticketPrefix);
+  if (updated) {
+    await dispatch({
+      event: 'ticketStatusChanged',
+      ticket: updated,
+      actorName: actor.name,
+      headline: `${updated.reference} moved to ${label(next)}`,
+      detail: `${label(from)} → ${label(next)} (from ${source}${how ? `, ${how}` : ''})`,
+      ticketUrl: await buildTicketUrl(updated),
+    });
+  }
 }
 
 /**
@@ -107,6 +167,9 @@ webhooksRouter.post(
       };
     };
 
+    if (payload.type === 'Comment' && payload.action === 'create') {
+      return respondToLinearComment(req.body as LinearCommentPayload, config, res);
+    }
     if (payload.type !== 'Issue' || !payload.data?.id) return res.json({ ok: true, ignored: true });
 
     const link = await db.get<{ ticket_id: string }>(
@@ -177,6 +240,127 @@ webhooksRouter.post(
   }),
 );
 
+interface LinearCommentPayload {
+  data?: {
+    id?: string;
+    body?: string;
+    issueId?: string;
+    userId?: string;
+    user?: { id?: string; name?: string };
+    /** Set when an integration rather than a person wrote the comment. */
+    botActor?: unknown;
+  };
+}
+
+/**
+ * A comment typed on a mirrored Linear issue becomes a comment on the ticket,
+ * the same as a reply in the ticket's Slack thread - so a department that
+ * works in Linear answers the requester without leaving it.
+ *
+ * Linear sends every comment back, including the ones this app posted when
+ * someone replied on the ticket. Those were recorded by id before they were
+ * sent, and that record is what stops them coming back as duplicates; the
+ * same record catches Linear retrying a delivery.
+ */
+async function respondToLinearComment(payload: LinearCommentPayload, config: LinearConfig, res: Response) {
+  const comment = payload.data;
+  if (!comment?.id || !comment.issueId) return res.json({ ok: true, ignored: true });
+  // Other integrations' notes on the issue (a linked pull request, a
+  // deployment) are not somebody answering the requester.
+  if (comment.botActor) return res.json({ ok: true, ignored: true, reason: 'Written by an integration' });
+
+  const seen = await db.get<{ id: string }>(
+    `SELECT id FROM ticket_links WHERE provider = 'linear_comment' AND external_id = ?`,
+    [comment.id],
+  );
+  if (seen) return res.json({ ok: true, ignored: true, reason: 'Already recorded' });
+
+  const link = await db.get<{ ticket_id: string }>(
+    `SELECT ticket_id FROM ticket_links WHERE provider = 'linear' AND external_id = ?`,
+    [comment.issueId],
+  );
+  if (!link) return res.json({ ok: true, ignored: true });
+
+  const settings = await getSettings();
+  const ticket = await findTicket(link.ticket_id, settings.ticketPrefix);
+  if (!ticket) return res.json({ ok: true, ignored: true });
+
+  const body = String(comment.body ?? '').trim();
+  if (!body) return res.json({ ok: true, ignored: true });
+
+  const linearUserId = comment.userId ?? comment.user?.id;
+  const author = linearUserId && config.apiKey ? await findUserForLinearActor(config.apiKey, linearUserId) : null;
+  const displayName = author?.name ?? comment.user?.name ?? 'Someone in Linear';
+
+  const now = new Date().toISOString();
+  const commentId = randomId();
+  await db.run(
+    `INSERT INTO ticket_comments (id, ticket_id, author_id, body, body_format, is_internal, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'text', 0, ?, ?)`,
+    [
+      commentId,
+      ticket.id,
+      author?.id ?? null,
+      // Named in the body when the writer is not a user here, so the comment
+      // is never silently anonymous.
+      author ? body : `${displayName} commented in Linear:\n\n${body}`,
+      now,
+      now,
+    ],
+  );
+  await addLink(ticket.id, 'linear_comment', comment.id, commentId, '');
+  await recordEvent(ticket.id, author?.id ?? null, 'commented', 'source', null, 'linear');
+
+  const recipients = [ticket.requesterId, ticket.assigneeId, ...ticket.watcherIds].filter(
+    (id): id is string => Boolean(id) && id !== author?.id,
+  );
+  await notifyUsers(recipients, {
+    ticketId: ticket.id,
+    type: 'comment',
+    title: `${displayName} replied to ${ticket.reference} in Linear`,
+    body: body.slice(0, 280),
+  });
+
+  await recordAudit({
+    actorId: author?.id ?? null,
+    actorName: displayName,
+    entityType: 'ticket',
+    entityId: ticket.id,
+    action: 'comment_from_linear',
+    summary: `${displayName} replied to ${ticket.reference} from Linear`,
+  });
+
+  await dispatch({
+    event: 'ticketCommented',
+    ticket,
+    actorName: displayName,
+    headline: `${displayName} replied in Linear`,
+    detail: body,
+    ticketUrl: await buildTicketUrl(ticket),
+  });
+
+  /*
+   * Resolving takes the same permission as it does from Slack or the app,
+   * which needs the commenter matched to an account here. Anyone else's
+   * "done" is kept as a comment and left at that - Linear has no private
+   * reply to tell them, so the audit trail is where it shows.
+   */
+  if (saysResolved(body) && !TERMINAL_STATUSES.includes(ticket.status)) {
+    const user = author ? await findUserById(author.id) : null;
+    if (user && user.status === 'active' && can(user, 'tickets.update')) {
+      const change = await applyStatus(ticket.id, 'resolved', user.id);
+      if (change?.changed) {
+        await announceStatusChange(ticket, 'resolved', change.from, user, 'Linear', 'commented on the issue');
+        return res.json({ ok: true, ticket: ticket.reference, resolved: 'resolved' });
+      }
+    } else {
+      return res.json({ ok: true, ticket: ticket.reference, resolved: 'refused' });
+    }
+  }
+
+  res.json({ ok: true, ticket: ticket.reference });
+}
+
 /* --------------------------- Slack replies -------------------------------- */
 
 /**
@@ -213,6 +397,9 @@ webhooksRouter.post(
 
     // Everything past here is accepted with 200 whatever happens: Slack retries
     // anything else, and a retry would post the same comment a second time.
+    if (envelope.type === 'event_callback' && isResolveReaction(envelope.event)) {
+      return respondToResolveReaction(envelope.event!, config, res);
+    }
     if (envelope.type !== 'event_callback' || !isThreadReply(envelope.event)) {
       return res.json({ ok: true, ignored: true });
     }
@@ -301,9 +488,98 @@ webhooksRouter.post(
       { exclude: ['slack'] },
     );
 
+    /*
+     * "Fixed - restarted the worker" answers the requester and closes the
+     * loop in one go. The comment above is kept either way; only the status
+     * change depends on who wrote it.
+     */
+    if (saysResolved(body)) {
+      const outcome = await resolveFromSlack(ticket, event.user!, event.channel, config, 'replied in the thread');
+      return res.json({ ok: true, ticket: ticket.reference, resolved: outcome });
+    }
+
     res.json({ ok: true, ticket: ticket.reference });
   }),
 );
+
+/** A tick put on a ticket's message, or on a reply in its thread. */
+function isResolveReaction(event: SlackEventEnvelope['event']): boolean {
+  return Boolean(
+    event?.type === 'reaction_added' &&
+      event.user &&
+      event.reaction &&
+      RESOLVE_REACTIONS.has(event.reaction.replace(/::skin-tone-\d$/, '')) &&
+      event.item?.type === 'message' &&
+      event.item.ts,
+  );
+}
+
+async function respondToResolveReaction(event: NonNullable<SlackEventEnvelope['event']>, config: SlackConfig, res: Response) {
+  const ts = event.item!.ts!;
+
+  /*
+   * Slack does not say which thread a reacted-to message is in, only its own
+   * timestamp. That is enough for the ticket's own message, and for a reply
+   * that was turned into a comment - both were recorded against their
+   * timestamp when they arrived.
+   */
+  const ticketId =
+    (await findTicketBySlackThread(ts)) ??
+    (
+      await db.get<{ ticket_id: string }>(
+        `SELECT ticket_id FROM ticket_links WHERE provider = 'slack_reply' AND external_id = ?`,
+        [ts],
+      )
+    )?.ticket_id ??
+    null;
+  if (!ticketId) return res.json({ ok: true, ignored: true });
+
+  const settings = await getSettings();
+  const ticket = await findTicket(ticketId, settings.ticketPrefix);
+  if (!ticket) return res.json({ ok: true, ignored: true });
+
+  const outcome = await resolveFromSlack(ticket, event.user!, event.item!.channel, config, 'reacted with a tick');
+  res.json({ ok: true, ticket: ticket.reference, resolved: outcome });
+}
+
+/**
+ * Resolves a ticket on behalf of someone in Slack, if they are allowed to.
+ *
+ * Held to exactly the same check as the Resolve button - an active account
+ * here, matched by email, with the Update tickets permission - because anyone
+ * in the channel can type "done" or add a tick. When they are refused, they
+ * alone are told why, so a requester who reacts with a tick is not left
+ * thinking it worked.
+ */
+async function resolveFromSlack(
+  ticket: Ticket,
+  slackUserId: string,
+  channel: string | undefined,
+  config: SlackConfig,
+  how: string,
+): Promise<'resolved' | 'already' | 'refused'> {
+  // A closed ticket stays closed: "done" on it is not a reason to move it
+  // back to resolved.
+  if (TERMINAL_STATUSES.includes(ticket.status)) return 'already';
+
+  const actor = await resolveActor(config.botToken ?? '', slackUserId, 'tickets.update');
+  if (!actor.ok) {
+    if (channel && config.botToken) {
+      await slackApi(config.botToken, 'chat.postEphemeral', {
+        channel,
+        user: slackUserId,
+        text: `${ticket.reference} was not resolved. ${actor.message}`,
+      }).catch(() => undefined);
+    }
+    return 'refused';
+  }
+
+  const change = await applyStatus(ticket.id, 'resolved', actor.user.id);
+  if (!change?.changed) return 'already';
+
+  await announceStatusChange(ticket, 'resolved', change.from, actor.user, 'Slack', how);
+  return 'resolved';
+}
 
 /* ------------------------ Slack button clicks ----------------------------- */
 
@@ -377,44 +653,7 @@ webhooksRouter.post(
       return res.json({ ok: true, unchanged: true });
     }
 
-    await recordAudit({
-      actorId: actor.user.id,
-      actorName: actor.user.name,
-      entityType: 'ticket',
-      entityId: ticket.id,
-      action: 'status_changed_from_slack',
-      summary: `${actor.user.name} moved ${ticket.reference} to ${next} from Slack`,
-      meta: { from: change.from, to: next },
-    });
-
-    const watchers = [ticket.requesterId, ticket.assigneeId, ...ticket.watcherIds].filter(
-      (id): id is string => Boolean(id) && id !== actor.user.id,
-    );
-    await notifyUsers(watchers, {
-      ticketId: ticket.id,
-      type: 'status',
-      title: `${actor.user.name} marked ${ticket.reference} ${next.replace('_', ' ')}`,
-      body: `Changed from ${change.from.replace('_', ' ')} in Slack.`,
-    });
-
-    /*
-     * Fanned out before the reply rather than after it. On a serverless host
-     * the function can be frozen the moment the response ends, so work left
-     * running past it may simply never happen - and Linear, Teams and email
-     * would silently miss the change. Slack may time out its three seconds
-     * and retry, which is safe: applyStatus is a no-op the second time.
-     */
-    const updated = await findTicket(ticket.id, settings.ticketPrefix);
-    if (updated) {
-      await dispatch({
-        event: 'ticketStatusChanged',
-        ticket: updated,
-        actorName: actor.user.name,
-        headline: `${updated.reference} moved to ${next.replace('_', ' ')}`,
-        detail: `${change.from.replace('_', ' ')} → ${next.replace('_', ' ')} (from Slack)`,
-        ticketUrl: await buildTicketUrl(updated),
-      });
-    }
+    await announceStatusChange(ticket, next, change.from, actor.user, 'Slack');
 
     if (responseUrl) {
       await respondEphemeral(

@@ -27,6 +27,10 @@ export interface SlackEventEnvelope {
     ts?: string;
     thread_ts?: string;
     channel?: string;
+    /** reaction_added: the emoji name, without colons. */
+    reaction?: string;
+    /** reaction_added: the message the reaction was put on. */
+    item?: { type?: string; channel?: string; ts?: string };
   };
 }
 

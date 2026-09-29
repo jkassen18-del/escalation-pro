@@ -36,6 +36,8 @@ oauth_config:
       # Reading thread replies so they can become ticket comments.
       - channels:history
       - groups:history
+      # Seeing a tick added to a ticket's message, which resolves it.
+      - reactions:read
       # Matching a Slack account to a user here, which is how a click or a
       # command is authorised at all.
       - users:read
@@ -47,6 +49,7 @@ settings:
     bot_events:
       - message.channels
       - message.groups
+      - reaction_added
   interactivity:
     is_enabled: true
     # Buttons on ticket messages, and the ticket form.

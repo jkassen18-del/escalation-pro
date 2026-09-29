@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { Router } from 'express';
 import { db } from '../db/index.ts';
 import { randomId } from '../lib/crypto.ts';
@@ -565,7 +566,15 @@ ticketsRouter.post(
     if (linearLink && !isInternal) {
       const record = await loadIntegration('linear');
       if (record.enabled) {
-        void commentOnLinearIssue(record, linearLink.externalId, `**${user.name}** (${settings.organizationName}):\n\n${body}`);
+        // Recorded first, so the copy Linear's webhook sends back is known to be ours.
+        const linearCommentId = crypto.randomUUID();
+        await addLink(after.id, 'linear_comment', linearCommentId, null, '');
+        void commentOnLinearIssue(
+          record,
+          linearLink.externalId,
+          `**${user.name}** (${settings.organizationName}):\n\n${body}`,
+          linearCommentId,
+        );
       }
     }
 

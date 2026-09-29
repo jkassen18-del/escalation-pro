@@ -242,11 +242,11 @@ supports:
 
 | | Raise a ticket | Notifications out | Reply to a ticket | Change its status |
 |---|---|---|---|---|
-| **Slack** (bot) | `/gml finance` opens the form | yes | yes, in the ticket's thread | yes, buttons on the message |
+| **Slack** (bot) | `/gml finance` opens the form | yes | yes, in the ticket's thread | yes, buttons, a reply starting "Fixed", or a ✅ |
 | **Slack** (webhook) | no | yes | no — a webhook cannot receive | no |
 | **Teams** (bot) | `@Service Desk finance` posts the form | yes | yes, in the ticket's thread | via the link on the card |
 | **Teams** (webhook) | no | yes | no | no |
-| **Linear** | raise an issue in a mapped team | yes, as a mirrored issue | yes, comments sync both ways | yes, moving the issue moves the ticket |
+| **Linear** | raise an issue in a mapped team | yes, as a mirrored issue | yes, comments sync both ways | yes, moving the issue, or a comment starting "Fixed" |
 | **Email** | no | yes | no | no |
 
 The form each one opens is the **department's own form** — the questions
@@ -296,6 +296,14 @@ With a bot token, Slack can also send work back:
   Slack → *Event Subscriptions* at `https://your-host/api/webhooks/slack`, and
   subscribe to `message.channels`. Add the `users:read` and `users:read.email`
   scopes so replies are attributed to the right person.
+- **Resolving by replying.** A thread reply that *starts* with *resolved*,
+  *fixed*, *done*, *sorted*, *completed* or *closed* (or with ✅) is kept as a
+  comment **and** resolves the ticket. So does adding a ✅ reaction to the
+  ticket's message or to a reply in its thread — for that, also subscribe to
+  `reaction_added` and add the `reactions:read` scope. Questions never count:
+  "fixed?" and "have you fixed it?" are just comments. The same permission
+  check as the buttons applies; anyone else is told privately that the ticket
+  was left alone.
 - **Resolve, Close and Reopen.** Each message carries buttons. Turn on Slack →
   *Interactivity & Shortcuts* and point it at
   `https://your-host/api/webhooks/slack/interactive`.
@@ -370,6 +378,11 @@ team that mirrored issues should be filed against.
 - Ticket priority maps onto Linear's scale (urgent → 1, high → 2, and so on).
 - The issue description links back to the ticket, and public replies are
   mirrored as Linear comments.
+- Comments typed **on the Linear issue** come back as comments on the ticket,
+  and the requester is told. A comment starting with *resolved*, *fixed*,
+  *done* (the same words as Slack) also resolves the ticket, when the Linear
+  user's email matches an account here with the *Update tickets* permission.
+  Tick **Comments** as well as **Issues** on the Linear webhook for this.
 - Set a **webhook secret** and point a Linear webhook at
   `https://your-host/api/webhooks/linear` to sync issue status back. Deliveries
   are verified with an HMAC-SHA256 signature; unsigned requests are rejected.

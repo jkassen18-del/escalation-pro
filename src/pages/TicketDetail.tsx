@@ -674,11 +674,13 @@ function PropertiesPanel({
         </div>
       )}
 
-      {ticket.links.length > 0 && (
+      {/* Only links that go somewhere. The rest are bookkeeping - which Slack
+          replies and Linear comments have already been recorded. */}
+      {ticket.links.some((link) => link.url) && (
         <div className="border-t pt-4">
           <p className="eyebrow mb-1.5">Linked issues</p>
           <div className="space-y-1">
-            {ticket.links.map((link) => (
+            {ticket.links.filter((link) => link.url).map((link) => (
               <a
                 key={link.id}
                 href={link.url}

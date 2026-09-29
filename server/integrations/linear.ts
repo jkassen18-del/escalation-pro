@@ -164,11 +164,19 @@ export async function createLinearIssue(
   }
 }
 
-/** Posts a comment onto an already-linked Linear issue. */
+/**
+ * Posts a comment onto an already-linked Linear issue.
+ *
+ * `commentId` is chosen here rather than by Linear so it can be recorded
+ * before the comment exists. Linear then sends the comment straight back
+ * through the webhook, and the recorded id is how that delivery is recognised
+ * as this app's own and not turned into a second comment on the ticket.
+ */
 export async function commentOnLinearIssue(
   record: IntegrationRecord,
   issueId: string,
   body: string,
+  commentId?: string,
 ): Promise<DeliveryResult> {
   const config = record.config as LinearConfig;
   if (!config.apiKey) return { ok: false, statusCode: null, error: 'Linear API key is not configured' };
@@ -177,7 +185,7 @@ export async function commentOnLinearIssue(
     await graphql<{ commentCreate: { success: boolean } }>(
       config.apiKey,
       `mutation AddComment($input: CommentCreateInput!) { commentCreate(input: $input) { success } }`,
-      { input: { issueId, body } },
+      { input: commentId ? { id: commentId, issueId, body } : { issueId, body } },
     );
     return { ok: true, statusCode: 200, error: null };
   } catch (error) {
