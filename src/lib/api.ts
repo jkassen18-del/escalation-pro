@@ -90,6 +90,7 @@ export const api = {
       password: string;
       organizationName: string;
       setupToken?: string;
+      sampleWorkspace?: boolean;
     }) =>
       post<{ user: PublicUser }>('/auth/setup', body),
     login: (body: { login: string; password: string }) => post<{ user: PublicUser }>('/auth/login', body),

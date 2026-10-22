@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/state/auth';
 import { Button } from '@/components/ui/Button';
-import { Field, Input } from '@/components/ui/Field';
+import { Checkbox, Field, Input } from '@/components/ui/Field';
 import { AuthLayout } from './Login';
 import { useDocumentTitle } from '@/state/branding';
 
@@ -22,6 +22,7 @@ export function SetupPage() {
     confirmPassword: '',
     setupToken: '',
   });
+  const [sampleWorkspace, setSampleWorkspace] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -49,6 +50,7 @@ export function SetupPage() {
         password: form.password,
         organizationName: form.organizationName || 'Service Desk',
         setupToken: form.setupToken || undefined,
+        sampleWorkspace,
       });
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'Setup failed. Please try again.');
@@ -132,6 +134,14 @@ export function SetupPage() {
             required
           />
         </Field>
+
+        <Checkbox
+          id="sampleWorkspace"
+          checked={sampleWorkspace}
+          onChange={(event) => setSampleWorkspace(event.target.checked)}
+          label="Start with a sample workspace"
+          hint="An on-call rota with you on it, an escalation policy, monitors watching this server and a public status page. Untick for a blank workspace."
+        />
 
         {error && (
           <div

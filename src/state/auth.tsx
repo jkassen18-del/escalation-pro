@@ -24,6 +24,7 @@ interface AuthState {
     password: string;
     organizationName: string;
     setupToken?: string;
+    sampleWorkspace?: boolean;
   }) => Promise<void>;
   refresh: () => Promise<void>;
   can: (permission: Permission) => boolean;
@@ -96,6 +97,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password: string;
       organizationName: string;
       setupToken?: string;
+      sampleWorkspace?: boolean;
     }) => {
       const { user: admin } = await api.auth.setup(input);
       setUser(admin);
