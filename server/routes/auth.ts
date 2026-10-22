@@ -64,6 +64,14 @@ authRouter.post(
 
     const user = await bootstrapFirstAdmin({ name, email, password, organizationName });
 
+    // "Start with a sample workspace": a team, a rota, a policy, monitors and
+    // a status page built around this person. A failure here must not undo
+    // the account that was just made, so it is reported and set aside.
+    if (req.body?.sampleWorkspace === true) {
+      const { seedOpsWorkspace } = await import('../ops/demo.ts');
+      await seedOpsWorkspace(user.id).catch((error) => console.error('[setup] sample workspace failed', error));
+    }
+
     req.session.userId = user.id;
     await recordAudit({
       actorId: user.id,

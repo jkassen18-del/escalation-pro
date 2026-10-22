@@ -99,6 +99,39 @@ additionally pinned to `hooks.slack.com`.
 Inbound Linear webhooks are verified with an HMAC-SHA256 signature over the raw
 request body; unsigned or mismatched deliveries are rejected.
 
+## Operations endpoints
+
+The monitoring, paging and backup modules add endpoints that machines call
+without a session. Each one carries its own proof:
+
+- **Alert intake** (`/api/ingest/<token>`) and **heartbeats**
+  (`/api/heartbeat/<token>`): a 24- or 18-byte random token in the URL, one per
+  source or monitor, rotatable from the UI. AWS SNS messages are additionally
+  verified against SNS's own signature, with the signing certificate fetched
+  only from an `sns.*.amazonaws.com` host, and subscriptions are confirmed only
+  against that host.
+- **Twilio callbacks**: every request must carry a valid `X-Twilio-Signature`
+  over the configured *App URL*, so the URL is rebuilt rather than trusted from
+  `Host`. Voice callbacks also carry an HMAC token bound to the one call
+  attempt, so an acknowledgement cannot be forged by guessing ids.
+- **Status pages**: public pages are public by design and expose labels and
+  states only, never monitor targets or ids. Internal pages need a session.
+  Updates are typed for the page and never derived from ticket comments.
+
+Monitors may target private and internal addresses: watching the company's
+own network is the point. Only holders of `monitors.manage` can create them.
+
+**Backups** hold copies of production data, so:
+
+- Connection strings are encrypted at rest and never returned by the API.
+- Each backup is encrypted with its own random AES-256-GCM key, wrapped with
+  the server's `SECRET_KEY`. The storage bucket alone does not reveal anything,
+  and GCM authentication rejects a tampered or truncated file on restore.
+- Downloading a decrypted backup needs `backups.restore` (administrators by
+  default) and is written to the audit log.
+- `SECRET_KEY` (or, without it, `data/.session-secret`) is now also the key to
+  every backup. Back it up separately from the backups themselves.
+
 ## First-run setup
 
 Setup is open by default, which suits a laptop or an internal network. On a

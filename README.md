@@ -1,8 +1,18 @@
 # InfraTicket
 
-A departmental ticketing and escalation management system. Tickets are routed to
-teams, tracked against SLA targets, escalated when they stall, and mirrored into
-the tools your team already uses.
+One self-hostable platform for ticketing, incident response, monitoring,
+on-call paging and database backups. Tickets are routed to teams, tracked
+against SLA targets, escalated when they stall, and mirrored into Slack,
+Microsoft Teams and Linear. Monitors and alert sources open incidents, the
+pager escalates until someone acknowledges, status pages keep everyone else
+informed, and scheduled, encrypted backups keep your databases safe.
+
+The same build runs in the cloud, on-prem, or as a single portable
+`InfraTicket.exe` for evaluation:
+
+- **[PORTABLE.md](PORTABLE.md)**: the portable Windows build, from download to first page.
+- **[OPERATIONS.md](OPERATIONS.md)**: monitors, alert sources, on-call, status pages and backups.
+- **[DEPLOY.md](DEPLOY.md)**: Docker, Postgres, MySQL and serverless deployments.
 
 **Accounts are created by administrators. There is no public sign-up** — the
 only exception is the one-time setup screen that creates the very first
@@ -432,7 +442,10 @@ server/
   repositories/         Data access
   integrations/         Slack, Microsoft Teams, Linear, SMTP, dispatcher
   jobs/sla-monitor.ts   Periodic breach detection
+  ops/                  Monitors, alert pipeline, on-call pager, status pages, backups
+  portable.ts           Entry point of the portable executable
 shared/types.ts         Types shared by the API and the client
+shared/ops.ts           The same, for the operations modules
 src/                    React client (Vite, Tailwind, React Router)
 ```
 
@@ -446,6 +459,7 @@ src/                    React client (Vite, Tailwind, React Router)
 | `npm run seed` | Load demo data (no-op if users already exist) |
 | `npm run reset` | Delete the local database and re-seed |
 | `npm run typecheck` | Type-check client and server |
+| `npm run build:portable` | Build `dist/portable/InfraTicket.exe` (add `-- --target linux-x64` for others) |
 
 ---
 

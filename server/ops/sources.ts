@@ -103,7 +103,10 @@ export function validateSource(body: Record<string, unknown>) {
   };
 }
 
-export async function saveSource(id: string | null, input: ReturnType<typeof validateSource>): Promise<AlertSource> {
+export async function saveSource(
+  id: string | null,
+  input: Omit<ReturnType<typeof validateSource>, 'mapping'> & { mapping: AlertFieldMapping },
+): Promise<AlertSource> {
   const now = new Date().toISOString();
   if (id) {
     await db.run(

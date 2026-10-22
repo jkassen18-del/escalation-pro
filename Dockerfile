@@ -17,7 +17,10 @@ FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
-RUN apk add --no-cache python3 make g++ \
+# Dump tools for database backups: pg_dump 17 reads any server from 9.2 to 17,
+# and mariadb-client provides mysqldump. MongoDB and SQL Server tools are not
+# packaged for Alpine; mount them and set BACKUP_TOOLS_DIR if you need those.
+RUN apk add --no-cache python3 make g++ postgresql17-client mariadb-client iputils \
     && addgroup -S app && adduser -S app -G app
 
 COPY package*.json ./
