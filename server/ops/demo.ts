@@ -109,5 +109,6 @@ export async function seedOpsWorkspace(ownerId: string): Promise<void> {
       { monitorId: web.id, label: 'Web app' },
       { monitorId: port.id, label: 'API' },
     ],
+    appearance: { theme: 'auto', showLogo: true },
   });
 }

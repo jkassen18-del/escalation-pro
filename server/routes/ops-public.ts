@@ -1,4 +1,8 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import express, { Router, type Request, type Response } from 'express';
+import { paths } from '../config.ts';
+import { getBrandingMeta } from '../repositories/branding.ts';
 import { asyncRoute } from '../lib/http.ts';
 import { getSettings } from '../repositories/settings.ts';
 import { attachUser, type AuthedRequest } from '../middleware/auth.ts';
@@ -144,6 +148,23 @@ opsPublicRouter.post(
 
 /* ------------------------------ Status pages ------------------------------ */
 
+/**
+ * The app's own font, so the status page looks like the rest of it. Vite
+ * fingerprints the file name, so it is looked up once from the built bundle;
+ * without one (development) the page falls back to the system font.
+ */
+let fontLookup: string | null | undefined;
+function appFontUrl(): string | null {
+  if (fontLookup !== undefined) return fontLookup;
+  try {
+    const file = fs.readdirSync(path.join(paths.clientDist, 'assets')).find((name) => /^geist-latin-wght-normal-.*\.woff2$/.test(name));
+    fontLookup = file ? `/assets/${file}` : null;
+  } catch {
+    fontLookup = null;
+  }
+  return fontLookup;
+}
+
 /** Public pages are open to anyone; internal ones need a signed-in session. */
 async function resolveVisiblePage(req: Request) {
   const page = await getStatusPage(req.params.slug);
@@ -158,9 +179,15 @@ opsPublicRouter.get(
   asyncRoute(async (req, res) => {
     const page = await resolveVisiblePage(req);
     if (!page) return res.status(404).type('text/plain').send('Status page not found.');
-    const settings = await getSettings();
+    const [settings, logo] = await Promise.all([getSettings(), getBrandingMeta()]);
     res.setHeader('Cache-Control', page.isPublic ? 'public, max-age=30' : 'private, no-store');
-    res.type('html').send(statusPageHtml(await renderStatusPage(page), settings.organizationName));
+    res.type('html').send(
+      statusPageHtml(await renderStatusPage(page), {
+        organisation: settings.organizationName,
+        logoUrl: logo ? `/api/branding/logo?v=${encodeURIComponent(logo.updatedAt)}` : null,
+        fontUrl: appFontUrl(),
+      }),
+    );
   }),
 );
 

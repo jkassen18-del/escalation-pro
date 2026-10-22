@@ -404,6 +404,22 @@ test('a public status page renders for anyone; an internal one does not', async 
   assert.equal(json.payload.components[0].status, 'operational');
   assert.equal(json.payload.components[0].monitorId, undefined, 'internal ids stay internal');
 
+  const styled = await call('PUT', `/api/ops/status-pages/${pub.payload.page.id}`, {
+    title: 'Acme Status',
+    slug: 'acme',
+    isPublic: true,
+    components: [{ monitorId, label: 'Checkout' }],
+    appearance: { theme: 'dark', accentColor: '#2563eb', supportUrl: 'mailto:help@acme.test', customCss: 'h1{color:red}</style><script>alert(1)</script>' },
+  });
+  assert.equal(styled.status, 200, JSON.stringify(styled.payload));
+  const themed = (await call('GET', '/status/acme', undefined, { cookie: '' })).payload as string;
+  assert.match(themed, /--accent:#2563eb/);
+  assert.match(themed, /mailto:help@acme.test/);
+  assert.match(themed, /h1\{color:red\}/);
+  assert.doesNotMatch(themed, /<script>/, 'custom CSS cannot break out of the style element');
+  const badColour = await call('PUT', `/api/ops/status-pages/${pub.payload.page.id}`, { title: 'Acme Status', slug: 'acme', appearance: { accentColor: 'red;}' } });
+  assert.equal(badColour.status, 400);
+
   await call('POST', '/api/ops/status-pages', { title: 'Internal', slug: 'internal', isPublic: false, components: [] });
   assert.equal((await call('GET', '/status/internal', undefined, { cookie: '' })).status, 404);
   assert.equal((await call('GET', '/status/internal')).status, 200, 'signed in, it shows');

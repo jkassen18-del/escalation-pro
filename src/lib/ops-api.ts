@@ -63,7 +63,7 @@ export type ScheduleInput = Pick<Schedule, 'name' | 'description' | 'teamId' | '
 export type PolicyInput = Pick<EscalationPolicy, 'name' | 'description' | 'teamId' | 'repeatCount'> & {
   levels: Array<{ delayMins: number; targets: Array<{ type: 'user' | 'schedule' | 'team'; id: string }> }>;
 };
-export type StatusPageInput = Pick<StatusPage, 'title' | 'slug' | 'description' | 'isPublic' | 'components'>;
+export type StatusPageInput = Pick<StatusPage, 'title' | 'slug' | 'description' | 'isPublic' | 'components' | 'appearance'>;
 export type DatabaseInput = Pick<BackupJob, 'name' | 'engine' | 'schedule' | 'retention' | 'destination' | 'enabled' | 'teamId'> & { connection?: string };
 
 export const opsApi = {

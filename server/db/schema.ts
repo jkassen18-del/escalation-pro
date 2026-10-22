@@ -675,6 +675,12 @@ const ADDITIVE_COLUMNS: AdditiveColumn[] = [
     why: 'the incident commander, who may differ from the assignee',
   },
   {
+    table: 'status_pages',
+    column: 'appearance',
+    definition: `TEXT NOT NULL DEFAULT '{}'`,
+    why: 'theme, brand colour, logo and custom CSS for each status page',
+  },
+  {
     table: 'ticket_comments',
     column: 'is_system',
     definition: 'INTEGER NOT NULL DEFAULT 0',

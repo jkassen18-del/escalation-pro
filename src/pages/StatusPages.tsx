@@ -15,7 +15,7 @@ import { Menu } from '@/components/ui/Menu';
 import { ConfirmDialog, Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { COMPONENT_STATUS_COLORS, COMPONENT_STATUS_LABELS, UptimeBars } from '@/components/ops/MonitorShared';
-import { STATUS_UPDATE_STATES, type Monitor, type StatusPage, type StatusPageView, type StatusUpdateState } from '@shared/ops';
+import { STATUS_UPDATE_STATES, type Monitor, type StatusPage, type StatusPageAppearance, type StatusPageView, type StatusUpdateState } from '@shared/ops';
 
 function message(caught: unknown, fallback: string): string {
   return caught instanceof ApiError ? caught.message : fallback;
@@ -372,8 +372,8 @@ function StatusPageDialog({
 }) {
   const [form, setForm] = useState<StatusPageInput>(
     page
-      ? { title: page.title, slug: page.slug, description: page.description, isPublic: page.isPublic, components: page.components }
-      : { title: '', slug: '', description: null, isPublic: true, components: [] },
+      ? { title: page.title, slug: page.slug, description: page.description, isPublic: page.isPublic, components: page.components, appearance: page.appearance ?? {} }
+      : { title: '', slug: '', description: null, isPublic: true, components: [], appearance: { theme: 'auto', showLogo: true } },
   );
   const [slugTouched, setSlugTouched] = useState(Boolean(page));
   const [adding, setAdding] = useState('');
@@ -533,7 +533,88 @@ function StatusPageDialog({
             </Button>
           </div>
         </fieldset>
+
+        <AppearanceFields
+          value={form.appearance}
+          errors={fieldErrors}
+          onChange={(appearance) => setForm((c) => ({ ...c, appearance }))}
+        />
       </div>
     </Modal>
+  );
+}
+
+/**
+ * Look and feel. The defaults match the app; a brand colour, the logo and a
+ * few words cover most needs, and custom CSS covers the rest.
+ */
+function AppearanceFields({
+  value,
+  errors,
+  onChange,
+}: {
+  value: StatusPageAppearance;
+  errors: Record<string, string>;
+  onChange: (value: StatusPageAppearance) => void;
+}) {
+  const [showCss, setShowCss] = useState(Boolean(value.customCss));
+  const set = <K extends keyof StatusPageAppearance>(key: K, next: StatusPageAppearance[K]) => onChange({ ...value, [key]: next });
+  const accentValid = !value.accentColor || /^#[0-9a-f]{6}$/i.test(value.accentColor);
+
+  return (
+    <fieldset className="space-y-3 border-t pt-4">
+      <legend className="mb-1.5 text-xs font-medium">Appearance</legend>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Theme" hint="Automatic follows each visitor's light or dark setting.">
+          <Select value={value.theme ?? 'auto'} onChange={(e) => set('theme', e.target.value as StatusPageAppearance['theme'])}>
+            <option value="auto">Automatic</option>
+            <option value="light">Always light</option>
+            <option value="dark">Always dark</option>
+          </Select>
+        </Field>
+        <Field label="Brand colour" hint="Links and highlights. Leave blank for the app's brass." error={errors.accentColor ?? (accentValid ? undefined : 'Use #rrggbb')}>
+          <div className="flex gap-2">
+            <input
+              type="color"
+              value={accentValid && value.accentColor ? value.accentColor : '#b4863a'}
+              onChange={(e) => set('accentColor', e.target.value)}
+              className="h-8 w-10 shrink-0 cursor-pointer rounded-sm border bg-transparent"
+              aria-label="Pick a colour"
+            />
+            <Input value={value.accentColor ?? ''} onChange={(e) => set('accentColor', e.target.value || undefined)} placeholder="#b4863a" className="font-mono text-xs" />
+          </div>
+        </Field>
+        <Field label="Header name" hint="Defaults to the organisation name.">
+          <Input value={value.headerText ?? ''} onChange={(e) => set('headerText', e.target.value || undefined)} />
+        </Field>
+        <Field label="Support link" hint="https://… or mailto:…" error={errors.supportUrl}>
+          <Input value={value.supportUrl ?? ''} onChange={(e) => set('supportUrl', e.target.value || undefined)} placeholder="https://support.example.com" />
+        </Field>
+      </div>
+      <Field label="Footer text">
+        <Input value={value.footerText ?? ''} onChange={(e) => set('footerText', e.target.value || undefined)} placeholder="© Your company" />
+      </Field>
+      <Checkbox
+        label="Show the organisation logo"
+        hint="The logo uploaded under Settings. Without one, the page shows your initials."
+        checked={value.showLogo !== false}
+        onChange={(e) => set('showLogo', e.target.checked)}
+      />
+      {showCss ? (
+        <Field label="Custom CSS" hint="Appended after the built-in styles, so it overrides them. Variables: --bg, --surface, --fg, --accent, --ok, --warn, --bad.">
+          <Textarea
+            rows={6}
+            value={value.customCss ?? ''}
+            onChange={(e) => set('customCss', e.target.value || undefined)}
+            className="font-mono text-2xs"
+            placeholder={'.banner { border-radius: 0 }\nh1 { font-size: 28px }'}
+          />
+        </Field>
+      ) : (
+        <button type="button" onClick={() => setShowCss(true)} className="text-xs text-[var(--accent)] underline-offset-2 hover:underline">
+          Add custom CSS for a fully custom look
+        </button>
+      )}
+    </fieldset>
   );
 }

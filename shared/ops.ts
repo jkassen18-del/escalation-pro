@@ -365,6 +365,23 @@ export interface StatusUpdate {
   createdAt: string;
 }
 
+/** How a status page looks. Every field is optional; the defaults match the app. */
+export interface StatusPageAppearance {
+  /** 'auto' follows the visitor's light/dark preference. */
+  theme?: 'auto' | 'light' | 'dark';
+  /** Brand colour for links, the header rule and highlights, as #rrggbb. */
+  accentColor?: string;
+  /** Show the organisation logo uploaded under Settings. */
+  showLogo?: boolean;
+  /** Replaces the organisation name in the header. */
+  headerText?: string;
+  /** "Need help? Contact support" link under the page. */
+  supportUrl?: string;
+  footerText?: string;
+  /** Extra CSS appended last, for a fully custom look. */
+  customCss?: string;
+}
+
 export interface StatusPage {
   id: string;
   slug: string;
@@ -372,6 +389,7 @@ export interface StatusPage {
   description: string | null;
   isPublic: boolean;
   components: StatusComponent[];
+  appearance: StatusPageAppearance;
   createdAt: string;
   updatedAt: string;
 }
