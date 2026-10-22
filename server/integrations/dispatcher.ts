@@ -7,11 +7,12 @@ import { sendSlack } from './slack.ts';
 import { sendMsTeams } from './msteams.ts';
 import { createLinearIssue, shouldMirror, type LinearConfig } from './linear.ts';
 import { sendEmail } from './email.ts';
+import { listHttpIntegrations, sendHttpIntegration, wants, type HttpIntegrationRecord } from './http-custom.ts';
 import type { DeliveryResult, IntegrationEvent, NotificationContext } from './types.ts';
 import type { IntegrationProvider, Ticket } from '../../shared/types.ts';
 
 async function logDelivery(
-  provider: IntegrationProvider,
+  provider: IntegrationProvider | `http:${string}`,
   event: string,
   ticketId: string | null,
   result: DeliveryResult,
@@ -85,7 +86,30 @@ export async function dispatch(
     }),
   );
 
-  await maybeMirrorToLinear(ctx);
+  await Promise.all([maybeMirrorToLinear(ctx), sendToHttpIntegrations(ctx)]);
+}
+
+/** Every enabled custom HTTP integration that wants this event for this ticket's team. */
+async function sendToHttpIntegrations(ctx: NotificationContext): Promise<void> {
+  let records: HttpIntegrationRecord[];
+  try {
+    records = await listHttpIntegrations();
+  } catch (error) {
+    console.error('[integrations] could not load custom HTTP integrations', error);
+    return;
+  }
+  await Promise.all(
+    records.filter((record) => wants(record, ctx)).map(async (record) => {
+      const result = await sendHttpIntegration(record, ctx);
+      await logDelivery(`http:${record.id}`, ctx.event, ctx.ticket.id, result).catch(() => undefined);
+      if (!result.ok) console.warn(`[integrations] http "${record.name}" ${ctx.event} failed: ${result.error}`);
+    }),
+  );
+}
+
+/** Records the outcome of a custom HTTP integration's test send. */
+export async function logHttpTestDelivery(id: string, ticketId: string | null, result: DeliveryResult): Promise<void> {
+  await logDelivery(`http:${id}`, 'test', ticketId, result);
 }
 
 /**

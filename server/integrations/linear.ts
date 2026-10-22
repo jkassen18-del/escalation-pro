@@ -224,12 +224,16 @@ export function mapLinearStateToStatus(stateType: string): TicketStatus | null {
  *
  * Linear has no slash commands for third-party apps, so the way somebody
  * raises a ticket from there is to raise an issue in the normal way. The
- * department is worked out from the Linear team it was raised in, using the
- * same per-department routing that decides where a ticket's issues are
- * mirrored to - so the mapping is configured once and read in both
- * directions.
+ * department is worked out from the Linear team it was raised in: the team
+ * mapping on the Linear integration first, then the per-department routing
+ * that decides where a ticket's issues are mirrored to.
  */
 export async function departmentForLinearTeam(linearTeamId: string): Promise<string | null> {
+  // The integration's team mapping decides first; it is the one place where
+  // several Linear teams can be pointed at the same department.
+  const { mappedDepartment } = await import('./linear-map.ts');
+  const mapped = await mappedDepartment(linearTeamId);
+  if (mapped) return mapped;
   const { db } = await import('../db/index.ts');
   const row = await db.get<{ team_id: string }>(
     `SELECT team_id FROM team_routing WHERE provider = 'linear' AND target = ?`,

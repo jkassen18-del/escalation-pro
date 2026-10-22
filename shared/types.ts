@@ -305,9 +305,56 @@ export interface IntegrationEventToggles {
   slaBreached: boolean;
 }
 
+export const HTTP_METHODS = ['POST', 'PUT', 'PATCH'] as const;
+export type HttpMethod = (typeof HTTP_METHODS)[number];
+
+/** A custom outbound HTTP integration. Header values and the secret are never sent out. */
+export interface HttpIntegration {
+  id: string;
+  name: string;
+  url: string;
+  method: HttpMethod;
+  /** Names with a masked preview of each value. */
+  headers: Array<{ name: string; preview: string }>;
+  bodyTemplate: string | null;
+  hasSigningSecret: boolean;
+  allowPrivate: boolean;
+  events: IntegrationEventToggles;
+  /** Empty means every team. */
+  teamIds: string[];
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HttpIntegrationInput {
+  name: string;
+  url: string;
+  method: HttpMethod;
+  /** An empty value keeps the stored value for that header name. */
+  headers: Array<{ name: string; value: string }>;
+  bodyTemplate: string | null;
+  /** Undefined or '' keeps the stored secret; null removes it. */
+  signingSecret?: string | null;
+  allowPrivate: boolean;
+  events: Partial<IntegrationEventToggles>;
+  teamIds: string[];
+  enabled: boolean;
+}
+
+/** One Linear team and the department its issues belong to. */
+export interface LinearTeamMapping {
+  linearTeamId: string;
+  linearTeamKey: string | null;
+  linearTeamName: string | null;
+  teamId: string;
+  isPrimary: boolean;
+}
+
 export interface IntegrationDelivery {
   id: string;
-  provider: IntegrationProvider;
+  /** An IntegrationProvider, or `http:<id>` for a custom HTTP integration. */
+  provider: IntegrationProvider | `http:${string}`;
   event: string;
   ticketId: string | null;
   ok: boolean;

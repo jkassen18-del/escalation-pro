@@ -1,4 +1,7 @@
 import type {
+  HttpIntegration,
+  HttpIntegrationInput,
+  LinearTeamMapping,
   DataSourceSummary,
   TeamRoute,
   TeamFormField,
@@ -221,6 +224,23 @@ export const api = {
     /** The key is optional: without it the server uses the saved one. */
     linearTeams: (apiKey?: string) =>
       post<{ teams: Array<{ id: string; key: string; name: string }> }>('/integrations/linear/teams', { apiKey }),
+    linearTeamMap: () => get<{ mappings: LinearTeamMapping[] }>('/integrations/linear/team-map'),
+    saveLinearTeamMap: (mappings: LinearTeamMapping[]) =>
+      request<{ mappings: LinearTeamMapping[] }>('/integrations/linear/team-map', {
+        method: 'PUT',
+        body: JSON.stringify({ mappings }),
+      }),
+    http: {
+      list: () => get<{ integrations: HttpIntegration[] }>('/integrations/http'),
+      create: (body: HttpIntegrationInput) => post<{ integration: HttpIntegration }>('/integrations/http', body),
+      update: (id: string, body: HttpIntegrationInput) =>
+        request<{ integration: HttpIntegration }>(`/integrations/http/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+      remove: (id: string) => del<void>(`/integrations/http/${id}`),
+      test: (id: string) =>
+        post<{ result: { ok: boolean; statusCode: number | null; error: string | null; responseExcerpt: string | null } }>(
+          `/integrations/http/${id}/test`,
+        ),
+    },
     deliveries: () =>
       get<{
         deliveries: Array<{

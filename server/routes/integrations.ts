@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { asyncRoute, badRequest, optionalString, requireEnum } from '../lib/http.ts';
+import { asyncRoute, badRequest, notFound, optionalString, requireEnum } from '../lib/http.ts';
 import { clientIp, recordAudit } from '../lib/audit.ts';
 import { requireAuth, requirePermission, type AuthedRequest } from '../middleware/auth.ts';
 import {
@@ -10,7 +10,17 @@ import {
   resetIntegrationStatus,
   setIntegrationStatus,
 } from '../integrations/store.ts';
-import { listDeliveries } from '../integrations/dispatcher.ts';
+import { listDeliveries, logHttpTestDelivery } from '../integrations/dispatcher.ts';
+import {
+  deleteHttpIntegration,
+  findHttpIntegration,
+  listHttpIntegrations,
+  saveHttpIntegration,
+  sendHttpIntegration,
+  toPublic,
+  validateHttpIntegration,
+} from '../integrations/http-custom.ts';
+import { listLinearTeamMap, saveLinearTeamMap, validateLinearTeamMap } from '../integrations/linear-map.ts';
 import { assertSafeWebhookUrl, assertSlackWebhookUrl } from '../integrations/url-guard.ts';
 import { testSlack } from '../integrations/slack.ts';
 import { detectFormat, testMsTeams } from '../integrations/msteams.ts';
@@ -20,6 +30,7 @@ import {
   INTEGRATION_PROVIDERS,
   type IntegrationProvider,
   type IntegrationSummary,
+  type Ticket,
 } from '../../shared/types.ts';
 import { buildTeamsAppPackage, ManifestError } from '../integrations/teams-manifest.ts';
 import { listTeams } from '../repositories/teams.ts';
@@ -86,6 +97,122 @@ integrationsRouter.get(
         createdAt: String(row.created_at),
       })),
     });
+  }),
+);
+
+/* ------------------------- Custom HTTP integrations ------------------------ */
+
+integrationsRouter.get(
+  '/http',
+  asyncRoute(async (_req, res) => {
+    res.json({ integrations: (await listHttpIntegrations()).map(toPublic) });
+  }),
+);
+
+integrationsRouter.post(
+  '/http',
+  asyncRoute(async (req, res) => {
+    const actor = (req as AuthedRequest).user;
+    const record = await saveHttpIntegration(null, validateHttpIntegration(req.body ?? {}));
+    await recordAudit({
+      actorId: actor.id,
+      actorName: actor.name,
+      entityType: 'integration',
+      entityId: record.id,
+      action: 'http_integration_created',
+      summary: `Added custom HTTP integration "${record.name}" (${record.method} ${new URL(record.url).host})`,
+      ip: clientIp(req),
+    });
+    res.status(201).json({ integration: toPublic(record) });
+  }),
+);
+
+integrationsRouter.put(
+  '/http/:id',
+  asyncRoute(async (req, res) => {
+    const actor = (req as AuthedRequest).user;
+    if (!(await findHttpIntegration(req.params.id))) throw notFound('That integration does not exist.');
+    const record = await saveHttpIntegration(req.params.id, validateHttpIntegration(req.body ?? {}));
+    await recordAudit({
+      actorId: actor.id,
+      actorName: actor.name,
+      entityType: 'integration',
+      entityId: record.id,
+      action: 'http_integration_updated',
+      summary: `Updated custom HTTP integration "${record.name}"`,
+      ip: clientIp(req),
+    });
+    res.json({ integration: toPublic(record) });
+  }),
+);
+
+integrationsRouter.delete(
+  '/http/:id',
+  asyncRoute(async (req, res) => {
+    const actor = (req as AuthedRequest).user;
+    const record = await findHttpIntegration(req.params.id);
+    if (!record) throw notFound('That integration does not exist.');
+    await deleteHttpIntegration(record.id);
+    await recordAudit({
+      actorId: actor.id,
+      actorName: actor.name,
+      entityType: 'integration',
+      entityId: record.id,
+      action: 'http_integration_deleted',
+      summary: `Deleted custom HTTP integration "${record.name}"`,
+      ip: clientIp(req),
+    });
+    res.status(204).end();
+  }),
+);
+
+/** Sends a sample event, whatever the event toggles say, and shows what came back. */
+integrationsRouter.post(
+  '/http/:id/test',
+  asyncRoute(async (req, res) => {
+    const actor = (req as AuthedRequest).user;
+    const record = await findHttpIntegration(req.params.id);
+    if (!record) throw notFound('That integration does not exist.');
+    const settings = await getSettings();
+    const ticket = sampleTicket(settings.ticketPrefix);
+    const result = await sendHttpIntegration(record, {
+      event: 'ticketCreated',
+      ticket,
+      actorName: actor.name,
+      headline: `Test from InfraTicket: ${ticket.reference}`,
+      detail: 'A sample event sent from the integration settings. No ticket was created.',
+      ticketUrl: `${(settings.appUrl || process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, '')}/tickets/${ticket.id}`,
+    });
+    await logHttpTestDelivery(record.id, null, result);
+    res.json({ result });
+  }),
+);
+
+/* ---------------------------- Linear team mapping --------------------------- */
+
+integrationsRouter.get(
+  '/linear/team-map',
+  asyncRoute(async (_req, res) => {
+    res.json({ mappings: await listLinearTeamMap() });
+  }),
+);
+
+integrationsRouter.put(
+  '/linear/team-map',
+  asyncRoute(async (req, res) => {
+    const actor = (req as AuthedRequest).user;
+    const mappings = await saveLinearTeamMap(validateLinearTeamMap(req.body?.mappings));
+    await recordAudit({
+      actorId: actor.id,
+      actorName: actor.name,
+      entityType: 'integration',
+      entityId: 'linear',
+      action: 'linear_team_map_saved',
+      summary: `Linked ${mappings.length} Linear team(s) to departments`,
+      meta: { mappings: mappings.map((m) => ({ linear: m.linearTeamKey ?? m.linearTeamId, teamId: m.teamId, primary: m.isPrimary })) },
+      ip: clientIp(req),
+    });
+    res.json({ mappings });
   }),
 );
 
@@ -278,3 +405,44 @@ integrationsRouter.get(
     }
   }),
 );
+
+/** A believable ticket for test sends, so a receiver sees every field it will get. */
+function sampleTicket(prefix: string): Ticket {
+  const now = new Date().toISOString();
+  return {
+    id: '00000000-0000-4000-8000-000000000000',
+    number: 1000,
+    reference: `${prefix}-1000`,
+    subject: 'Test ticket: checkout returns "502" for EU customers',
+    description: 'This is a sample payload sent by the Test button.',
+    descriptionFormat: 'text',
+    teamId: null,
+    teamName: 'Operations',
+    requesterId: null,
+    requesterName: 'Sample Requester',
+    assigneeId: null,
+    assigneeName: null,
+    status: 'open',
+    priority: 'high',
+    type: 'incident',
+    source: 'web',
+    tags: ['test'],
+    escalationLevel: 0,
+    dueAt: null,
+    firstResponseAt: null,
+    resolvedAt: null,
+    closedAt: null,
+    createdById: null,
+    createdByName: null,
+    createdAt: now,
+    updatedAt: now,
+    commentCount: 0,
+    attachmentCount: 0,
+    watcherIds: [],
+    links: [],
+    isOverdue: false,
+    severity: 'sev2',
+    commanderId: null,
+    commanderName: null,
+  };
+}

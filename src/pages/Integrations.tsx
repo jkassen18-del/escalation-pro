@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, CircleAlert, CircleDashed, Download, ExternalLink, RefreshCw } from 'lucide-react';
 import { ProviderIcon } from '@/components/BrandIcons';
 import { DataSourcePanel } from '@/components/DataSourcePanel';
+import { HttpIntegrationsPanel } from '@/components/HttpIntegrationsPanel';
+import { LinearTeamMap } from '@/components/LinearTeamMap';
 import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { relativeTime, shortDateTime } from '@/lib/format';
@@ -100,6 +102,8 @@ export function IntegrationsPage() {
           />
         ))}
 
+        <HttpIntegrationsPanel onChanged={load} />
+
         <DataSourcePanel />
 
         <section className="rounded-md border surface">
@@ -133,7 +137,8 @@ export function IntegrationsPage() {
                   {deliveries.map((delivery) => (
                     <tr key={delivery.id} className="border-b last:border-b-0">
                       <td className="px-4 py-1.5 text-xs font-medium">
-                        {PROVIDER_META[delivery.provider as IntegrationProvider]?.name ?? delivery.provider}
+                        {PROVIDER_META[delivery.provider as IntegrationProvider]?.name ??
+                          (delivery.provider.startsWith('http:') ? 'Custom HTTP' : delivery.provider)}
                       </td>
                       <td className="px-3 py-1.5 text-xs text-muted">{delivery.event}</td>
                       <td className="px-3 py-1.5">
@@ -717,6 +722,8 @@ function LinearFields({
         label="Create Linear issues automatically"
         hint="When off, you can still push individual tickets to Linear from the ticket menu."
       />
+
+      {config.apiKeySet || config.apiKey ? <LinearTeamMap apiKey={(config.apiKey as string) || undefined} /> : null}
 
       {Boolean(config.webhookSecret) || config.webhookSecretSet ? (
         <p className="rounded-sm border px-2.5 py-2 text-2xs text-muted surface-2">

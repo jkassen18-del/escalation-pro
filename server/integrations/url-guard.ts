@@ -49,6 +49,33 @@ export function assertSafeWebhookUrl(raw: string, field: string): string {
   return url.toString();
 }
 
+/**
+ * For integrations an administrator points at their own systems.
+ *
+ * With `allowPrivate` off this is the webhook guard above. With it on, plain
+ * http and private addresses are accepted - the integration exists to reach
+ * an internal service - but link-local and the cloud metadata hostnames stay
+ * blocked: no internal system is legitimately reached through them, and they
+ * are where an SSRF does its damage.
+ */
+export function assertOutboundUrl(raw: string, field: string, { allowPrivate = false } = {}): string {
+  if (!allowPrivate) return assertSafeWebhookUrl(raw, field);
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw badRequest(`${field} must be a valid URL.`, { [field]: 'Invalid URL' });
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw badRequest(`${field} must use http or https.`, { [field]: 'Unsupported scheme' });
+  }
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host.startsWith('metadata.') || /^169\.254\./.test(host) || /^fe80:/.test(host)) {
+    throw badRequest(`${field} cannot point at a link-local or cloud metadata address.`, { [field]: 'Blocked host' });
+  }
+  return url.toString();
+}
+
 /** Slack publishes exactly one incoming-webhook host, so pin it. */
 export function assertSlackWebhookUrl(raw: string): string {
   const url = assertSafeWebhookUrl(raw, 'Webhook URL');

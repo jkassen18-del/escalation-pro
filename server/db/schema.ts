@@ -583,6 +583,41 @@ const TABLES: string[] = [
     expires_at TEXT NOT NULL
   )`,
 
+  /*
+   * Outbound HTTP integrations an administrator defines themselves: any URL,
+   * any headers, an optional body template. Header values and the signing
+   * secret are encrypted at rest and never sent back to the browser.
+   */
+  `CREATE TABLE IF NOT EXISTS http_integrations (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    method TEXT NOT NULL DEFAULT 'POST',
+    headers_encrypted TEXT,
+    body_template TEXT,
+    signing_secret_encrypted TEXT,
+    allow_private INTEGER NOT NULL DEFAULT 0,
+    events TEXT NOT NULL DEFAULT '{}',
+    team_ids TEXT NOT NULL DEFAULT '[]',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
+  /*
+   * Which department each Linear team's issues belong to. Several Linear
+   * teams may feed one department; the one marked primary is where that
+   * department's tickets are mirrored out to (kept in team_routing too).
+   */
+  `CREATE TABLE IF NOT EXISTS linear_team_map (
+    linear_team_id TEXT PRIMARY KEY,
+    linear_team_key TEXT,
+    linear_team_name TEXT,
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    is_primary INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+  )`,
+
   `CREATE TABLE IF NOT EXISTS sessions (
     sid TEXT PRIMARY KEY,
     data TEXT NOT NULL,
