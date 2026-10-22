@@ -104,7 +104,7 @@ export async function resolvePagesForTicket(ticketId: string, why: string): Prom
   }
 }
 
-export type AckChannel = 'web' | 'sms' | 'voice' | 'slack' | 'msteams' | 'api' | 'discord';
+export type AckChannel = 'web' | 'sms' | 'voice' | 'slack' | 'msteams' | 'api' | 'discord' | 'claude';
 
 /** Acknowledging stops the escalation and makes the acknowledger the owner if nobody is. */
 export async function acknowledgePage(pageId: string, user: Pick<PublicUser, 'id' | 'name'>, via: AckChannel): Promise<'acknowledged' | 'already' | 'closed'> {

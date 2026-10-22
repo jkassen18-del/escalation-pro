@@ -1,9 +1,7 @@
-import crypto from 'node:crypto';
 import { Router } from 'express';
 import { db } from '../db/index.ts';
 import { randomId } from '../lib/crypto.ts';
-import { isEffectivelyEmpty, sanitizeRichText } from '../lib/rich-text.ts';
-import { extractInlineImages, lengthWithoutInlineImages } from '../lib/inline-images.ts';
+import { lengthWithoutInlineImages } from '../lib/inline-images.ts';
 import {
   asyncRoute,
   badRequest,
@@ -19,9 +17,6 @@ import {
 } from '../lib/http.ts';
 import { clientIp, recordAudit } from '../lib/audit.ts';
 import { can, requireAuth, requirePermission, visibleTeamIds, type AuthedRequest } from '../middleware/auth.ts';
-import { findTeamById } from '../repositories/teams.ts';
-import { findUserById } from '../repositories/users.ts';
-import { SEVERITIES } from '../../shared/ops.ts';
 import { getSettings } from '../repositories/settings.ts';
 import {
   addLink,
@@ -35,17 +30,15 @@ import {
 } from '../repositories/tickets.ts';
 import { buildTicketUrl, dispatchAsync } from '../integrations/dispatcher.ts';
 import { createTicket, escalateTicketToTeam } from '../services/tickets.ts';
+import { addTicketComment, canSeeTicket, updateTicket, type TicketPatch } from '../services/ticket-actions.ts';
 import { loadIntegration } from '../integrations/store.ts';
-import { commentOnLinearIssue, createLinearIssue } from '../integrations/linear.ts';
+import { createLinearIssue } from '../integrations/linear.ts';
 import { notifyUsers } from '../lib/notifications.ts';
 import {
-  TERMINAL_STATUSES,
   TICKET_PRIORITIES,
   TICKET_SOURCES,
   TICKET_STATUSES,
   TICKET_TYPES,
-  type PublicUser,
-  type Ticket,
 } from '../../shared/types.ts';
 
 export const ticketsRouter: Router = Router();
@@ -77,11 +70,6 @@ function csv(value: unknown): string[] {
 }
 
 /** A user may open a ticket if they can see all tickets, own it, or share its team. */
-function canSeeTicket(user: PublicUser, ticket: Ticket): boolean {
-  if (can(user, 'tickets.view_all')) return true;
-  if (ticket.assigneeId === user.id || ticket.requesterId === user.id || ticket.createdById === user.id) return true;
-  return Boolean(ticket.teamId && user.teamIds.includes(ticket.teamId));
-}
 
 ticketsRouter.get(
   '/',
@@ -208,177 +196,11 @@ ticketsRouter.patch(
     if (!before) throw notFound('That ticket does not exist.');
     if (!canSeeTicket(user, before)) throw forbidden('You do not have access to this ticket.');
 
-    const updates: string[] = [];
-    const params: Array<string | number | null> = [];
-    const changes: Array<{ field: string; from: string | null; to: string | null }> = [];
-    const push = (column: string, value: string | number | null) => {
-      updates.push(`${column} = ?`);
-      params.push(value);
-    };
-
-    const now = new Date().toISOString();
-
-    if (req.body?.subject !== undefined) {
-      const subject = requireString(req.body.subject, 'Subject', { max: 200 });
-      if (subject !== before.subject) {
-        push('subject', subject);
-        changes.push({ field: 'subject', from: before.subject, to: subject });
-      }
-    }
-
-    if (req.body?.description !== undefined) {
-      const description = optionalString(req.body.description, 20_000) ?? '';
-      if (description !== before.description) {
-        push('description', description);
-        changes.push({ field: 'description', from: null, to: null });
-      }
-    }
-
-    if (req.body?.status !== undefined) {
-      const status = requireEnum(req.body.status, TICKET_STATUSES, 'Status');
-      if (status !== before.status) {
-        if (!can(user, 'tickets.update')) throw forbidden('You cannot change a ticket status.');
-        push('status', status);
-        changes.push({ field: 'status', from: before.status, to: status });
-
-        // Stamp/clear the lifecycle timestamps that the SLA report reads.
-        if (status === 'resolved') push('resolved_at', now);
-        if (status === 'closed') push('closed_at', now);
-        if (!TERMINAL_STATUSES.includes(status)) {
-          push('resolved_at', null);
-          push('closed_at', null);
-        }
-      }
-    }
-
-    if (req.body?.priority !== undefined) {
-      const priority = requireEnum(req.body.priority, TICKET_PRIORITIES, 'Priority');
-      if (priority !== before.priority) {
-        push('priority', priority);
-        changes.push({ field: 'priority', from: before.priority, to: priority });
-      }
-    }
-
-    if (req.body?.type !== undefined) {
-      const type = requireEnum(req.body.type, TICKET_TYPES, 'Type');
-      if (type !== before.type) {
-        push('type', type);
-        changes.push({ field: 'type', from: before.type, to: type });
-      }
-    }
-
-    if (req.body?.teamId !== undefined) {
-      const teamId = optionalString(req.body.teamId, 60);
-      if (teamId !== before.teamId) {
-        if (teamId && !(await findTeamById(teamId))) throw badRequest('That team no longer exists.');
-        push('team_id', teamId);
-        changes.push({ field: 'team', from: before.teamName, to: teamId });
-      }
-    }
-
-    if (req.body?.assigneeId !== undefined) {
-      if (!can(user, 'tickets.assign')) throw forbidden('You cannot reassign tickets.');
-      const assigneeId = optionalString(req.body.assigneeId, 60);
-      if (assigneeId !== before.assigneeId) {
-        push('assignee_id', assigneeId);
-        changes.push({ field: 'assignee', from: before.assigneeName, to: assigneeId });
-        if (assigneeId) await addWatcher(before.id, assigneeId);
-      }
-    }
-
-    if (req.body?.severity !== undefined) {
-      const severity = req.body.severity === null || req.body.severity === '' ? null : requireEnum(req.body.severity, SEVERITIES, 'Severity');
-      if (severity !== before.severity) {
-        push('severity', severity);
-        changes.push({ field: 'severity', from: before.severity, to: severity });
-      }
-    }
-
-    if (req.body?.commanderId !== undefined) {
-      const commanderId = optionalString(req.body.commanderId, 60);
-      if (commanderId !== before.commanderId) {
-        if (commanderId && !(await findUserById(commanderId))) throw badRequest('That person no longer exists.');
-        push('commander_id', commanderId);
-        changes.push({ field: 'commander', from: before.commanderName, to: commanderId });
-      }
-    }
-
-    if (req.body?.dueAt !== undefined) {
-      const dueAt = optionalDate(req.body.dueAt, 'Due date');
-      push('due_at', dueAt);
-      changes.push({ field: 'dueAt', from: before.dueAt, to: dueAt });
-    }
-
-    if (req.body?.tags !== undefined) {
-      const tags = toStringArray(req.body.tags, 20).map((tag) => tag.toLowerCase());
-      push('tags', JSON.stringify(tags));
-      changes.push({ field: 'tags', from: before.tags.join(', '), to: tags.join(', ') });
-    }
-
-    if (!updates.length) {
-      return res.json({ ticket: before });
-    }
-
-    push('updated_at', now);
-    params.push(before.id);
-    await db.run(`UPDATE tickets SET ${updates.join(', ')} WHERE id = ?`, params);
-
-    for (const change of changes) {
-      await recordEvent(before.id, user.id, 'updated', change.field, change.from, change.to);
-    }
-
-    const after = await findTicket(before.id, settings.ticketPrefix);
-    if (!after) throw new Error('Ticket update failed.');
-
-    await recordAudit({
-      actorId: user.id,
-      actorName: user.name,
-      entityType: 'ticket',
-      entityId: after.id,
-      action: 'ticket_updated',
-      summary: `Updated ${after.reference} (${changes.map((c) => c.field).join(', ')})`,
-      meta: { changes },
+    const after = await updateTicket(before, (req.body ?? {}) as TicketPatch, {
+      actor: user,
       ip: clientIp(req),
+      origin: `${req.protocol}://${req.get('host')}`,
     });
-
-    const ticketUrl = await buildTicketUrl(after, `${req.protocol}://${req.get('host')}`);
-
-    if (after.assigneeId && after.assigneeId !== before.assigneeId && after.assigneeId !== user.id) {
-      await notifyUsers([after.assigneeId], {
-        ticketId: after.id,
-        type: 'assigned',
-        title: `${after.reference} assigned to you`,
-        body: after.subject,
-      });
-      dispatchAsync({
-        event: 'ticketAssigned',
-        ticket: after,
-        actorName: user.name,
-        headline: `Assigned to ${after.assigneeName ?? 'someone'}: ${after.reference}`,
-        ticketUrl,
-      });
-    }
-
-    if (after.status !== before.status) {
-      await notifyUsers(
-        after.watcherIds.filter((id) => id !== user.id),
-        {
-          ticketId: after.id,
-          type: 'status',
-          title: `${after.reference} is now ${after.status.replace('_', ' ')}`,
-          body: after.subject,
-        },
-      );
-      dispatchAsync({
-        event: 'ticketStatusChanged',
-        ticket: after,
-        actorName: user.name,
-        headline: `${after.reference} moved to ${after.status.replace('_', ' ')}`,
-        detail: `Previous status: ${before.status.replace('_', ' ')}`,
-        ticketUrl,
-      });
-    }
-
     res.json({ ticket: after });
   }),
 );
@@ -557,82 +379,16 @@ ticketsRouter.post(
     const commentIsHtml = req.body?.bodyFormat === 'html';
     const rawBody = richTextBody(req.body?.body, commentIsHtml, 'Comment');
     if (!rawBody) throw badRequest('Comment is required', { Comment: 'Required' });
-    const cleanBody = commentIsHtml ? sanitizeRichText(rawBody) : rawBody;
-    if (commentIsHtml && isEffectivelyEmpty(cleanBody)) throw badRequest('Write something before posting.');
-    const body = cleanBody;
-    const bodyFormat: 'text' | 'html' = commentIsHtml ? 'html' : 'text';
     const isInternal = req.body?.isInternal === true;
     if (isInternal && !can(user, 'tickets.comment_internal')) {
       throw forbidden('You cannot post internal notes.');
     }
 
-    const now = new Date().toISOString();
-    const commentId = randomId();
-    await db.run(
-      `INSERT INTO ticket_comments (id, ticket_id, author_id, body, body_format, is_internal, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [commentId, ticket.id, user.id, body, bodyFormat, isInternal ? 1 : 0, now, now],
+    const after = await addTicketComment(
+      ticket,
+      { body: rawBody, bodyFormat: commentIsHtml ? 'html' : 'text', isInternal },
+      { actor: user, ip: clientIp(req), origin: `${req.protocol}://${req.get('host')}` },
     );
-
-    /*
-     * Only after the comment row exists: each extracted image is an attachment
-     * that references this comment, and Postgres enforces that foreign key.
-     */
-    if (bodyFormat === 'html') {
-      const rewritten = await extractInlineImages(body, { ticketId: ticket.id, commentId, uploadedBy: user.id });
-      if (rewritten !== body) {
-        await db.run(`UPDATE ticket_comments SET body = ? WHERE id = ?`, [rewritten, commentId]);
-      }
-    }
-
-    // The first public reply from anyone other than the requester stops the
-    // first-response SLA clock.
-    if (!ticket.firstResponseAt && !isInternal && user.id !== ticket.requesterId) {
-      await db.run(`UPDATE tickets SET first_response_at = ? WHERE id = ?`, [now, ticket.id]);
-    }
-    await db.run(`UPDATE tickets SET updated_at = ? WHERE id = ?`, [now, ticket.id]);
-    await addWatcher(ticket.id, user.id);
-
-    const after = await findTicket(ticket.id, settings.ticketPrefix);
-    if (!after) throw new Error('Comment failed.');
-
-    await notifyUsers(
-      after.watcherIds.filter((id) => id !== user.id),
-      {
-        ticketId: after.id,
-        type: 'comment',
-        title: `${user.name} commented on ${after.reference}`,
-        body: body.slice(0, 200),
-      },
-    );
-
-    if (!isInternal) {
-      dispatchAsync({
-        event: 'ticketCommented',
-        ticket: after,
-        actorName: user.name,
-        headline: `New comment on ${after.reference}`,
-        detail: body,
-        ticketUrl: await buildTicketUrl(after, `${req.protocol}://${req.get('host')}`),
-      });
-    }
-
-    // Mirror public replies onto the linked Linear issue so both stay in sync.
-    const linearLink = after.links.find((link) => link.provider === 'linear');
-    if (linearLink && !isInternal) {
-      const record = await loadIntegration('linear');
-      if (record.enabled) {
-        // Recorded first, so the copy Linear's webhook sends back is known to be ours.
-        const linearCommentId = crypto.randomUUID();
-        await addLink(after.id, 'linear_comment', linearCommentId, null, '');
-        void commentOnLinearIssue(
-          record,
-          linearLink.externalId,
-          `**${user.name}** (${settings.organizationName}):\n\n${body}`,
-          linearCommentId,
-        );
-      }
-    }
 
     const detail = await loadTicketDetail(after, { includeInternal: can(user, 'tickets.comment_internal') });
     res.status(201).json({ ticket: detail });

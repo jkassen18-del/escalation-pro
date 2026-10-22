@@ -3,6 +3,7 @@ import { acquireLease } from './lease.ts';
 import { maintenanceTick } from './maintenance-tick.ts';
 import { pruneMonitorHistory, runDueMonitors } from './monitors.ts';
 import { pagerTick } from './pager.ts';
+import { pruneOAuth } from '../mcp/auth.ts';
 
 /**
  * The background loop for monitoring, paging and backups.
@@ -30,6 +31,7 @@ export async function runOpsTick(): Promise<{ leader: boolean; monitors: number;
   if (Date.now() - lastPrune > 3_600_000) {
     lastPrune = Date.now();
     await pruneMonitorHistory().catch((error) => console.error('[ops] prune', error));
+    await pruneOAuth().catch((error) => console.error('[ops] prune oauth', error));
   }
   return { leader: true, monitors, pages, backups };
 }

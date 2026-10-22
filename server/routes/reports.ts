@@ -5,7 +5,7 @@ import { asyncRoute, optionalString } from '../lib/http.ts';
 import { requireAuth, requirePermission, visibleTeamIds, type AuthedRequest } from '../middleware/auth.ts';
 import { getSettings } from '../repositories/settings.ts';
 import { listTickets, referenceOf, type TicketQuery } from '../repositories/tickets.ts';
-import { TICKET_PRIORITIES, type ReportSummary, type TicketPriority } from '../../shared/types.ts';
+import { TICKET_PRIORITIES, type PublicUser, type ReportSummary, type TicketPriority } from '../../shared/types.ts';
 
 export const reportsRouter: Router = Router();
 
@@ -28,116 +28,129 @@ function average(values: number[]): number | null {
   return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
 }
 
+/**
+ * The numbers behind the reports page, for one person's view of one window.
+ * Shared with the Claude connector's ticket_report tool.
+ */
+export async function buildReportSummary(
+  user: PublicUser,
+  from: string,
+  to: string,
+): Promise<{ summary: ReportSummary; ticketCount: number }> {
+  const settings = await getSettings();
+  const scoped = visibleTeamIds(user);
+
+  // Pull the window once and aggregate in memory. At departmental volumes
+  // this is far simpler than eight dialect-portable GROUP BY queries.
+  const query: TicketQuery = {
+    createdFrom: from,
+    createdTo: to,
+    visibleTeamIds: scoped,
+    viewerId: user.id,
+    limit: 200,
+  };
+
+  const collected: Awaited<ReturnType<typeof listTickets>>['tickets'] = [];
+  let offset = 0;
+  for (;;) {
+    const page = await listTickets({ ...query, offset }, settings.ticketPrefix);
+    collected.push(...page.tickets);
+    offset += page.tickets.length;
+    if (collected.length >= page.total || !page.tickets.length || offset > 20_000) break;
+  }
+
+  const totals = {
+    open: collected.filter((t) => t.status === 'open').length,
+    inProgress: collected.filter((t) => t.status === 'in_progress').length,
+    pending: collected.filter((t) => t.status === 'pending').length,
+    resolved: collected.filter((t) => t.status === 'resolved').length,
+    closed: collected.filter((t) => t.status === 'closed').length,
+    overdue: collected.filter((t) => t.isOverdue).length,
+    unassigned: collected.filter((t) => !t.assigneeId && t.status !== 'closed' && t.status !== 'resolved').length,
+  };
+
+  const byPriority = TICKET_PRIORITIES.map((priority: TicketPriority) => ({
+    priority,
+    count: collected.filter((t) => t.priority === priority).length,
+  }));
+
+  const teamMap = new Map<string, { teamId: string; teamName: string; count: number; overdue: number }>();
+  for (const ticket of collected) {
+    const key = ticket.teamId ?? 'none';
+    if (!teamMap.has(key)) {
+      teamMap.set(key, { teamId: key, teamName: ticket.teamName ?? 'Unassigned', count: 0, overdue: 0 });
+    }
+    const entry = teamMap.get(key)!;
+    entry.count += 1;
+    if (ticket.isOverdue) entry.overdue += 1;
+  }
+
+  const assigneeMap = new Map<string, { assigneeId: string | null; assigneeName: string; open: number; resolved: number }>();
+  for (const ticket of collected) {
+    const key = ticket.assigneeId ?? 'none';
+    if (!assigneeMap.has(key)) {
+      assigneeMap.set(key, {
+        assigneeId: ticket.assigneeId,
+        assigneeName: ticket.assigneeName ?? 'Unassigned',
+        open: 0,
+        resolved: 0,
+      });
+    }
+    const entry = assigneeMap.get(key)!;
+    if (ticket.status === 'resolved' || ticket.status === 'closed') entry.resolved += 1;
+    else entry.open += 1;
+  }
+
+  // Day buckets across the whole window, including days with no activity.
+  const volume = new Map<string, { date: string; created: number; resolved: number }>();
+  const dayCursor = new Date(from);
+  const end = new Date(to);
+  while (dayCursor <= end && volume.size < 400) {
+    const key = dayCursor.toISOString().slice(0, 10);
+    volume.set(key, { date: key, created: 0, resolved: 0 });
+    dayCursor.setUTCDate(dayCursor.getUTCDate() + 1);
+  }
+  for (const ticket of collected) {
+    const createdKey = ticket.createdAt.slice(0, 10);
+    if (volume.has(createdKey)) volume.get(createdKey)!.created += 1;
+    if (ticket.resolvedAt) {
+      const resolvedKey = ticket.resolvedAt.slice(0, 10);
+      if (volume.has(resolvedKey)) volume.get(resolvedKey)!.resolved += 1;
+    }
+  }
+
+  const firstResponses = collected
+    .filter((t) => t.firstResponseAt)
+    .map((t) => minutesBetween(t.createdAt, t.firstResponseAt!));
+  const resolutions = collected
+    .filter((t) => t.resolvedAt)
+    .map((t) => minutesBetween(t.createdAt, t.resolvedAt!));
+
+  // Compliance is measured only over tickets that actually reached a close.
+  const withDue = collected.filter((t) => t.dueAt && (t.resolvedAt || t.closedAt));
+  const metSla = withDue.filter((t) => new Date(t.resolvedAt ?? t.closedAt!) <= new Date(t.dueAt!));
+
+  const summary: ReportSummary = {
+    totals,
+    byPriority,
+    byTeam: Array.from(teamMap.values()).sort((a, b) => b.count - a.count),
+    byAssignee: Array.from(assigneeMap.values()).sort((a, b) => b.open - a.open).slice(0, 15),
+    volumeByDay: Array.from(volume.values()),
+    avgFirstResponseMins: average(firstResponses),
+    avgResolutionMins: average(resolutions),
+    slaCompliancePct: withDue.length ? Math.round((metSla.length / withDue.length) * 100) : null,
+  };
+
+  return { summary, ticketCount: collected.length };
+}
+
 reportsRouter.get(
   '/summary',
   asyncRoute(async (req, res) => {
     const user = (req as AuthedRequest).user;
-    const settings = await getSettings();
     const { from, to } = range(req as never);
-    const scoped = visibleTeamIds(user);
-
-    // Pull the window once and aggregate in memory. At departmental volumes
-    // this is far simpler than eight dialect-portable GROUP BY queries.
-    const query: TicketQuery = {
-      createdFrom: from,
-      createdTo: to,
-      visibleTeamIds: scoped,
-      viewerId: user.id,
-      limit: 200,
-    };
-
-    const collected: Awaited<ReturnType<typeof listTickets>>['tickets'] = [];
-    let offset = 0;
-    for (;;) {
-      const page = await listTickets({ ...query, offset }, settings.ticketPrefix);
-      collected.push(...page.tickets);
-      offset += page.tickets.length;
-      if (collected.length >= page.total || !page.tickets.length || offset > 20_000) break;
-    }
-
-    const totals = {
-      open: collected.filter((t) => t.status === 'open').length,
-      inProgress: collected.filter((t) => t.status === 'in_progress').length,
-      pending: collected.filter((t) => t.status === 'pending').length,
-      resolved: collected.filter((t) => t.status === 'resolved').length,
-      closed: collected.filter((t) => t.status === 'closed').length,
-      overdue: collected.filter((t) => t.isOverdue).length,
-      unassigned: collected.filter((t) => !t.assigneeId && t.status !== 'closed' && t.status !== 'resolved').length,
-    };
-
-    const byPriority = TICKET_PRIORITIES.map((priority: TicketPriority) => ({
-      priority,
-      count: collected.filter((t) => t.priority === priority).length,
-    }));
-
-    const teamMap = new Map<string, { teamId: string; teamName: string; count: number; overdue: number }>();
-    for (const ticket of collected) {
-      const key = ticket.teamId ?? 'none';
-      if (!teamMap.has(key)) {
-        teamMap.set(key, { teamId: key, teamName: ticket.teamName ?? 'Unassigned', count: 0, overdue: 0 });
-      }
-      const entry = teamMap.get(key)!;
-      entry.count += 1;
-      if (ticket.isOverdue) entry.overdue += 1;
-    }
-
-    const assigneeMap = new Map<string, { assigneeId: string | null; assigneeName: string; open: number; resolved: number }>();
-    for (const ticket of collected) {
-      const key = ticket.assigneeId ?? 'none';
-      if (!assigneeMap.has(key)) {
-        assigneeMap.set(key, {
-          assigneeId: ticket.assigneeId,
-          assigneeName: ticket.assigneeName ?? 'Unassigned',
-          open: 0,
-          resolved: 0,
-        });
-      }
-      const entry = assigneeMap.get(key)!;
-      if (ticket.status === 'resolved' || ticket.status === 'closed') entry.resolved += 1;
-      else entry.open += 1;
-    }
-
-    // Day buckets across the whole window, including days with no activity.
-    const volume = new Map<string, { date: string; created: number; resolved: number }>();
-    const dayCursor = new Date(from);
-    const end = new Date(to);
-    while (dayCursor <= end && volume.size < 400) {
-      const key = dayCursor.toISOString().slice(0, 10);
-      volume.set(key, { date: key, created: 0, resolved: 0 });
-      dayCursor.setUTCDate(dayCursor.getUTCDate() + 1);
-    }
-    for (const ticket of collected) {
-      const createdKey = ticket.createdAt.slice(0, 10);
-      if (volume.has(createdKey)) volume.get(createdKey)!.created += 1;
-      if (ticket.resolvedAt) {
-        const resolvedKey = ticket.resolvedAt.slice(0, 10);
-        if (volume.has(resolvedKey)) volume.get(resolvedKey)!.resolved += 1;
-      }
-    }
-
-    const firstResponses = collected
-      .filter((t) => t.firstResponseAt)
-      .map((t) => minutesBetween(t.createdAt, t.firstResponseAt!));
-    const resolutions = collected
-      .filter((t) => t.resolvedAt)
-      .map((t) => minutesBetween(t.createdAt, t.resolvedAt!));
-
-    // Compliance is measured only over tickets that actually reached a close.
-    const withDue = collected.filter((t) => t.dueAt && (t.resolvedAt || t.closedAt));
-    const metSla = withDue.filter((t) => new Date(t.resolvedAt ?? t.closedAt!) <= new Date(t.dueAt!));
-
-    const summary: ReportSummary = {
-      totals,
-      byPriority,
-      byTeam: Array.from(teamMap.values()).sort((a, b) => b.count - a.count),
-      byAssignee: Array.from(assigneeMap.values()).sort((a, b) => b.open - a.open).slice(0, 15),
-      volumeByDay: Array.from(volume.values()),
-      avgFirstResponseMins: average(firstResponses),
-      avgResolutionMins: average(resolutions),
-      slaCompliancePct: withDue.length ? Math.round((metSla.length / withDue.length) * 100) : null,
-    };
-
-    res.json({ summary, range: { from, to }, ticketCount: collected.length });
+    const { summary, ticketCount } = await buildReportSummary(user, from, to);
+    res.json({ summary, range: { from, to }, ticketCount });
   }),
 );
 

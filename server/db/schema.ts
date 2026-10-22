@@ -737,6 +737,77 @@ const TABLES: string[] = [
     expires_at TEXT NOT NULL
   )`,
 
+  /* ---------------------------------------------------------------------
+   * Claude connector (MCP): personal access tokens and OAuth 2.1.
+   * Every token is stored as a SHA-256 hash; the plain value is shown once.
+   * ------------------------------------------------------------------- */
+
+  `CREATE TABLE IF NOT EXISTS api_tokens (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    /* First characters of the token, so people can tell theirs apart. */
+    token_prefix TEXT NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'read',
+    expires_at TEXT,
+    last_used_at TEXT,
+    revoked_at TEXT,
+    created_at TEXT NOT NULL
+  )`,
+
+  /* Clients registered dynamically (RFC 7591) or by metadata document URL. */
+  `CREATE TABLE IF NOT EXISTS oauth_clients (
+    id TEXT PRIMARY KEY,
+    client_name TEXT NOT NULL,
+    redirect_uris TEXT NOT NULL DEFAULT '[]',
+    kind TEXT NOT NULL DEFAULT 'dcr',
+    secret_hash TEXT,
+    created_by TEXT,
+    created_ip TEXT,
+    fetched_at TEXT,
+    created_at TEXT NOT NULL
+  )`,
+
+  /* An authorization request waiting for the person's consent. */
+  `CREATE TABLE IF NOT EXISTS oauth_requests (
+    id TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    redirect_uri TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    state TEXT,
+    code_challenge TEXT,
+    resource TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
+
+  /* One person's approval of one client: what "Connected apps" lists. */
+  `CREATE TABLE IF NOT EXISTS oauth_grants (
+    id TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    scope TEXT NOT NULL,
+    resource TEXT NOT NULL,
+    last_used_at TEXT,
+    revoked_at TEXT,
+    created_at TEXT NOT NULL
+  )`,
+
+  /* Authorization codes, access tokens and refresh tokens, all hashed. */
+  `CREATE TABLE IF NOT EXISTS oauth_tokens (
+    id TEXT PRIMARY KEY,
+    grant_id TEXT NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    redirect_uri TEXT,
+    code_challenge TEXT,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    revoked_at TEXT,
+    created_at TEXT NOT NULL
+  )`,
+
   `CREATE TABLE IF NOT EXISTS sessions (
     sid TEXT PRIMARY KEY,
     data TEXT NOT NULL,
@@ -745,6 +816,10 @@ const TABLES: string[] = [
 ];
 
 const INDEXES: string[] = [
+  `CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_oauth_grants_user ON oauth_grants(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_oauth_tokens_grant ON oauth_tokens(grant_id, kind)`,
+  `CREATE INDEX IF NOT EXISTS idx_oauth_clients_created ON oauth_clients(created_ip, created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)`,
   `CREATE INDEX IF NOT EXISTS idx_tickets_team ON tickets(team_id)`,
   `CREATE INDEX IF NOT EXISTS idx_tickets_assignee ON tickets(assignee_id)`,

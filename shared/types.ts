@@ -12,7 +12,7 @@ export type TicketPriority = (typeof TICKET_PRIORITIES)[number];
 export const TICKET_TYPES = ['incident', 'request', 'question', 'problem', 'escalation'] as const;
 export type TicketType = (typeof TICKET_TYPES)[number];
 
-export const TICKET_SOURCES = ['web', 'email', 'slack', 'msteams', 'api', 'phone', 'linear', 'monitor', 'webhook', 'discord'] as const;
+export const TICKET_SOURCES = ['web', 'email', 'slack', 'msteams', 'api', 'phone', 'linear', 'monitor', 'webhook', 'discord', 'claude'] as const;
 export type TicketSource = (typeof TICKET_SOURCES)[number];
 
 export const USER_ROLES = ['admin', 'manager', 'agent', 'viewer'] as const;
