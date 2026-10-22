@@ -31,6 +31,9 @@ import { cronRouter } from './routes/cron.ts';
 import { opsRouter } from './routes/ops.ts';
 import { opsPublicRouter } from './routes/ops-public.ts';
 import { startOpsRunner } from './ops/runner.ts';
+import { discordRouter } from './routes/discord.ts';
+import { startDiscordGateway } from './integrations/discord-gateway.ts';
+import { handleDiscordEvent } from './integrations/discord-handlers.ts';
 import { startSlaMonitor } from './jobs/sla-monitor.ts';
 import { APP_VERSION } from '../shared/version.ts';
 import { pruneAttempts } from './lib/rate-limit.ts';
@@ -173,6 +176,7 @@ export async function createApp() {
   app.use('/api/sso', ssoAdminRouter);
   app.use('/api/team-links', teamLinksRouter);
   app.use('/api/ops', opsRouter);
+  app.use('/api/discord', discordRouter);
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API endpoint' }));
 
@@ -282,6 +286,8 @@ export async function startServer() {
 
   const stopSla = startSlaMonitor();
   const stopOps = startOpsRunner();
+  // Discord connects out to its Gateway; nothing listens for it.
+  const stopDiscord = startDiscordGateway(handleDiscordEvent);
 
   // Failed-login rows are only needed for the length of the limiter window.
   const pruneTimer = setInterval(
@@ -294,6 +300,7 @@ export async function startServer() {
     console.log(`\n[server] ${signal} received, shutting down.`);
     stopSla();
     stopOps();
+    stopDiscord();
     clearInterval(pruneTimer);
     sessionStore.stopSweeper();
     server.close(() => {

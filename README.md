@@ -277,6 +277,38 @@ convenience, not the security boundary.
 
 ## Integrations
 
+**Integrations** is a catalogue: every tool is a tile showing whether it is
+connected, needs attention or is not set up yet (worked out from real data: a
+chat tool counts as connected once its test passes, an alert source once an
+alert has arrived). Clicking a tile opens a guided setup with numbered steps,
+the few fields it needs and a test. `/integrations?setup=<tile>` opens one
+directly, which is how the Command centre's getting-started list links in.
+Nothing in the catalogue needs a paid plan.
+
+- **Slack, in a few clicks.** *Create the Slack app* opens Slack's "create
+  from manifest" screen with the app already described: its name, the bot
+  permissions this integration uses, and (when the App URL is public https)
+  the event, button and `/gml` command URLs. Paste the new app's Client ID,
+  Client Secret and Signing Secret back once (Slack → your app → Basic
+  Information → App Credentials), click **Add to Slack**, approve, pick the
+  channel, and a test message is posted. The install uses OAuth with a
+  one-time `state` bound to your session, so a stray or replayed callback is
+  refused. With an App URL Slack cannot reach, notifications still work and the
+  manifest leaves out the parts Slack would have to call back.
+- **Microsoft Teams admin consent.** After entering the bot's App ID, a
+  **Grant admin consent** button sends a Global or Cloud Application
+  Administrator to Microsoft to approve everything the bot's app registration
+  asks for (including the Graph permissions Teams calls need) in one step. Add
+  `<App URL>/api/integrations/msteams/consent/callback` to the app
+  registration's Web redirect URIs first; the drawer shows it with a copy
+  button.
+- **Monitoring tools** (AWS, Azure, Grafana/Alertmanager, Jenkins, Cloudflare,
+  DigitalOcean, Entra ID, Stratigix, any webhook) create an alert source in one
+  click and show its webhook URL with the provider's own steps and a *Send a
+  test alert* button.
+- **Recent deliveries** is the second tab: every outbound notification and
+  whether it arrived.
+
 Configure these in **Integrations** while signed in as an administrator. Every
 credential is encrypted with AES-256-GCM before it is stored, and each provider
 has a **Test connection** button that calls the real service and reports exactly

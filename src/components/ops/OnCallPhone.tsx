@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Field, Input, SegmentedControl } from '@/components/ui/Field';
 import { ErrorPane, LoadingPane } from '@/components/ui/Feedback';
 import type { TelephonySettings } from '@shared/ops';
+import { OnCallTeamsCalls } from './OnCallTeamsCalls';
 
 /** SMS and voice provider settings. Only shown to on-call managers. */
 export function OnCallPhone() {
@@ -106,6 +107,8 @@ export function OnCallPhone() {
       <Button variant="primary" loading={saving} onClick={save}>
         Save
       </Button>
+
+      <OnCallTeamsCalls />
     </div>
   );
 }

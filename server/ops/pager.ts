@@ -8,9 +8,12 @@ import { buildTicketUrl, dispatchAsync } from '../integrations/dispatcher.ts';
 import { loadIntegration } from '../integrations/store.ts';
 import { sendEmail } from '../integrations/email.ts';
 import { TERMINAL_STATUSES, type PublicUser, type Ticket } from '../../shared/types.ts';
-import type { NotificationAttempt, NotifyChannel, Page, PageStatus, Severity, Urgency } from '../../shared/ops.ts';
+import { CALL_CHANNELS, type NotificationAttempt, type NotifyChannel, type Page, type PageStatus, type Severity, type Urgency } from '../../shared/ops.ts';
 import { getPolicy, resolveTargets, rulesFor } from './oncall.ts';
+import { sendDiscordPage } from '../integrations/discord.ts';
 import { loadTelephony, normalisePhone, placeCall, sendSms } from './telephony.ts';
+import { sendPush } from './push.ts';
+import { hangUpCallsForPage, placeTeamsCall } from './teams-calls.ts';
 
 /**
  * The pager: walks an escalation policy until a person acknowledges.
@@ -101,7 +104,7 @@ export async function resolvePagesForTicket(ticketId: string, why: string): Prom
   }
 }
 
-export type AckChannel = 'web' | 'sms' | 'voice' | 'slack' | 'msteams' | 'api';
+export type AckChannel = 'web' | 'sms' | 'voice' | 'slack' | 'msteams' | 'api' | 'discord';
 
 /** Acknowledging stops the escalation and makes the acknowledger the owner if nobody is. */
 export async function acknowledgePage(pageId: string, user: Pick<PublicUser, 'id' | 'name'>, via: AckChannel): Promise<'acknowledged' | 'already' | 'closed'> {
@@ -141,6 +144,8 @@ export async function acknowledgePage(pageId: string, user: Pick<PublicUser, 'id
        SELECT id FROM (SELECT id FROM notification_attempts WHERE page_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1) latest)`,
     [pageId, user.id],
   );
+  // Stop any Teams call still ringing for this page. Best effort, and not waited on.
+  void hangUpCallsForPage(pageId).catch(() => undefined);
   return 'acknowledged';
 }
 
@@ -251,8 +256,9 @@ async function deliver(
   ticket: Ticket | null,
   message: string,
   attemptId: string,
-  { postToChat = true }: { postToChat?: boolean } = {},
+  options: { postToChat?: boolean; pageId?: string | null } = {},
 ): Promise<{ status: NotificationAttempt['status']; provider: string; detail: string; externalId?: string }> {
+  const { postToChat = true } = options;
   try {
     const ticketUrl = ticket ? await buildTicketUrl(ticket) : '';
     switch (channel) {
@@ -277,6 +283,23 @@ async function deliver(
         return await sendSms(normalisePhone(user.phone), `${message}\nReply ACK to acknowledge. ${ticketUrl}`.trim());
       case 'voice':
         return await placeCall(normalisePhone(user.phone), `InfraTicket page. ${message}`, attemptId);
+      case 'teams_call':
+        return await placeTeamsCall(user, attemptId);
+      case 'push':
+        return await sendPush(user.id, {
+          title: ticket ? `Paged: ${ticket.reference}` : 'InfraTicket test',
+          body: message,
+          pageId: options.pageId ?? null,
+          ticketId: ticket?.id ?? null,
+          url: ticket ? `/tickets/${ticket.id}` : '/profile',
+        });
+      case 'discord':
+        return await sendDiscordPage(user.id, {
+          pageId: options.pageId ?? null,
+          title: ticket ? `Paged: ${ticket.reference}` : 'InfraTicket test page',
+          body: message,
+          ticketUrl,
+        });
       case 'chat': {
         if (!ticket) return { status: 'skipped', provider: 'chat', detail: 'Test pages are not posted to channels' };
         if (postToChat) {
@@ -328,16 +351,17 @@ export async function processPage(pageId: string): Promise<void> {
     if (!user || user.status !== 'active') continue;
     const { rules } = await rulesFor(userId);
     for (const rule of rules.filter((r) => r.urgency === page.urgency)) {
-      const repeats = rule.channel === 'voice' ? telephony.voiceMaxCalls : 1;
+      const isCall = CALL_CHANNELS.includes(rule.channel);
+      const repeats = isCall ? telephony.voiceMaxCalls : 1;
       for (let seq = 0; seq < repeats; seq += 1) {
-        const dueAt = levelStart + (rule.delayMins + seq * (rule.channel === 'voice' ? telephony.voiceRepeatMins : 0)) * 60_000;
+        const dueAt = levelStart + (rule.delayMins + seq * (isCall ? telephony.voiceRepeatMins : 0)) * 60_000;
         if (dueAt > now) break;
         if (await attemptExists(page.id, cycle, levelIndex, userId, rule.channel, seq)) continue;
         // One page re-checks before each call: an acknowledgement may have landed mid-loop.
         const fresh = await loadPageRow(page.id);
         if (!fresh || fresh.status !== 'triggered') return;
         const attemptId = randomId();
-        const result = await deliver(rule.channel, user, ticket, message, attemptId, { postToChat: !chatPosted });
+        const result = await deliver(rule.channel, user, ticket, message, attemptId, { postToChat: !chatPosted, pageId: page.id });
         if (rule.channel === 'chat') chatPosted = true;
         await recordAttempt({ id: attemptId, pageId: page.id, userId, channel: rule.channel, level: levelIndex, cycle, seq, result });
         // Only the earliest missed call is placed, not a burst of catch-up calls.

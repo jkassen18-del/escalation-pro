@@ -5,7 +5,8 @@ import { findTicket, recordEvent } from '../repositories/tickets.ts';
 import { findTeamById } from '../repositories/teams.ts';
 import { createTicket, SYSTEM_ACTOR } from '../services/tickets.ts';
 import { TERMINAL_STATUSES, type TicketPriority } from '../../shared/types.ts';
-import type { Alert, MaintenanceWindow, Severity } from '../../shared/ops.ts';
+import type { Alert, Severity } from '../../shared/ops.ts';
+import { maintenanceFor, teamOfSource, type Coverage } from './maintenance.ts';
 import { resolvePagesForTicket, triggerPage } from './pager.ts';
 import { routeSignal } from './routing.ts';
 
@@ -38,7 +39,7 @@ export interface AlertSignal {
   sourceKind?: string;
 }
 
-export type IngestAction = 'created' | 'grouped' | 'deduplicated' | 'resolved' | 'ignored';
+export type IngestAction = 'created' | 'grouped' | 'deduplicated' | 'resolved' | 'ignored' | 'suppressed';
 
 export interface IngestResult {
   action: IngestAction;
@@ -131,36 +132,14 @@ export async function listAlerts(filter: { status?: string; ticketId?: string; l
 
 /* --------------------------- Maintenance windows ------------------------- */
 
-export async function listMaintenanceWindows(): Promise<MaintenanceWindow[]> {
-  const rows = await db.all<Record<string, string | null>>(
-    `SELECT m.*, u.name AS created_by_name FROM maintenance_windows m
-     LEFT JOIN users u ON u.id = m.created_by ORDER BY m.starts_at DESC LIMIT 200`,
-  );
-  return rows.map((row) => ({
-    id: row.id!,
-    title: row.title!,
-    startsAt: row.starts_at!,
-    endsAt: row.ends_at!,
-    monitorIds: parseJson<string[]>(row.monitor_ids, []),
-    createdByName: row.created_by_name ?? null,
-    createdAt: row.created_at!,
-  }));
-}
+export { listMaintenanceWindows } from './maintenance.ts';
 
-/** Whether a maintenance window covers this source right now. Suppresses paging, never recording. */
-export async function inMaintenance(sourceId: string, at = new Date()): Promise<MaintenanceWindow | null> {
-  const now = at.toISOString();
-  const rows = await db.all<Record<string, string>>(
-    `SELECT * FROM maintenance_windows WHERE starts_at <= ? AND ends_at > ?`,
-    [now, now],
-  );
-  for (const row of rows) {
-    const ids = parseJson<string[]>(row.monitor_ids, []);
-    if (ids.length === 0 || ids.includes(sourceId)) {
-      return { id: row.id, title: row.title, startsAt: row.starts_at, endsAt: row.ends_at, monitorIds: ids, createdByName: null, createdAt: row.created_at };
-    }
-  }
-  return null;
+/**
+ * Whether a maintenance window covers this source right now. Kept for the
+ * callers that only know a source id; the team is looked up.
+ */
+export async function inMaintenance(sourceId: string, at = new Date()): Promise<Coverage | null> {
+  return maintenanceFor({ sourceId, teamId: await teamOfSource(sourceId) }, at.getTime());
 }
 
 /* ------------------------------- Pipeline -------------------------------- */
@@ -217,13 +196,15 @@ export async function ingestSignal(signal: AlertSignal): Promise<IngestResult> {
   const ruleName = routing.matchedRules.length ? routing.matchedRules.map((rule) => rule.name).join(' → ') : null;
   const routed: AlertSignal = { ...signal, severity: routing.severity, teamId: routing.teamId, escalationPolicyId: routing.escalationPolicyId };
 
-  const maintenance = await inMaintenance(signal.sourceId);
+  // Maintenance is matched against the source's own team, before routing
+  // moves the alert anywhere: planned work on a team's systems is theirs.
+  const maintenance = await maintenanceFor({ sourceId: signal.sourceId, teamId: signal.teamId ?? (await teamOfSource(signal.sourceId)) });
   const suppressed = Boolean(maintenance) || routing.suppressPaging;
   const alertId = randomId();
   await db.run(
     `INSERT INTO alerts (id, source_type, source_id, source_name, dedup_key, title, summary, severity, status, count,
-       ticket_id, suppressed, rule_name, payload, first_seen_at, last_seen_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'firing', 1, NULL, ?, ?, ?, ?, ?)`,
+       ticket_id, suppressed, rule_name, maintenance_id, payload, first_seen_at, last_seen_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'firing', 1, NULL, ?, ?, ?, ?, ?, ?)`,
     [
       alertId,
       signal.sourceType,
@@ -235,11 +216,18 @@ export async function ingestSignal(signal: AlertSignal): Promise<IngestResult> {
       routed.severity,
       suppressed ? 1 : 0,
       ruleName,
+      maintenance?.windowId ?? null,
       payload,
       now,
       now,
     ],
   );
+
+  // Pausing alerting records the alert and stops there: no ticket, no page.
+  // When the window ends and the problem is still there, it is raised again.
+  if (maintenance?.effect === 'pause_alerting') {
+    return { action: 'suppressed', alertId, ticketId: null, suppressed: true, paged: false };
+  }
 
   // Grouping: another open alert from this source, recent, on an incident
   // still open - and with the same department. A rule that sends this alert
@@ -280,7 +268,7 @@ export async function ingestSignal(signal: AlertSignal): Promise<IngestResult> {
   }
 
   if (maintenance) {
-    await addSystemComment(ticket.id, `Paging suppressed: maintenance window "${maintenance.title}" is in effect until ${maintenance.endsAt}.`);
+    await addSystemComment(ticket.id, `Paging suppressed: maintenance "${maintenance.title}" is in effect until ${maintenance.endsAt}. If this is still open when it ends, it pages then.`);
     return { action: 'created', alertId, ticketId: ticket.id, suppressed: true, paged: false };
   }
   if (routing.suppressPaging) {
@@ -334,4 +322,69 @@ async function autoResolveTicket(ticketId: string, signal: AlertSignal): Promise
   await recordEvent(ticketId, null, 'updated', 'status', ticket.status, 'resolved');
   await addSystemComment(ticketId, `Auto-resolved: ${signal.sourceName} reports the problem has cleared.`);
   await resolvePagesForTicket(ticketId, 'The alert resolved.');
+}
+
+/**
+ * After a maintenance window ends: anything it held back that is still open
+ * is raised normally, once.
+ *
+ * An alert that only had its paging paused already has a ticket, so that
+ * ticket is paged now. An alert whose alerting was paused never got a ticket,
+ * so it is closed quietly and fed through the pipeline again as new. Either
+ * way it is one signal per alert still firing - a fleet of monitors that were
+ * down for planned work and came back produces nothing at all.
+ */
+export async function reraiseAfterMaintenance(windowId: string): Promise<number> {
+  const held = await db.all<AlertRow & { team_id: string | null; escalation_policy_id: string | null }>(
+    `SELECT a.*, COALESCE(m.team_id, s.team_id) AS team_id, COALESCE(m.escalation_policy_id, s.escalation_policy_id) AS escalation_policy_id
+     FROM alerts a
+     LEFT JOIN monitors m ON m.id = a.source_id
+     LEFT JOIN alert_sources s ON s.id = a.source_id
+     WHERE a.maintenance_id = ? AND a.status <> 'resolved'`,
+    [windowId],
+  );
+  let raised = 0;
+  for (const alert of held) {
+    // Another window may still cover it; then that window's end handles it.
+    const still = await maintenanceFor({ sourceId: alert.source_id, teamId: alert.team_id });
+    if (still) {
+      await db.run(`UPDATE alerts SET maintenance_id = ? WHERE id = ?`, [still.windowId, alert.id]);
+      continue;
+    }
+    if (alert.ticket_id) {
+      await db.run(`UPDATE alerts SET maintenance_id = NULL, suppressed = 0 WHERE id = ?`, [alert.id]);
+      const ticket = await db.get<{ status: string; team_id: string | null }>(`SELECT status, team_id FROM tickets WHERE id = ?`, [alert.ticket_id]);
+      if (!ticket || TERMINAL_STATUSES.includes(ticket.status as (typeof TERMINAL_STATUSES)[number])) continue;
+      const teamPolicy = ticket.team_id
+        ? (await db.get<{ escalation_policy_id: string | null }>(`SELECT escalation_policy_id FROM teams WHERE id = ?`, [ticket.team_id]))?.escalation_policy_id
+        : null;
+      const policyId = alert.escalation_policy_id || teamPolicy;
+      await addSystemComment(alert.ticket_id, `Maintenance has ended and "${alert.title}" is still firing.${policyId ? ' Paging now.' : ''}`);
+      if (policyId && severityPages(alert.severity)) {
+        await triggerPage(alert.ticket_id, {
+          policyId,
+          severity: alert.severity,
+          reason: `"${alert.source_name}" was still alerting ("${alert.title}") when its maintenance window ended.`,
+        });
+      }
+      raised += 1;
+      continue;
+    }
+    await db.run(`UPDATE alerts SET status = 'resolved', resolved_at = ?, maintenance_id = NULL WHERE id = ?`, [new Date().toISOString(), alert.id]);
+    await ingestSignal({
+      sourceType: alert.source_type,
+      sourceId: alert.source_id,
+      sourceName: alert.source_name,
+      dedupKey: alert.dedup_key,
+      title: alert.title,
+      summary: `${alert.summary}\n\nStill firing when its maintenance window ended.`.trim(),
+      severity: alert.severity,
+      status: 'firing',
+      teamId: alert.team_id,
+      escalationPolicyId: alert.escalation_policy_id,
+      payload: parseJson<unknown>(alert.payload, undefined),
+    });
+    raised += 1;
+  }
+  return raised;
 }

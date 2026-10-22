@@ -10,6 +10,9 @@ import type {
   BackupRun,
   DatabaseHealth,
   EscalationPolicy,
+  MaintenanceEffect,
+  MaintenanceInput,
+  MaintenanceOccurrence,
   MaintenanceWindow,
   Monitor,
   MonitorCheck,
@@ -22,6 +25,7 @@ import type {
   StatusPage,
   StatusPageView,
   TelephonySettings,
+  TeamsCallSettings,
 } from '@shared/ops';
 
 /**
@@ -51,6 +55,8 @@ const del = (path: string) => request<void>('DELETE', path);
 
 export interface OpsOverview {
   monitors: { total: number; down: number; up: number };
+  /** Monitors a maintenance window covers right now. */
+  inMaintenance: Array<{ monitorId: string; name: string; state: Monitor['state']; windowId: string; title: string; endsAt: string; effect: MaintenanceEffect }>;
   openAlerts: Alert[];
   activePages: Page[];
   myPages: Page[];
@@ -125,8 +131,13 @@ export const opsApi = {
   },
 
   maintenance: {
-    list: () => get<{ windows: MaintenanceWindow[] }>('/maintenance'),
-    create: (input: { title: string; startsAt: string; endsAt: string; monitorIds: string[] }) => post<{ windows: MaintenanceWindow[] }>('/maintenance', input),
+    list: () => get<{ windows: MaintenanceWindow[]; occurrences: MaintenanceOccurrence[] }>('/maintenance'),
+    active: () => get<{ active: Array<MaintenanceOccurrence & { scopeSummary: string }> }>('/maintenance/active'),
+    create: (input: MaintenanceInput) => post<{ window: MaintenanceWindow }>('/maintenance', input),
+    update: (id: string, input: MaintenanceInput) => put<{ window: MaintenanceWindow }>(`/maintenance/${id}`, input),
+    cancel: (id: string, occurrence?: string) => post<{ window: MaintenanceWindow }>(`/maintenance/${id}/cancel`, { occurrence }),
+    end: (id: string) => post<{ window: MaintenanceWindow }>(`/maintenance/${id}/end`),
+    extend: (id: string, by: { minutes?: number; until?: string }) => post<{ window: MaintenanceWindow }>(`/maintenance/${id}/extend`, by),
     remove: (id: string) => del(`/maintenance/${id}`),
   },
 
@@ -163,6 +174,33 @@ export const opsApi = {
     rules: () => get<{ rules: NotificationRule[]; isDefault: boolean }>('/me/rules'),
     saveRules: (rules: Array<Omit<NotificationRule, 'id'>>) => put<{ rules: NotificationRule[]; isDefault: boolean }>('/me/rules', { rules }),
     testPage: () => post<{ attempts: NotificationAttempt[] }>('/me/test-page'),
+    push: () => get<{ devices: number }>('/me/push'),
+    testPush: () => post<{ result: { status: string; detail: string } }>('/me/test-push'),
+  },
+
+  push: {
+    key: () => get<{ publicKey: string }>('/push/key'),
+    subscribe: (subscription: PushSubscriptionJSON) => post<{ devices: number }>('/push/subscribe', subscription),
+    unsubscribe: (endpoint: string) => request<{ devices: number }>('DELETE', '/push/subscribe', { endpoint }),
+  },
+
+  teamsCalls: {
+    get: () => get<{ settings: TeamsCallSettings }>('/teams-calls'),
+    setEnabled: (enabled: boolean) => put<{ settings: TeamsCallSettings }>('/teams-calls', { enabled }),
+    /** Raw WAV bytes: the server checks the format Teams needs. */
+    uploadPrompt: async (file: File) => {
+      const response = await fetch('/api/ops/teams-calls/prompt', {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'audio/wav' },
+        body: file,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new ApiError(response.status, payload?.error ?? `Upload failed (${response.status})`, payload?.details);
+      return payload as { settings: TeamsCallSettings };
+    },
+    removePrompt: () => request<{ settings: TeamsCallSettings }>('DELETE', '/teams-calls/prompt'),
+    test: () => post<{ result: { status: string; detail: string } }>('/teams-calls/test'),
   },
 
   telephony: {

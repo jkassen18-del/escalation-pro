@@ -24,11 +24,13 @@ import {
   Ticket as TicketIcon,
   TriangleAlert,
   Users as UsersIcon,
+  Wrench,
   X,
   Zap,
 } from 'lucide-react';
 import { BrandMark } from '@/components/BrandMark';
 import { QuickTicketMenu } from '@/components/quick/QuickTicketMenu';
+import { MaintenanceBanner } from '@/components/ops/MaintenanceShared';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { relativeTime } from '@/lib/format';
@@ -58,6 +60,7 @@ const PRIMARY_NAV: NavItem[] = [
 const OPERATIONS_NAV: NavItem[] = [
   { to: '/operations', label: 'Command centre', icon: Siren },
   { to: '/monitors', label: 'Monitoring', icon: Activity },
+  { to: '/maintenance', label: 'Maintenance', icon: Wrench },
   { to: '/oncall', label: 'On-call', icon: PhoneCall },
   { to: '/status-pages', label: 'Status pages', icon: Globe },
   { to: '/databases', label: 'Databases', icon: Database, permission: 'backups.manage' },
@@ -318,6 +321,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </Button>
           )}
         </header>
+        <MaintenanceBanner />
 
         <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
       </div>

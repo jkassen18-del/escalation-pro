@@ -28,6 +28,8 @@ export interface ManifestOptions {
   organizationName?: string;
   teams?: Team[];
   accentColor?: string;
+  /** Lets the bot place calls: on when Teams calls are turned on for paging. */
+  supportsCalling?: boolean;
 }
 
 export class ManifestError extends Error {}
@@ -99,6 +101,8 @@ export function buildTeamsManifest(options: ManifestOptions): Record<string, unk
         scopes: ['team', 'personal', 'groupChat'],
         supportsFiles: false,
         isNotificationOnly: false,
+        // Without it Teams refuses calls from the bot, even with the Graph permissions.
+        ...(options.supportsCalling ? { supportsCalling: true } : {}),
         ...(commands.length > 0
           ? { commandLists: [{ scopes: ['team', 'personal', 'groupChat'], commands }] }
           : {}),

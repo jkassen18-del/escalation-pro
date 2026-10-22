@@ -250,6 +250,21 @@ test('the manifest carries the app id in both places it is read from', () => {
   assert.equal(manifest.bots[0].botId, APP_ID);
 });
 
+test('the bot may place calls only when Teams calls are turned on', () => {
+  const read = (supportsCalling?: boolean) =>
+    JSON.parse(
+      readZip(
+        buildTeamsAppPackage({ appId: APP_ID, appUrl: 'https://tickets.example.internal', teams: DEPARTMENTS, supportsCalling }).zip,
+      )
+        .get('manifest.json')!
+        .toString('utf8'),
+    );
+  // Teams refuses a call from a bot whose manifest does not declare it.
+  assert.equal(read(true).bots[0].supportsCalling, true);
+  assert.equal(read(false).bots[0].supportsCalling, undefined);
+  assert.equal(read().bots[0].supportsCalling, undefined);
+});
+
 test('the manifest names the host, which Teams checks links against', () => {
   const files = readZip(build().zip);
   const manifest = JSON.parse(files.get('manifest.json')!.toString('utf8'));

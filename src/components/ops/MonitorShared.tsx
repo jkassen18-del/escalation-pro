@@ -93,9 +93,23 @@ export function UptimeBars({ days, className }: { days: MonitorDay[]; className?
       {Array.from({ length: 90 }, (_, i) => {
         const date = new Date(today - (89 - i) * 86_400_000).toISOString().slice(0, 10);
         const day = byDay.get(date);
-        const ratio = day && day.total ? day.failures / day.total : null;
-        const color = ratio === null ? 'var(--surface-3)' : ratio === 0 ? '#16a34a' : ratio < 0.05 ? '#d97706' : '#dc2626';
-        const title = day && day.total ? `${date}: ${(((day.total - day.failures) / day.total) * 100).toFixed(2)}% up` : `${date}: no data`;
+        // Failed checks during planned maintenance count neither way.
+        const counted = day ? day.total - (day.maintenance ?? 0) : 0;
+        const ratio = day && counted > 0 ? day.failures / counted : null;
+        const color =
+          day && day.maintenance && !day.failures
+            ? '#2563eb'
+            : ratio === null
+              ? 'var(--surface-3)'
+              : ratio === 0
+                ? '#16a34a'
+                : ratio < 0.05
+                  ? '#d97706'
+                  : '#dc2626';
+        const title =
+          day && day.total
+            ? `${date}: ${counted > 0 ? `${(((counted - day.failures) / counted) * 100).toFixed(2)}% up` : 'maintenance'}${day.maintenance ? ', planned maintenance' : ''}`
+            : `${date}: no data`;
         return <span key={date} className="min-w-px flex-1 rounded-[1px]" style={{ background: color }} title={title} />;
       })}
     </div>

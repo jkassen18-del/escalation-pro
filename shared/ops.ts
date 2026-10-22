@@ -82,6 +82,8 @@ export interface Monitor {
   heartbeatUrl: string | null;
   /** Percentage over the last 24 hours, or null with no checks yet. */
   uptime24h: number | null;
+  /** The maintenance window covering this monitor right now, if any. */
+  maintenance: { windowId: string; title: string; endsAt: string; effect: MaintenanceEffect } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -98,6 +100,8 @@ export interface MonitorDay {
   day: string;
   total: number;
   failures: number;
+  /** Failed checks during maintenance: neither up nor an outage. */
+  maintenance?: number;
 }
 
 /* --------------------------------- Alerts -------------------------------- */
@@ -179,15 +183,100 @@ export interface Alert {
   resolvedAt: string | null;
 }
 
+export const MAINTENANCE_EFFECTS = ['pause_paging', 'pause_alerting'] as const;
+/**
+ * pause_paging: alerts are recorded and open tickets as usual, but nobody is paged.
+ * pause_alerting: alerts are recorded as suppressed; no tickets, no pages.
+ */
+export type MaintenanceEffect = (typeof MAINTENANCE_EFFECTS)[number];
+
+export const MAINTENANCE_EFFECT_LABELS: Record<MaintenanceEffect, string> = {
+  pause_paging: 'Pause paging (still open tickets)',
+  pause_alerting: 'Pause alerting (record only, no tickets)',
+};
+
+/** What a window covers. Any combination; `everything` overrides the rest. */
+export interface MaintenanceScope {
+  everything?: boolean;
+  monitorIds?: string[];
+  /** Alert sources (webhooks). */
+  sourceIds?: string[];
+  /** Every monitor and alert source belonging to these teams. */
+  teamIds?: string[];
+  /** Status page components: the monitor behind each, as shown on that page. */
+  components?: Array<{ statusPageId: string; monitorId: string }>;
+}
+
+export const MAINTENANCE_RECURRENCE_KINDS = ['none', 'daily', 'weekly', 'monthly'] as const;
+export type MaintenanceRecurrenceKind = (typeof MAINTENANCE_RECURRENCE_KINDS)[number];
+
+/** A repeating window, written in its own time zone ("every Sunday 22:00 SAST for 3 hours"). */
+export interface MaintenanceRecurrence {
+  kind: MaintenanceRecurrenceKind;
+  /** Weekly: 0 = Sunday ... 6 = Saturday. */
+  daysOfWeek?: number[];
+  /** Monthly: 1-31; a shorter month uses its last day. */
+  dayOfMonth?: number;
+  /** Wall-clock start, HH:MM. */
+  startTime?: string;
+  durationMins?: number;
+  /** First date the series can occur on, YYYY-MM-DD. */
+  startDate?: string;
+  /** Last date it can start on, YYYY-MM-DD; null runs indefinitely. */
+  until?: string | null;
+}
+
+export type MaintenanceState = 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
+
+/** One concrete period of a window. A one-off window has exactly one. */
+export interface MaintenanceOccurrence {
+  windowId: string;
+  /** Stable id of the occurrence: its originally scheduled start. */
+  key: string;
+  startsAt: string;
+  endsAt: string;
+  title: string;
+  effect: MaintenanceEffect;
+}
+
 export interface MaintenanceWindow {
   id: string;
   title: string;
+  description: string | null;
+  scope: MaintenanceScope;
+  /** Plain-language summary of the scope, e.g. "3 monitors, team Web". */
+  scopeSummary: string;
+  effect: MaintenanceEffect;
+  recurrence: MaintenanceRecurrence;
+  timeZone: string;
+  /** One-off: the window. Recurring: when the series starts and (if set) stops. */
   startsAt: string;
   endsAt: string;
-  /** Empty means every monitor and alert source. */
+  notifyBeforeMins: number;
+  publishToStatusPages: boolean;
+  state: MaintenanceState;
+  currentOccurrence: MaintenanceOccurrence | null;
+  nextOccurrence: MaintenanceOccurrence | null;
+  cancelledAt: string | null;
+  /** Legacy field, the scope's monitor ids. */
   monitorIds: string[];
   createdByName: string | null;
   createdAt: string;
+  updatedAt: string | null;
+}
+
+export interface MaintenanceInput {
+  title: string;
+  description?: string | null;
+  scope: MaintenanceScope;
+  effect: MaintenanceEffect;
+  recurrence: MaintenanceRecurrence;
+  timeZone: string;
+  /** One-off only. */
+  startsAt?: string;
+  endsAt?: string;
+  notifyBeforeMins?: number;
+  publishToStatusPages?: boolean;
 }
 
 /* ----------------------------- Alert routing ----------------------------- */
@@ -343,16 +432,25 @@ export interface EscalationPolicy {
   updatedAt: string;
 }
 
-export const NOTIFY_CHANNELS = ['in_app', 'email', 'sms', 'voice', 'chat'] as const;
+export const NOTIFY_CHANNELS = ['in_app', 'push', 'email', 'sms', 'voice', 'teams_call', 'discord', 'chat'] as const;
 export type NotifyChannel = (typeof NOTIFY_CHANNELS)[number];
 
 export const NOTIFY_CHANNEL_LABELS: Record<NotifyChannel, string> = {
   in_app: 'In-app / browser',
+  push: 'Phone push',
   email: 'Email',
   sms: 'SMS',
   voice: 'Phone call',
+  teams_call: 'Teams call',
+  discord: 'Discord DM',
   chat: 'Slack / Teams',
 };
+
+/** Channels loud enough to wake someone: high urgency must include one. */
+export const WAKE_UP_CHANNELS: readonly NotifyChannel[] = ['sms', 'voice', 'teams_call', 'discord'];
+
+/** Channels that ring, and repeat every voiceRepeatMins until answered. */
+export const CALL_CHANNELS: readonly NotifyChannel[] = ['voice', 'teams_call'];
 
 export type Urgency = 'high' | 'low';
 
@@ -372,7 +470,7 @@ export interface NotificationAttempt {
   userName: string | null;
   channel: NotifyChannel;
   provider: string;
-  status: 'sent' | 'simulated' | 'failed' | 'skipped' | 'answered' | 'acknowledged';
+  status: 'sent' | 'simulated' | 'failed' | 'skipped' | 'answered' | 'missed' | 'acknowledged';
   level: number;
   cycle: number;
   seq: number;
@@ -417,6 +515,18 @@ export interface TelephonySettings {
   voiceMaxCalls: number;
 }
 
+/** Ringing people in Microsoft Teams through the Teams bot. */
+export interface TeamsCallSettings {
+  enabled: boolean;
+  /** Whether a WAV prompt is uploaded; with one, callers press 1 to acknowledge. */
+  hasPrompt: boolean;
+  promptUpdatedAt: string | null;
+  /** Where Microsoft must be able to post call events. */
+  callingWebhookUrl: string | null;
+  /** True when the Teams integration is in bot mode with an app id, secret and tenant. */
+  botConfigured: boolean;
+}
+
 /* ------------------------------ Status pages ----------------------------- */
 
 export interface StatusComponent {
@@ -427,7 +537,8 @@ export interface StatusComponent {
 export type ComponentStatus = 'operational' | 'degraded' | 'outage' | 'maintenance' | 'unknown';
 
 export const STATUS_UPDATE_STATES = ['investigating', 'identified', 'monitoring', 'resolved'] as const;
-export type StatusUpdateState = (typeof STATUS_UPDATE_STATES)[number];
+/** 'maintenance' is posted by maintenance windows themselves, not chosen by people. */
+export type StatusUpdateState = (typeof STATUS_UPDATE_STATES)[number] | 'maintenance';
 
 export interface StatusUpdate {
   id: string;
@@ -471,6 +582,8 @@ export interface StatusPageView {
   page: StatusPage;
   overall: ComponentStatus;
   components: Array<StatusComponent & { status: ComponentStatus; uptime90d: number | null; days: MonitorDay[] }>;
+  /** Published maintenance touching this page: in progress now, and starting within 7 days. */
+  maintenance?: Array<{ title: string; description: string | null; startsAt: string; endsAt: string; timeZone: string; inProgress: boolean; components: string[] }>;
   updates: StatusUpdate[];
   generatedAt: string;
 }

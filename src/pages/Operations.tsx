@@ -5,6 +5,7 @@ import { ApiError } from '@/lib/api';
 import { opsApi, type OpsOverview } from '@/lib/ops-api';
 import { relativeTime, shortDateTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { MaintenanceBadge } from '@/components/ops/MaintenanceShared';
 import { useToast } from '@/components/ui/Toast';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/Button';
@@ -158,7 +159,7 @@ export function OperationsPage() {
                               <p className="font-medium">{alert.title}</p>
                               <p className="text-2xs text-subtle">
                                 {alert.sourceName}
-                                {alert.suppressed ? ' · maintenance' : ''}
+                                {alert.suppressed ? ' · not paging' : ''}
                               </p>
                             </td>
                             <td className="px-2 py-2 tabular-nums">{alert.count}</td>
@@ -180,6 +181,28 @@ export function OperationsPage() {
                 )}
               </section>
 
+              <div className="space-y-4">
+              {overview.inMaintenance.length > 0 && (
+                <section className="rounded-md border surface">
+                  <div className="flex items-center justify-between border-b px-4 py-2.5">
+                    <h2 className="text-xs font-semibold">In maintenance</h2>
+                    <Link to="/maintenance" className="text-2xs text-[var(--accent)] hover:underline">
+                      Maintenance
+                    </Link>
+                  </div>
+                  <ul className="divide-y">
+                    {overview.inMaintenance.map((entry) => (
+                      <li key={entry.monitorId} className="flex items-center justify-between gap-2 px-4 py-2">
+                        <span className="min-w-0">
+                          <span className="block truncate text-xs font-medium">{entry.name}</span>
+                          <span className="block truncate text-2xs text-subtle">{entry.title}</span>
+                        </span>
+                        <MaintenanceBadge maintenance={entry} />
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
               <section className="rounded-md border surface">
                 <div className="flex items-center justify-between border-b px-4 py-2.5">
                   <h2 className="text-xs font-semibold">On call now</h2>
@@ -209,6 +232,7 @@ export function OperationsPage() {
                   </ul>
                 )}
               </section>
+              </div>
             </div>
           </>
         )}
@@ -254,7 +278,8 @@ const STEPS: Array<{ to: string; title: string; detail: string }> = [
   { to: '/monitors', title: 'Watch something', detail: 'Add an HTTP, TCP, SSL or heartbeat monitor, or an alert source for AWS, Azure, Grafana or Jenkins.' },
   { to: '/oncall', title: 'Set up on-call', detail: 'Create a rotation and an escalation policy, then make it your team’s default.' },
   { to: '/profile', title: 'Make sure you can be woken', detail: 'Add your mobile number and notification rules, then send yourself a test page.' },
-  { to: '/integrations', title: 'Connect your chat tools', detail: 'Slack, Microsoft Teams and Linear mirror every incident in both directions.' },
+  { to: '/integrations?setup=slack', title: 'Connect your chat tools', detail: 'Add InfraTicket to Slack in a few clicks; Microsoft Teams, Discord and Linear are in the same catalogue.' },
+  { to: '/integrations?setup=source:generic', title: 'Send alerts from your tools', detail: 'AWS, Azure, Grafana, Jenkins, Cloudflare or any webhook: create a source and paste its URL.' },
   { to: '/status-pages', title: 'Publish a status page', detail: 'Internal or public, fed by your monitors.' },
   { to: '/databases', title: 'Back up a database', detail: 'Scheduled, encrypted backups of Postgres, MySQL, MongoDB, SQLite or SQL Server.' },
 ];

@@ -26,6 +26,10 @@ import { testSlack } from '../integrations/slack.ts';
 import { detectFormat, testMsTeams } from '../integrations/msteams.ts';
 import { listLinearTeams, testLinear } from '../integrations/linear.ts';
 import { testEmail } from '../integrations/email.ts';
+import { discordInviteUrl, listDiscordChannels, testDiscord, type DiscordConfig } from '../integrations/discord.ts';
+import { discordGatewayStatus, refreshDiscordGateway } from '../integrations/discord-gateway.ts';
+import { setTeamRoute } from '../repositories/team-routing.ts';
+import { db } from '../db/index.ts';
 import {
   INTEGRATION_PROVIDERS,
   type IntegrationProvider,
@@ -33,6 +37,8 @@ import {
   type Ticket,
 } from '../../shared/types.ts';
 import { buildTeamsAppPackage, ManifestError } from '../integrations/teams-manifest.ts';
+import { catalogueStatus } from '../integrations/catalogue.ts';
+import { integrationSetupRouter } from './integration-setup.ts';
 import { listTeams } from '../repositories/teams.ts';
 import { getSettings } from '../repositories/settings.ts';
 import type { MsTeamsConfig } from '../integrations/msteams.ts';
@@ -40,6 +46,9 @@ import type { MsTeamsConfig } from '../integrations/msteams.ts';
 export const integrationsRouter: Router = Router();
 
 integrationsRouter.use(requireAuth, requirePermission('integrations.manage'));
+
+// Guided one-click setup (Slack app manifest + OAuth, Microsoft admin consent).
+integrationsRouter.use(integrationSetupRouter);
 
 /** True once the provider has the minimum fields it needs to send anything. */
 function isConfigured(provider: IntegrationProvider, config: Record<string, unknown>): boolean {
@@ -54,6 +63,8 @@ function isConfigured(provider: IntegrationProvider, config: Record<string, unkn
       return Boolean(config.apiKey && config.teamId);
     case 'email':
       return Boolean(config.host && (config.fromEmail || config.username));
+    case 'discord':
+      return Boolean(config.applicationId && config.botToken);
     default:
       return false;
   }
@@ -78,6 +89,15 @@ integrationsRouter.get(
   asyncRoute(async (_req, res) => {
     const integrations = await Promise.all(INTEGRATION_PROVIDERS.map(summarise));
     res.json({ integrations, defaultEvents: DEFAULT_EVENTS });
+  }),
+);
+
+/** Status of every tile on the Integrations catalogue. */
+integrationsRouter.get(
+  '/catalogue',
+  asyncRoute(async (_req, res) => {
+    const summaries = await Promise.all(INTEGRATION_PROVIDERS.map(summarise));
+    res.json({ status: await catalogueStatus(summaries) });
   }),
 );
 
@@ -276,6 +296,9 @@ integrationsRouter.patch(
       ip: clientIp(req),
     });
 
+    // A new token or a switch on/off takes effect now, not at the next supervisor pass.
+    if (provider === 'discord') void refreshDiscordGateway();
+
     res.json({ integration: await summarise(provider) });
   }),
 );
@@ -306,6 +329,9 @@ integrationsRouter.post(
       case 'email':
         result = await testEmail(record, optionalString(req.body?.recipient, 160) ?? undefined);
         break;
+      case 'discord':
+        result = await testDiscord(record);
+        break;
     }
 
     await setIntegrationStatus(provider, result.ok ? 'ok' : 'error', result.ok ? null : result.message, {
@@ -322,6 +348,63 @@ integrationsRouter.post(
     });
 
     res.json({ ...result, integration: await summarise(provider) });
+  }),
+);
+
+/* --------------------------------- Discord -------------------------------- */
+
+/** Connection state, the invite link, and which department posts to which channel. */
+integrationsRouter.get(
+  '/discord/overview',
+  asyncRoute(async (_req, res) => {
+    const config = (await loadIntegration('discord')).config as DiscordConfig;
+    const routes = await db.all<{ team_id: string; target: string }>(`SELECT team_id, target FROM team_routing WHERE provider = 'discord'`);
+    res.json({
+      gateway: discordGatewayStatus(),
+      inviteUrl: config.applicationId ? discordInviteUrl(config.applicationId) : null,
+      routes: routes.map((row) => ({ teamId: row.team_id, channelId: row.target })),
+    });
+  }),
+);
+
+/** The text channels the bot can see, for the channel pickers. */
+integrationsRouter.get(
+  '/discord/channels',
+  asyncRoute(async (_req, res) => {
+    const config = (await loadIntegration('discord')).config as DiscordConfig;
+    if (!config.botToken) throw badRequest('Save the bot token first.');
+    try {
+      res.json({ channels: await listDiscordChannels(config.botToken) });
+    } catch (error) {
+      throw badRequest(error instanceof Error ? error.message : 'Could not reach Discord.');
+    }
+  }),
+);
+
+/** Department channels: each department's tickets go to its own channel instead of the default. */
+integrationsRouter.put(
+  '/discord/routes',
+  asyncRoute(async (req, res) => {
+    const actor = (req as AuthedRequest).user;
+    const routes = Array.isArray(req.body?.routes) ? (req.body.routes as Array<Record<string, unknown>>) : [];
+    for (const route of routes.slice(0, 200)) {
+      const teamId = optionalString(route.teamId, 60);
+      const channelId = optionalString(route.channelId, 30) ?? '';
+      if (!teamId) continue;
+      if (channelId && !/^\d{15,25}$/.test(channelId)) throw badRequest('Channel IDs are long numbers, e.g. 1234567890123456789.');
+      await setTeamRoute(teamId, 'discord', channelId);
+    }
+    await recordAudit({
+      actorId: actor.id,
+      actorName: actor.name,
+      entityType: 'integration',
+      entityId: 'discord',
+      action: 'discord_routes_updated',
+      summary: 'Updated which Discord channel each department posts to',
+      ip: clientIp(req),
+    });
+    const rows = await db.all<{ team_id: string; target: string }>(`SELECT team_id, target FROM team_routing WHERE provider = 'discord'`);
+    res.json({ routes: rows.map((row) => ({ teamId: row.team_id, channelId: row.target })) });
   }),
 );
 
@@ -392,6 +475,7 @@ integrationsRouter.get(
         botName: config.botName,
         organizationName: settings.organizationName,
         teams: await listTeams(),
+        supportsCalling: (await (await import('../ops/teams-calls.ts')).teamsCallSettings()).enabled,
       });
 
       res.setHeader('Content-Type', 'application/zip');

@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button';
 import { Field, Input, Select } from '@/components/ui/Field';
 import { Badge } from '@/components/ui/Badge';
 import { Spinner } from '@/components/ui/Feedback';
+import { PushSetup } from './PushSetup';
 import { NOTIFY_CHANNELS, NOTIFY_CHANNEL_LABELS, type NotificationAttempt, type NotificationRule, type NotifyChannel, type Urgency } from '@shared/ops';
 
 type DraftRule = Omit<NotificationRule, 'id'> & { key: string };
@@ -17,6 +18,7 @@ const ATTEMPT_COLORS: Record<NotificationAttempt['status'], string> = {
   sent: 'var(--status-resolved)',
   simulated: 'var(--status-open)',
   answered: 'var(--status-resolved)',
+  missed: 'var(--priority-high)',
   acknowledged: 'var(--status-resolved)',
   skipped: 'var(--status-closed)',
   failed: 'var(--priority-urgent)',
@@ -105,6 +107,8 @@ export function RulesEditor() {
       </div>
 
       <div className="space-y-4 px-4 py-4">
+        <PushSetup />
+
         <div className="space-y-2">
           <Field label="Mobile number for SMS and calls" hint="International format, e.g. +27 82 123 4567.">
             <div className="flex gap-2">
@@ -193,9 +197,10 @@ export function RulesEditor() {
           </Button>
         </div>
         <p className="text-xs text-subtle">
-          Phone calls repeat until you acknowledge: press 1 on the call, reply ACK to the SMS, or use the button in the app. Until
-          an administrator connects Twilio under <Link to="/oncall" className="text-[var(--accent)] hover:underline">On-call</Link>,
-          SMS and calls run in sandbox mode and are only simulated.
+          Phone and Teams calls repeat until you acknowledge: press 1 on the call, reply ACK to the SMS, or use the button in the
+          app or on the push notification. "Teams call" rings you in Microsoft Teams once an administrator turns it on. Until an
+          administrator connects Twilio under <Link to="/oncall" className="text-[var(--accent)] hover:underline">On-call</Link>,
+          SMS and phone calls run in sandbox mode and are only simulated.
         </p>
 
         {attempts && (

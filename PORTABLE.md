@@ -60,6 +60,12 @@ on-call schedules and escalation, status pages and backups.
   and set `BACKUP_TOOLS_DIR` to it. `pg_dump` must be at least the server's
   major version.
 - **Ping monitors** use Windows' own `ping`.
+- **Phone push notifications** need InfraTicket opened over https or on
+  `localhost`. On the laptop running the exe, `http://localhost:8080` works;
+  from a phone it needs an https address (the tunnel, or the lab server's
+  wildcard certificate). See *Phone push notifications* in OPERATIONS.md.
+- **Teams calls** need the Teams bot, Graph permissions and an https App URL
+  that Microsoft can reach. See *Teams calls* in OPERATIONS.md.
 
 ## Moving a tested workspace
 

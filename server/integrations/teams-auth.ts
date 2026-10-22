@@ -22,6 +22,13 @@ import crypto from 'node:crypto';
  */
 
 const OPENID_CONFIG = 'https://login.botframework.com/v1/.well-known/openidconfiguration';
+/**
+ * Calling notifications (a Teams call the bot placed) are signed by a
+ * different authority than messages, per Microsoft's "Authenticate the
+ * callback" guidance for calls and meetings bots.
+ */
+const CALLING_OPENID_CONFIG = 'https://api.aps.skype.com/v1/.well-known/OpenIdConfiguration';
+const CALLING_ISSUER = 'https://api.botframework.com';
 const TOKEN_ENDPOINT = 'https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token';
 const TOKEN_SCOPE = 'https://api.botframework.com/.default';
 
@@ -38,24 +45,26 @@ interface Jwk {
   e?: string;
 }
 
-let jwksCache: { keys: Jwk[]; fetchedAt: number } | null = null;
+const jwksCache = new Map<string, { keys: Jwk[]; fetchedAt: number }>();
 let tokenCache: { token: string; expiresAt: number; appId: string } | null = null;
 
 /** Exposed so tests can start from a known state. */
 export function resetTeamsAuthCaches(): void {
-  jwksCache = null;
+  jwksCache.clear();
   tokenCache = null;
 }
 
-async function loadKeys(now: number): Promise<Jwk[]> {
-  if (jwksCache && now - jwksCache.fetchedAt < JWKS_TTL_MS) return jwksCache.keys;
+async function loadKeys(now: number, configUrl = OPENID_CONFIG): Promise<Jwk[]> {
+  const cached = jwksCache.get(configUrl);
+  if (cached && now - cached.fetchedAt < JWKS_TTL_MS) return cached.keys;
 
-  const config = (await (await fetch(OPENID_CONFIG)).json()) as { jwks_uri?: string };
+  const config = (await (await fetch(configUrl)).json()) as { jwks_uri?: string };
   if (!config.jwks_uri) throw new Error('Microsoft did not advertise a JWKS endpoint');
 
   const jwks = (await (await fetch(config.jwks_uri)).json()) as { keys?: Jwk[] };
-  jwksCache = { keys: jwks.keys ?? [], fetchedAt: now };
-  return jwksCache.keys;
+  const entry = { keys: jwks.keys ?? [], fetchedAt: now };
+  jwksCache.set(configUrl, entry);
+  return entry.keys;
 }
 
 function decodeSegment(segment: string): Record<string, unknown> {
@@ -77,6 +86,22 @@ export async function verifyTeamsRequest(
   appId: string,
   serviceUrl: string | undefined,
   now = Date.now(),
+): Promise<TeamsVerifyResult> {
+  return verifyMicrosoftJwt(authorization, appId, { serviceUrl, now });
+}
+
+/**
+ * Checks the JWT on a calling notification: signed by the calling service's
+ * keys, issued by the Bot Framework, and addressed to this bot.
+ */
+export async function verifyCallingRequest(authorization: string | undefined, appId: string, now = Date.now()): Promise<TeamsVerifyResult> {
+  return verifyMicrosoftJwt(authorization, appId, { now, configUrl: CALLING_OPENID_CONFIG, issuer: CALLING_ISSUER });
+}
+
+async function verifyMicrosoftJwt(
+  authorization: string | undefined,
+  appId: string,
+  { serviceUrl, now = Date.now(), configUrl = OPENID_CONFIG, issuer }: { serviceUrl?: string; now?: number; configUrl?: string; issuer?: string },
 ): Promise<TeamsVerifyResult> {
   if (!appId) return { ok: false, reason: 'No Microsoft app id configured' };
 
@@ -100,6 +125,7 @@ export async function verifyTeamsRequest(
   // The audience is this bot. A token minted for another bot is signed by the
   // same authority and would otherwise pass.
   if (claims.aud !== appId) return { ok: false, reason: 'Token was not issued for this bot' };
+  if (issuer && claims.iss !== issuer) return { ok: false, reason: 'Token was not issued by Microsoft' };
 
   const exp = Number(claims.exp ?? 0) * 1000;
   const nbf = Number(claims.nbf ?? 0) * 1000;
@@ -112,7 +138,7 @@ export async function verifyTeamsRequest(
 
   let keys: Jwk[];
   try {
-    keys = await loadKeys(now);
+    keys = await loadKeys(now, configUrl);
   } catch (error) {
     return { ok: false, reason: `Could not load Microsoft's signing keys: ${(error as Error).message}` };
   }

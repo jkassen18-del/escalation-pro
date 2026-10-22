@@ -34,6 +34,7 @@ const UPDATE_COLORS: Record<StatusUpdateState, string> = {
   identified: 'var(--priority-high)',
   monitoring: '#2563eb',
   resolved: '#16a34a',
+  maintenance: '#2563eb',
 };
 
 export function StatusPagesPage() {

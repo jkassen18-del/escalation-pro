@@ -14,6 +14,7 @@ const ATTEMPT_COLORS: Record<NotificationAttempt['status'], string> = {
   failed: 'var(--priority-urgent)',
   skipped: 'var(--status-closed)',
   answered: 'var(--status-progress)',
+  missed: 'var(--priority-high)',
   acknowledged: 'var(--status-resolved)',
 };
 

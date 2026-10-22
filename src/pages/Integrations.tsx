@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, CircleAlert, CircleDashed, Download, ExternalLink, RefreshCw } from 'lucide-react';
 import { ProviderIcon } from '@/components/BrandIcons';
-import { DataSourcePanel } from '@/components/DataSourcePanel';
-import { HttpIntegrationsPanel } from '@/components/HttpIntegrationsPanel';
+import { IntegrationCatalogue } from '@/components/integrations/IntegrationCatalogue';
+import { setupApi } from '@/lib/integrations-setup-api';
 import { LinearTeamMap } from '@/components/LinearTeamMap';
 import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -12,7 +12,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Checkbox, Field, Input, Select } from '@/components/ui/Field';
 import { ErrorPane, LoadingPane } from '@/components/ui/Feedback';
-import type { IntegrationProvider, IntegrationSummary } from '@shared/types';
+import type { CatalogueStatus, IntegrationProvider, IntegrationSummary } from '@shared/types';
 import { useDocumentTitle } from '@/state/branding';
 
 const PROVIDER_META: Record<
@@ -37,6 +37,12 @@ const PROVIDER_META: Record<
     docsUrl: 'https://linear.app/settings/api',
     docsLabel: 'Create a Linear API key',
   },
+  discord: {
+    name: 'Discord',
+    blurb: 'Raise tickets from Discord and follow them in a channel.',
+    docsUrl: 'https://discord.com/developers/applications',
+    docsLabel: 'Discord developer portal',
+  },
   email: {
     name: 'Email (SMTP)',
     blurb: 'Email assignees, requesters, and watchers whenever a ticket they follow changes.',
@@ -58,19 +64,23 @@ export function IntegrationsPage() {
   useDocumentTitle('Integrations');
   const toast = useToast();
   const [integrations, setIntegrations] = useState<IntegrationSummary[]>([]);
+  const [status, setStatus] = useState<Record<string, CatalogueStatus>>({});
   const [deliveries, setDeliveries] = useState<Awaited<ReturnType<typeof api.integrations.deliveries>>['deliveries']>([]);
+  const [tab, setTab] = useState<'catalogue' | 'deliveries'>('catalogue');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [integrationResult, deliveryResult] = await Promise.all([
+      const [integrationResult, deliveryResult, catalogue] = await Promise.all([
         api.integrations.list(),
         api.integrations.deliveries(),
+        setupApi.catalogue(),
       ]);
       setIntegrations(integrationResult.integrations);
       setDeliveries(deliveryResult.deliveries);
+      setStatus(catalogue.status);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'Could not load integrations.');
     } finally {
@@ -85,39 +95,75 @@ export function IntegrationsPage() {
   if (loading) return <LoadingPane label="Loading integrations" />;
   if (error) return <ErrorPane message={error} retry={load} />;
 
+  const failed = deliveries.filter((d) => !d.ok).length;
+
   return (
     <div>
       <PageHeader
+        className="pb-0"
         title="Integrations"
-        description="Connect the tools your team already lives in. Each one can be tested against the real service before you rely on it."
-      />
+        description="Pick a tool and follow the steps. Each one is tested against the real service before you rely on it, and none needs a paid plan."
+      >
+        <div className="mt-3 flex gap-4 text-xs" role="tablist">
+          {(
+            [
+              ['catalogue', 'Catalogue'],
+              ['deliveries', `Recent deliveries${failed ? ` · ${failed} failed` : ''}`],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={tab === id}
+              onClick={() => setTab(id)}
+              className={cn(
+                '-mb-px border-b-2 pb-2 font-medium transition-colors',
+                tab === id ? 'border-[var(--fg)] text-[var(--fg)]' : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]',
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </PageHeader>
 
       <div className="space-y-4 p-4 sm:p-6">
-        {integrations.map((integration) => (
-          <IntegrationCard
-            key={integration.provider}
-            integration={integration}
-            onChanged={load}
-            onToast={toast}
+        {tab === 'catalogue' ? (
+          <IntegrationCatalogue
+            status={status}
+            onChanged={() => void load()}
+            renderCard={(provider) => {
+              const integration = integrations.find((item) => item.provider === provider);
+              return integration ? <IntegrationCard integration={integration} onChanged={load} onToast={toast} embedded /> : null;
+            }}
           />
-        ))}
+        ) : (
+          <DeliveriesTable deliveries={deliveries} onRefresh={load} />
+        )}
+      </div>
+    </div>
+  );
+}
 
-        <HttpIntegrationsPanel onChanged={load} />
-
-        <DataSourcePanel />
-
+function DeliveriesTable({
+  deliveries,
+  onRefresh,
+}: {
+  deliveries: Awaited<ReturnType<typeof api.integrations.deliveries>>['deliveries'];
+  onRefresh: () => Promise<void>;
+}) {
+  return (
         <section className="rounded-md border surface">
           <header className="flex items-center justify-between border-b px-4 py-2.5">
             <div>
               <h2 className="text-sm font-semibold">Recent deliveries</h2>
               <p className="text-xs text-muted">The last 60 outbound notifications, newest first.</p>
             </div>
-            <Button variant="ghost" size="sm" onClick={load}>
+            <Button variant="ghost" size="sm" onClick={onRefresh}>
               <RefreshCw className="size-3.5" />
               Refresh
             </Button>
           </header>
-
           {deliveries.length === 0 ? (
             <p className="px-4 py-8 text-center text-xs text-subtle">
               Nothing has been sent yet. Deliveries appear here once a ticket event fires.
@@ -167,26 +213,27 @@ export function IntegrationsPage() {
             </div>
           )}
         </section>
-      </div>
-    </div>
   );
 }
 
-function IntegrationCard({
+export function IntegrationCard({
   integration,
   onChanged,
   onToast,
+  embedded = false,
 }: {
   integration: IntegrationSummary;
   onChanged: () => Promise<void>;
   onToast: ReturnType<typeof useToast>;
+  /** Inside a setup drawer: open from the start. */
+  embedded?: boolean;
 }) {
   const meta = PROVIDER_META[integration.provider];
   const [config, setConfig] = useState<Record<string, unknown>>(integration.config);
   const [events, setEvents] = useState<Record<string, boolean>>({ ...integration.events });
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [expanded, setExpanded] = useState(!integration.configured);
+  const [expanded, setExpanded] = useState(embedded || !integration.configured);
   const [linearTeams, setLinearTeams] = useState<Array<{ id: string; key: string; name: string }>>([]);
 
   useEffect(() => {

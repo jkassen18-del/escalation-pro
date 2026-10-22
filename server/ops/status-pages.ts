@@ -12,7 +12,7 @@ import {
   type StatusUpdate,
   type StatusUpdateState,
 } from '../../shared/ops.ts';
-import { inMaintenance } from './alerts.ts';
+import { occurrencesBetween, scopeCovers, scopeOf } from './maintenance.ts';
 
 /**
  * Status pages, internal and public, as many as you like.
@@ -131,7 +131,9 @@ export async function addStatusUpdate(
   input: { title: string; state: StatusUpdateState; body: string; ticketId: string | null },
   userId: string | null,
 ): Promise<void> {
-  if (!STATUS_UPDATE_STATES.includes(input.state)) throw badRequest('Unknown update state.');
+  if (!STATUS_UPDATE_STATES.includes(input.state as (typeof STATUS_UPDATE_STATES)[number]) && input.state !== 'maintenance') {
+    throw badRequest('Unknown update state.');
+  }
   await db.run(
     `INSERT INTO status_updates (id, status_page_id, ticket_id, title, state, body, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [randomId(), pageId, input.ticketId, input.title.slice(0, 200), input.state, input.body.slice(0, 5000), userId, new Date().toISOString()],
@@ -143,37 +145,69 @@ const RANK: Record<ComponentStatus, number> = { operational: 0, unknown: 1, main
 export async function renderStatusPage(page: StatusPage): Promise<StatusPageView> {
   const ids = page.components.map((c) => c.monitorId);
   const monitors = ids.length
-    ? await db.all<{ id: string; state: string; enabled: number | string; consecutive_failures: number | string }>(
-        `SELECT id, state, enabled, consecutive_failures FROM monitors WHERE id IN (${placeholders(ids.length)})`,
+    ? await db.all<{ id: string; state: string; enabled: number | string; consecutive_failures: number | string; team_id: string | null }>(
+        `SELECT id, state, enabled, consecutive_failures, team_id FROM monitors WHERE id IN (${placeholders(ids.length)})`,
         ids,
       )
     : [];
   const byId = new Map(monitors.map((m) => [m.id, m]));
   const since = new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10);
   const dayRows = ids.length
-    ? await db.all<{ monitor_id: string; day: string; total: number; failures: number }>(
-        `SELECT monitor_id, day, total, failures FROM monitor_daily WHERE day >= ? AND monitor_id IN (${placeholders(ids.length)}) ORDER BY day`,
+    ? await db.all<{ monitor_id: string; day: string; total: number; failures: number; maintenance: number | null }>(
+        `SELECT monitor_id, day, total, failures, maintenance FROM monitor_daily WHERE day >= ? AND monitor_id IN (${placeholders(ids.length)}) ORDER BY day`,
         [since, ...ids],
       )
     : [];
+
+  // Every maintenance occurrence from now to a week out, once; components and
+  // the page's maintenance list are both worked out from it.
+  const now = Date.now();
+  const occurrences = await occurrencesBetween(now, now + 7 * 86_400_000);
+  const teamOf = new Map(monitors.map((m) => [m.id, m.team_id]));
+  const covers = (window: (typeof occurrences)[number]['row'], monitorId: string) =>
+    scopeCovers(scopeOf(window), { sourceId: monitorId, teamId: teamOf.get(monitorId) ?? null });
 
   const components = await Promise.all(
     page.components.map(async (component) => {
       const monitor = byId.get(component.monitorId);
       let status: ComponentStatus = 'unknown';
+      const underMaintenance = occurrences.some(
+        ({ row, occurrence }) => new Date(occurrence.startsAt).getTime() <= now && covers(row, component.monitorId),
+      );
       if (monitor && toBool(monitor.enabled)) {
-        if (await inMaintenance(component.monitorId)) status = 'maintenance';
+        if (underMaintenance) status = 'maintenance';
         else if (monitor.state === 'down') status = 'outage';
         else if (monitor.state === 'up') status = Number(monitor.consecutive_failures) > 0 ? 'degraded' : 'operational';
       }
       const days: MonitorDay[] = dayRows
         .filter((row) => row.monitor_id === component.monitorId)
-        .map((row) => ({ day: row.day, total: Number(row.total), failures: Number(row.failures) }));
-      const total = days.reduce((sum, d) => sum + d.total, 0);
+        .map((row) => ({ day: row.day, total: Number(row.total), failures: Number(row.failures), maintenance: Number(row.maintenance ?? 0) }));
+      // Checks that failed during maintenance count neither way.
+      const total = days.reduce((sum, d) => sum + d.total - (d.maintenance ?? 0), 0);
       const failures = days.reduce((sum, d) => sum + d.failures, 0);
-      return { ...component, status, uptime90d: total ? Math.round(((total - failures) / total) * 10000) / 100 : null, days };
+      return { ...component, status, uptime90d: total > 0 ? Math.round(((total - failures) / total) * 10000) / 100 : null, days };
     }),
   );
+
+  const labelOf = new Map(page.components.map((c) => [c.monitorId, c.label]));
+  const maintenance = occurrences
+    .filter(({ row }) => Number(row.publish ?? 0) === 1)
+    .map(({ row, occurrence }) => {
+      const affected = page.components.filter((c) => covers(row, c.monitorId)).map((c) => labelOf.get(c.monitorId) || 'Service');
+      return {
+        title: row.title,
+        description: row.description,
+        startsAt: occurrence.startsAt,
+        endsAt: occurrence.endsAt,
+        timeZone: row.time_zone || 'Africa/Johannesburg',
+        inProgress: new Date(occurrence.startsAt).getTime() <= now,
+        components: affected,
+        everything: Boolean(scopeOf(row).everything),
+      };
+    })
+    // A window that touches nothing on this page is not this page's news.
+    .filter((m) => m.components.length > 0 || m.everything)
+    .map(({ everything: _everything, ...m }) => m);
 
   const updateRows = await db.all<Record<string, string | null>>(
     `SELECT * FROM status_updates WHERE status_page_id = ? AND created_at >= ? ORDER BY created_at DESC LIMIT 50`,
@@ -189,7 +223,7 @@ export async function renderStatusPage(page: StatusPage): Promise<StatusPageView
   }));
 
   const overall = components.reduce<ComponentStatus>((worst, c) => (RANK[c.status] > RANK[worst] ? c.status : worst), 'operational');
-  return { page, overall: components.length ? overall : 'unknown', components, updates, generatedAt: new Date().toISOString() };
+  return { page, overall: components.length ? overall : 'unknown', components, updates, maintenance, generatedAt: new Date().toISOString() };
 }
 
 /* -------------------------- Server-rendered page -------------------------- */
@@ -213,6 +247,7 @@ const STATE_LABEL: Record<StatusUpdateState, string> = {
   identified: 'Identified',
   monitoring: 'Monitoring',
   resolved: 'Resolved',
+  maintenance: 'Maintenance',
 };
 
 function esc(text: string): string {
@@ -244,6 +279,30 @@ function initials(name: string): string {
   return (words.length > 1 ? words[0][0] + words[1][0] : name.slice(0, 2)).toUpperCase();
 }
 
+/**
+ * "SAST" rather than "GMT+2". Each locale only knows the names of its own
+ * region's zones, so a few are asked in turn before settling for the offset.
+ */
+export function zoneAbbreviation(at: Date, timeZone: string): string {
+  let fallback = timeZone;
+  for (const locale of ['en-ZA', 'en-GB', 'en-US', 'en-AU']) {
+    const name = new Intl.DateTimeFormat(locale, { timeZone, timeZoneName: 'short' }).formatToParts(at).find((p) => p.type === 'timeZoneName')?.value;
+    if (!name) continue;
+    if (!/^(GMT|UTC)[+-−]/.test(name)) return name;
+    fallback = name;
+  }
+  return fallback;
+}
+
+/** "Sat 25 Oct, 22:00 – Sun 26 Oct, 02:00 SAST", in the window's own zone. */
+function formatRange(startIso: string, endIso: string, timeZone: string): string {
+  const day = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone });
+  const time = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone });
+  const zone = zoneAbbreviation(new Date(startIso), timeZone);
+  const sameDay = day(startIso) === day(endIso);
+  return `${day(startIso)}, ${time(startIso)} – ${sameDay ? '' : `${day(endIso)}, `}${time(endIso)} ${zone}`;
+}
+
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + ' UTC';
 }
@@ -268,9 +327,13 @@ export function statusPageHtml(view: StatusPageView, chrome: StatusPageChrome): 
     return Array.from({ length: days }, (_, i) => {
       const date = new Date(today.getTime() - (days - 1 - i) * 86_400_000).toISOString().slice(0, 10);
       const d = byDay.get(date);
-      const ratio = d && d.total ? d.failures / d.total : null;
-      const level = ratio === null ? 'none' : ratio === 0 ? 'ok' : ratio < 0.05 ? 'warn' : 'bad';
-      const label = d && d.total ? `${date} · ${(((d.total - d.failures) / d.total) * 100).toFixed(2)}% up` : `${date} · no data`;
+      const counted = d ? d.total - (d.maintenance ?? 0) : 0;
+      const ratio = d && counted > 0 ? d.failures / counted : null;
+      const level = d && d.maintenance && !d.failures ? 'maint' : ratio === null ? (d && d.total ? 'maint' : 'none') : ratio === 0 ? 'ok' : ratio < 0.05 ? 'warn' : 'bad';
+      const label =
+        d && d.total
+          ? `${date} · ${counted > 0 ? `${(((counted - d.failures) / counted) * 100).toFixed(2)}% up` : 'maintenance'}${d.maintenance ? ' · planned maintenance' : ''}`
+          : `${date} · no data`;
       return `<span class="bar bar-${level}" title="${label}"></span>`;
     }).join('');
   };
@@ -288,7 +351,16 @@ export function statusPageHtml(view: StatusPageView, chrome: StatusPageChrome): 
     )
     .join('');
 
-  const ongoing = view.updates.filter((u) => u.state !== 'resolved');
+  // Maintenance posts its own updates; while it runs, its section says so instead.
+  const ongoing = view.updates.filter((u) => u.state !== 'resolved' && u.state !== 'maintenance');
+  const maintenanceBlock = (m: NonNullable<StatusPageView['maintenance']>[number]) => `<article class="maint">
+      <div class="update-head"><span class="state state-maintenance">${m.inProgress ? 'In progress' : 'Scheduled'}</span><h3>${esc(m.title)}</h3></div>
+      <p class="when">${esc(formatRange(m.startsAt, m.endsAt, m.timeZone))}</p>
+      ${m.description ? `<p>${esc(m.description).replace(/\n/g, '<br>')}</p>` : ''}
+      ${m.components.length ? `<p class="affects">Affects: ${esc(m.components.join(', '))}</p>` : ''}
+    </article>`;
+  const inProgress = (view.maintenance ?? []).filter((m) => m.inProgress);
+  const upcoming = (view.maintenance ?? []).filter((m) => !m.inProgress);
   const update = (u: StatusUpdate) => `<article class="update">
       <div class="update-head"><span class="state state-${u.state}">${STATE_LABEL[u.state]}</span><h3>${esc(u.title)}</h3></div>
       ${u.body ? `<p>${esc(u.body).replace(/\n/g, '<br>')}</p>` : ''}
@@ -346,7 +418,7 @@ ul{list-style:none;margin:0;padding:0;background:var(--surface);border:1px solid
 .pill-operational{color:var(--ok)}.pill-degraded{color:var(--warn)}.pill-outage{color:var(--bad)}.pill-maintenance{color:var(--info)}.pill-unknown{color:var(--subtle)}
 .bars{display:flex;gap:2px;margin:12px 0 6px;height:30px}
 .bar{flex:1;min-width:2px;border-radius:2px;background:var(--none);transition:opacity .15s}.bar:hover{opacity:.7}
-.bar-ok{background:var(--ok)}.bar-warn{background:var(--warn)}.bar-bad{background:var(--bad)}
+.bar-ok{background:var(--ok)}.bar-warn{background:var(--warn)}.bar-bad{background:var(--bad)}.bar-maint{background:var(--info)}
 .axis{font-size:11px;color:var(--subtle)}.uptime{color:var(--muted)}
 .update{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px;padding:14px 16px;margin-bottom:10px}
 .update-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -355,7 +427,9 @@ ul{list-style:none;margin:0;padding:0;background:var(--surface);border:1px solid
 .update time{color:var(--subtle);font-size:12px}
 .state{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;padding:2px 7px;border-radius:4px}
 .state-investigating{background:var(--bad-bg);color:var(--bad)}.state-identified{background:var(--warn-bg);color:var(--warn)}
-.state-monitoring{background:var(--info-bg);color:var(--info)}.state-resolved{background:var(--ok-bg);color:var(--ok)}
+.state-monitoring{background:var(--info-bg);color:var(--info)}.state-resolved{background:var(--ok-bg);color:var(--ok)}.state-maintenance{background:var(--info-bg);color:var(--info)}
+.maint{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--info);border-radius:8px;padding:14px 16px;margin-bottom:10px}
+.maint h3{margin:0;font-size:14px;font-weight:600}.maint p{margin:6px 0}.maint .when{color:var(--muted);font-size:13px}.maint .affects{color:var(--subtle);font-size:12px}
 .empty{color:var(--muted);font-size:13px;margin:0}
 footer{border-top:1px solid var(--border);padding-top:16px;color:var(--subtle);font-size:12px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
 footer a{color:var(--accent)}
@@ -369,10 +443,44 @@ ${a.customCss ?? ''}
 ${view.page.description ? `<p class="lede">${esc(view.page.description)}</p>` : ''}
 <div class="banner banner-${view.overall}">${icon(view.overall, 22)}<div>${HEADLINE[view.overall]}<small>Updated ${formatDate(view.generatedAt)}</small></div></div>
 ${ongoing.length ? `<section><h2>Ongoing</h2>${ongoing.map(update).join('')}</section>` : ''}
+${inProgress.length ? `<section><h2>Maintenance in progress</h2>${inProgress.map(maintenanceBlock).join('')}</section>` : ''}
 <section><h2>Services</h2>${view.components.length ? `<ul>${components}</ul>` : '<p class="empty">No services on this page yet.</p>'}</section>
+${upcoming.length ? `<section><h2>Scheduled maintenance</h2>${upcoming.map(maintenanceBlock).join('')}</section>` : ''}
 <section><h2>Recent updates</h2>${
-    view.updates.filter((u) => u.state === 'resolved').map(update).join('') || '<p class="empty">No incidents reported in the last 14 days.</p>'
+    view.updates.filter((u) => u.state === 'resolved' || u.state === 'maintenance').map(update).join('') ||
+    '<p class="empty">No incidents reported in the last 14 days.</p>'
   }</section>
 <footer><span>${a.footerText ? esc(a.footerText) : `© ${esc(chrome.organisation)}`}</span><span>Powered by InfraTicket · refreshes every minute</span></footer>
 </main></body></html>`;
+}
+
+/**
+ * Posts a maintenance window's own start or end to every page it touches.
+ * Called by the ops runner once per occurrence transition.
+ */
+export async function postMaintenanceUpdates(
+  window: { id: string; title: string; description: string | null; scope: ReturnType<typeof scopeOf> },
+  phase: 'started' | 'ended',
+): Promise<number> {
+  const pages = await listStatusPages();
+  const scope = window.scope;
+  const teams = scope.teamIds?.length
+    ? new Map(
+        (await db.all<{ id: string; team_id: string | null }>(`SELECT id, team_id FROM monitors`)).map((m) => [m.id, m.team_id]),
+      )
+    : new Map<string, string | null>();
+  let posted = 0;
+  for (const page of pages) {
+    const touched = scope.everything || page.components.some((c) => scopeCovers(scope, { sourceId: c.monitorId, teamId: teams.get(c.monitorId) ?? null }));
+    if (!touched) continue;
+    await addStatusUpdate(
+      page.id,
+      phase === 'started'
+        ? { title: `Maintenance in progress: ${window.title}`, state: 'maintenance', body: window.description ?? 'Planned maintenance has started.', ticketId: null }
+        : { title: `Maintenance completed: ${window.title}`, state: 'resolved', body: 'The planned maintenance has finished.', ticketId: null },
+      null,
+    );
+    posted += 1;
+  }
+  return posted;
 }

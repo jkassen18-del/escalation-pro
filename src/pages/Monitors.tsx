@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Activity, BellRing, CalendarClock, MoreHorizontal, Pause, Play, Plus, RefreshCw, Send, Trash2, Webhook } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Activity, BellRing, MoreHorizontal, Pause, Play, Plus, RefreshCw, Send, Trash2, Webhook } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { opsApi, type AlertSourceInput, type MonitorInput } from '@/lib/ops-api';
 import { fullDateTime, relativeTime, shortDateTime } from '@/lib/format';
@@ -15,6 +15,7 @@ import { Menu } from '@/components/ui/Menu';
 import { ConfirmDialog, Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { RoutingTab } from '@/components/ops/AlertRouting';
+import { MaintenanceBadge } from '@/components/ops/MaintenanceShared';
 import { CopyField, MonitorTabs, SeverityBadge, StateDot, STATE_LABELS, UptimeBars } from '@/components/ops/MonitorShared';
 import {
   ALERT_SOURCE_KINDS,
@@ -28,7 +29,6 @@ import {
   type AlertSourceKind,
   type BackupJob,
   type EscalationPolicy,
-  type MaintenanceWindow,
   type Monitor,
   type MonitorCheck,
   type MonitorConfig,
@@ -61,6 +61,7 @@ export function MonitorsPage() {
   const canManage = can('monitors.manage');
   const [tab, setTab] = useState<Tab>('monitors');
   const choices = useRoutingChoices();
+  const navigate = useNavigate();
 
   return (
     <div>
@@ -70,7 +71,8 @@ export function MonitorsPage() {
       >
         <MonitorTabs
           value={tab}
-          onChange={setTab}
+          // Maintenance has its own page now; the tab stays as a way there.
+          onChange={(value) => (value === 'maintenance' ? navigate('/maintenance') : setTab(value))}
           tabs={[
             { value: 'monitors', label: 'Monitors' },
             { value: 'sources', label: 'Alert sources' },
@@ -85,7 +87,6 @@ export function MonitorsPage() {
       {tab === 'sources' && <SourcesTab canManage={canManage} {...choices} />}
       {tab === 'routing' && <RoutingTab canManage={canManage} {...choices} />}
       {tab === 'alerts' && <AlertsTab />}
-      {tab === 'maintenance' && <MaintenanceTab canManage={canManage} />}
     </div>
   );
 }
@@ -197,7 +198,10 @@ function MonitorsTab({ canManage, teams, policies }: { canManage: boolean; teams
                       <button className="flex w-full min-w-0 items-center gap-2.5 text-left" onClick={() => setViewing(monitor)}>
                         <StateDot state={monitor.state} />
                         <span className="min-w-0">
-                          <span className="block truncate text-xs font-medium hover:underline">{monitor.name}</span>
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span className="truncate text-xs font-medium hover:underline">{monitor.name}</span>
+                            {monitor.maintenance && <MaintenanceBadge maintenance={monitor.maintenance} />}
+                          </span>
                           <span className="block max-w-[22rem] truncate text-2xs text-subtle">
                             {MONITOR_KIND_LABELS[monitor.kind]}
                             {monitor.target ? ` · ${monitor.target}` : ''}
@@ -719,7 +723,7 @@ Invoke-RestMethod ${url}`}
 
 /* ------------------------------ Alert sources ----------------------------- */
 
-const SOURCE_HINTS: Record<AlertSourceKind, string> = {
+export const SOURCE_HINTS: Record<AlertSourceKind, string> = {
   generic: 'POST any JSON. Title, severity, status and dedup key are found automatically, or map them with JSON paths below.',
   aws_sns:
     'Create an SNS topic for your CloudWatch alarms (or an EventBridge rule for AWS Health) and add an HTTPS subscription to this URL. The subscription is confirmed automatically and every message signature is verified.',
@@ -909,23 +913,28 @@ function SourcesTab({ canManage, teams, policies }: { canManage: boolean; teams:
   );
 }
 
-function SourceDialog({
+/** Also opened prefilled from the Integrations catalogue, for one-click alert sources. */
+export function SourceDialog({
   source,
   teams,
   policies,
   onClose,
   onSaved,
+  initialKind,
+  initialName,
 }: {
   source: AlertSource | null;
   teams: Team[];
   policies: EscalationPolicy[];
   onClose: () => void;
   onSaved: () => void;
+  initialKind?: AlertSourceKind;
+  initialName?: string;
 }) {
   const [form, setForm] = useState<AlertSourceInput>(
     source
       ? { name: source.name, kind: source.kind, teamId: source.teamId, escalationPolicyId: source.escalationPolicyId, defaultSeverity: source.defaultSeverity, mapping: source.mapping, enabled: source.enabled }
-      : { name: '', kind: 'generic', teamId: teams[0]?.id ?? null, escalationPolicyId: null, defaultSeverity: 'sev3', mapping: {}, enabled: true },
+      : { name: initialName ?? '', kind: initialKind ?? 'generic', teamId: teams[0]?.id ?? null, escalationPolicyId: null, defaultSeverity: 'sev3', mapping: {}, enabled: true },
   );
   const [resolvedText, setResolvedText] = useState((source?.mapping.resolvedValues ?? []).join(', '));
   const [saving, setSaving] = useState(false);
@@ -1171,204 +1180,3 @@ function AlertsTab() {
   );
 }
 
-/* ------------------------------- Maintenance ------------------------------ */
-
-function toLocalInput(date: Date): string {
-  const offset = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
-}
-
-function MaintenanceTab({ canManage }: { canManage: boolean }) {
-  const toast = useToast();
-  const [windows, setWindows] = useState<MaintenanceWindow[]>([]);
-  const [monitors, setMonitors] = useState<Monitor[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [deleting, setDeleting] = useState<MaintenanceWindow | null>(null);
-
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      const [w, m] = await Promise.all([opsApi.maintenance.list(), opsApi.monitors.list()]);
-      setWindows(w.windows);
-      setMonitors(m.monitors);
-    } catch (caught) {
-      setError(message(caught, 'Could not load maintenance windows.'));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const now = Date.now();
-  const stateOf = (w: MaintenanceWindow) =>
-    new Date(w.endsAt).getTime() < now ? 'Finished' : new Date(w.startsAt).getTime() > now ? 'Scheduled' : 'In progress';
-  const monitorName = (id: string) => monitors.find((m) => m.id === id)?.name ?? 'Deleted monitor';
-
-  return (
-    <>
-      <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-4 sm:px-6">
-        <p className="text-xs text-muted">During a window, alerts are recorded and incidents opened, but nobody is paged.</p>
-        {canManage && (
-          <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
-            <Plus className="size-3.5" />
-            Schedule maintenance
-          </Button>
-        )}
-      </div>
-      {error ? (
-        <ErrorPane message={error} retry={load} />
-      ) : loading ? (
-        <LoadingPane label="Loading maintenance" />
-      ) : windows.length === 0 ? (
-        <EmptyState icon={CalendarClock} title="No maintenance scheduled" description="Schedule a window before planned work so a reboot does not wake anyone." />
-      ) : (
-        <ul className="space-y-2 p-4 sm:p-6">
-          {windows.map((w) => (
-            <li key={w.id} className="flex flex-wrap items-start justify-between gap-3 rounded-md border p-3 surface">
-              <div className="min-w-0">
-                <p className="flex items-center gap-2 text-sm font-medium">
-                  {w.title}
-                  <Badge color={stateOf(w) === 'In progress' ? '#2563eb' : stateOf(w) === 'Scheduled' ? 'var(--priority-normal)' : '#9ca3af'}>{stateOf(w)}</Badge>
-                </p>
-                <p className="mt-0.5 text-xs text-muted">
-                  {fullDateTime(w.startsAt)} → {fullDateTime(w.endsAt)}
-                </p>
-                <p className="mt-1 text-2xs text-subtle">
-                  {w.monitorIds.length === 0 ? 'Covers every monitor and alert source' : `Covers ${w.monitorIds.map(monitorName).join(', ')}`}
-                  {w.createdByName && ` · by ${w.createdByName}`}
-                </p>
-              </div>
-              {canManage && (
-                <Button variant="ghost" size="sm" onClick={() => setDeleting(w)}>
-                  <Trash2 className="size-3.5" />
-                  Remove
-                </Button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {creating && (
-        <MaintenanceDialog
-          monitors={monitors}
-          onClose={() => setCreating(false)}
-          onSaved={async () => {
-            setCreating(false);
-            await load();
-            toast.success('Maintenance scheduled.');
-          }}
-        />
-      )}
-
-      <ConfirmDialog
-        open={Boolean(deleting)}
-        onClose={() => setDeleting(null)}
-        title="Remove this window?"
-        message="Paging resumes immediately for anything it covered."
-        confirmLabel="Remove"
-        destructive
-        onConfirm={async () => {
-          if (!deleting) return;
-          try {
-            await opsApi.maintenance.remove(deleting.id);
-            setDeleting(null);
-            await load();
-          } catch (caught) {
-            toast.error('Could not remove', message(caught, ''));
-          }
-        }}
-      />
-    </>
-  );
-}
-
-function MaintenanceDialog({ monitors, onClose, onSaved }: { monitors: Monitor[]; onClose: () => void; onSaved: () => void }) {
-  const [title, setTitle] = useState('');
-  const [startsAt, setStartsAt] = useState(toLocalInput(new Date()));
-  const [endsAt, setEndsAt] = useState(toLocalInput(new Date(Date.now() + 2 * 3_600_000)));
-  const [scope, setScope] = useState<'all' | 'some'>('all');
-  const [selected, setSelected] = useState<string[]>([]);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const save = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      await opsApi.maintenance.create({
-        title,
-        startsAt: new Date(startsAt).toISOString(),
-        endsAt: new Date(endsAt).toISOString(),
-        monitorIds: scope === 'all' ? [] : selected,
-      });
-      onSaved();
-    } catch (caught) {
-      setError(message(caught, 'Could not schedule the window.'));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title="Schedule maintenance"
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="primary" onClick={save} loading={saving} disabled={!title.trim() || (scope === 'some' && !selected.length)}>
-            Schedule
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        {error && <p className="text-xs text-[var(--priority-urgent)]">{error}</p>}
-        <Field label="What is happening" required>
-          <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Database failover test" />
-        </Field>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Starts">
-            <Input type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
-          </Field>
-          <Field label="Ends">
-            <Input type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} />
-          </Field>
-        </div>
-        <Field label="Covers">
-          <SegmentedControl
-            value={scope}
-            onChange={setScope}
-            options={[
-              { value: 'all', label: 'Everything' },
-              { value: 'some', label: 'Chosen monitors' },
-            ]}
-          />
-        </Field>
-        {scope === 'some' && (
-          <div className="max-h-56 space-y-2 overflow-y-auto rounded-md border p-3">
-            {monitors.length === 0 && <p className="text-xs text-subtle">No monitors yet.</p>}
-            {monitors.map((monitor) => (
-              <Checkbox
-                key={monitor.id}
-                label={monitor.name}
-                hint={MONITOR_KIND_LABELS[monitor.kind]}
-                checked={selected.includes(monitor.id)}
-                onChange={(e) => setSelected((current) => (e.target.checked ? [...current, monitor.id] : current.filter((id) => id !== monitor.id)))}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    </Modal>
-  );
-}

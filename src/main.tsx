@@ -7,6 +7,7 @@ import { BrandingProvider } from '@/state/branding';
 import { ThemeProvider } from '@/state/theme';
 import { ToastProvider } from '@/components/ui/Toast';
 import '@/index.css';
+import { registerServiceWorker } from '@/lib/push';
 
 const container = document.getElementById('root');
 if (!container) throw new Error('Root element #root was not found in index.html');
@@ -26,3 +27,5 @@ createRoot(container).render(
     </ThemeProvider>
   </StrictMode>,
 );
+
+registerServiceWorker();

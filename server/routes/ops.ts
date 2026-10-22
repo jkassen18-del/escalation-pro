@@ -1,4 +1,4 @@
-import { Router, type Request } from 'express';
+import express, { Router, type Request } from 'express';
 import { db } from '../db/index.ts';
 import { clientIp, recordAudit, type AuditInput } from '../lib/audit.ts';
 import { asyncRoute, badRequest, notFound, optionalString, requireString } from '../lib/http.ts';
@@ -9,7 +9,19 @@ import { findTicket } from '../repositories/tickets.ts';
 import { findTeamById } from '../repositories/teams.ts';
 import { TERMINAL_STATUSES } from '../../shared/types.ts';
 import { SEVERITIES, STATUS_UPDATE_STATES, type Severity, type StatusUpdateState } from '../../shared/ops.ts';
-import { ingestSignal, listAlerts, listMaintenanceWindows } from '../ops/alerts.ts';
+import { ingestSignal, listAlerts } from '../ops/alerts.ts';
+import {
+  activeOccurrences,
+  cancelMaintenance,
+  endMaintenanceNow,
+  extendMaintenance,
+  getMaintenanceRow,
+  listMaintenanceWindows,
+  mapWindow,
+  occurrencesBetween,
+  saveMaintenance,
+  validateMaintenance,
+} from '../ops/maintenance.ts';
 import { deleteJob, getJob, jobConnection, listJobs, listRuns, openDecryptedBackup, runBackup, saveJob, validateJob } from '../ops/backups.ts';
 import { checkDatabaseHealth } from '../ops/db-health.ts';
 import { checkMonitorNow, deleteMonitor, getMonitor, listMonitors, monitorChecks, monitorDays, saveMonitor, validateMonitor } from '../ops/monitors.ts';
@@ -66,6 +78,9 @@ opsRouter.get(
     ]);
     res.json({
       monitors: { total: monitors.length, down: monitors.filter((m) => m.state === 'down').length, up: monitors.filter((m) => m.state === 'up').length },
+      inMaintenance: monitors
+        .filter((m) => m.maintenance)
+        .map((m) => ({ monitorId: m.id, name: m.name, state: m.state, ...m.maintenance! })),
       openAlerts: alerts,
       activePages: pages,
       myPages: pages.filter((p) => p.currentTargetIds.includes(userOf(req).id)),
@@ -211,37 +226,117 @@ opsRouter.post(
   }),
 );
 
-opsRouter.get('/maintenance', asyncRoute(async (_req, res) => res.json({ windows: await listMaintenanceWindows() })));
+/* ------------------------------ Maintenance ------------------------------ */
+
+async function maintenanceListing() {
+  const now = Date.now();
+  const occurrences = (await occurrencesBetween(now, now + 30 * 86_400_000)).map(({ occurrence }) => occurrence);
+  return { windows: await listMaintenanceWindows(), occurrences };
+}
+
+opsRouter.get('/maintenance', asyncRoute(async (_req, res) => res.json(await maintenanceListing())));
+
+/** What is in maintenance right now, for the banner every page shows. */
+opsRouter.get(
+  '/maintenance/active',
+  asyncRoute(async (_req, res) => {
+    const active = await activeOccurrences();
+    res.json({
+      active: await Promise.all(
+        active.map(async ({ row, occurrence }) => ({ ...occurrence, scopeSummary: (await mapWindow(row)).scopeSummary })),
+      ),
+    });
+  }),
+);
+
+async function loadWindow(id: string) {
+  const row = await getMaintenanceRow(id);
+  if (!row) throw notFound('That maintenance window does not exist.');
+  return row;
+}
 
 opsRouter.post(
   '/maintenance',
   requirePermission('monitors.manage'),
   asyncRoute(async (req, res) => {
-    const title = requireString(req.body?.title, 'Title', { max: 200 });
-    const startsAt = new Date(String(req.body?.startsAt ?? ''));
-    const endsAt = new Date(String(req.body?.endsAt ?? ''));
-    if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime()) || endsAt <= startsAt) throw badRequest('Give a start and an end after it.');
-    const monitorIds = Array.isArray(req.body?.monitorIds) ? req.body.monitorIds.map(String).slice(0, 200) : [];
-    const id = randomId();
-    await db.run(`INSERT INTO maintenance_windows (id, title, starts_at, ends_at, monitor_ids, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, [
-      id,
-      title,
-      startsAt.toISOString(),
-      endsAt.toISOString(),
-      JSON.stringify(monitorIds),
-      userOf(req).id,
-      new Date().toISOString(),
-    ]);
-    await audit(req, { entityType: 'monitor', entityId: id, action: 'maintenance_scheduled', summary: `Scheduled maintenance "${title}"` });
-    res.status(201).json({ windows: await listMaintenanceWindows() });
+    const window = await saveMaintenance(null, validateMaintenance(req.body ?? {}), userOf(req).id);
+    await audit(req, {
+      entityType: 'monitor',
+      entityId: window.id,
+      action: 'maintenance_scheduled',
+      summary: `Scheduled maintenance "${window.title}" (${window.scopeSummary}, ${window.effect.replace('_', ' ')})`,
+    });
+    res.status(201).json({ window, ...(await maintenanceListing()) });
   }),
 );
 
+opsRouter.put(
+  '/maintenance/:id',
+  requirePermission('monitors.manage'),
+  asyncRoute(async (req, res) => {
+    await loadWindow(req.params.id);
+    const window = await saveMaintenance(req.params.id, validateMaintenance(req.body ?? {}), userOf(req).id);
+    await audit(req, { entityType: 'monitor', entityId: window.id, action: 'maintenance_updated', summary: `Updated maintenance "${window.title}"` });
+    res.json({ window });
+  }),
+);
+
+/** Cancels the window, or with `occurrence` skips one occurrence of a recurring window. */
+opsRouter.post(
+  '/maintenance/:id/cancel',
+  requirePermission('monitors.manage'),
+  asyncRoute(async (req, res) => {
+    const row = await loadWindow(req.params.id);
+    const occurrence = optionalString(req.body?.occurrence, 40) ?? undefined;
+    await cancelMaintenance(row, occurrence);
+    await audit(req, {
+      entityType: 'monitor',
+      entityId: row.id,
+      action: occurrence ? 'maintenance_occurrence_skipped' : 'maintenance_cancelled',
+      summary: occurrence ? `Skipped the ${occurrence} occurrence of maintenance "${row.title}"` : `Cancelled maintenance "${row.title}"`,
+    });
+    res.json({ window: await mapWindow((await getMaintenanceRow(row.id))!) });
+  }),
+);
+
+opsRouter.post(
+  '/maintenance/:id/end',
+  requirePermission('monitors.manage'),
+  asyncRoute(async (req, res) => {
+    const row = await loadWindow(req.params.id);
+    if (!(await endMaintenanceNow(row))) throw badRequest('This maintenance is not in progress.');
+    await audit(req, { entityType: 'monitor', entityId: row.id, action: 'maintenance_ended_early', summary: `Ended maintenance "${row.title}" early` });
+    res.json({ window: await mapWindow((await getMaintenanceRow(row.id))!) });
+  }),
+);
+
+opsRouter.post(
+  '/maintenance/:id/extend',
+  requirePermission('monitors.manage'),
+  asyncRoute(async (req, res) => {
+    const row = await loadWindow(req.params.id);
+    const until = optionalString(req.body?.until, 40) ?? undefined;
+    const minutes = req.body?.minutes === undefined ? undefined : Number(req.body.minutes);
+    if (!until && !(minutes && minutes > 0 && minutes <= 7 * 24 * 60)) throw badRequest('Extend by a number of minutes, or to a time.');
+    const occurrence = await extendMaintenance(row, { minutes, until });
+    await audit(req, {
+      entityType: 'monitor',
+      entityId: row.id,
+      action: 'maintenance_extended',
+      summary: `Extended maintenance "${row.title}" to ${occurrence.endsAt}`,
+    });
+    res.json({ window: await mapWindow((await getMaintenanceRow(row.id))!) });
+  }),
+);
+
+/** Removes a window from the history entirely. Cancel is the usual way to stop one. */
 opsRouter.delete(
   '/maintenance/:id',
   requirePermission('monitors.manage'),
   asyncRoute(async (req, res) => {
-    await db.run(`DELETE FROM maintenance_windows WHERE id = ?`, [req.params.id]);
+    const row = await loadWindow(req.params.id);
+    await db.run(`DELETE FROM maintenance_windows WHERE id = ?`, [row.id]);
+    await audit(req, { entityType: 'monitor', entityId: row.id, action: 'maintenance_deleted', summary: `Deleted maintenance "${row.title}"` });
     res.status(204).end();
   }),
 );
@@ -585,6 +680,113 @@ opsRouter.put(
 
 opsRouter.post('/me/test-page', asyncRoute(async (req, res) => res.json({ attempts: await sendTestPage(userOf(req)) })));
 
+/* ------------------------------- Phone push ------------------------------- */
+
+opsRouter.get(
+  '/me/push',
+  asyncRoute(async (req, res) => {
+    const { countSubscriptions } = await import('../ops/push.ts');
+    res.json({ devices: await countSubscriptions(userOf(req).id) });
+  }),
+);
+
+opsRouter.post(
+  '/push/subscribe',
+  asyncRoute(async (req, res) => {
+    const { saveSubscription, validateSubscription, countSubscriptions } = await import('../ops/push.ts');
+    await saveSubscription(userOf(req).id, validateSubscription(req.body), req.header('user-agent') ?? null);
+    res.status(201).json({ devices: await countSubscriptions(userOf(req).id) });
+  }),
+);
+
+opsRouter.delete(
+  '/push/subscribe',
+  asyncRoute(async (req, res) => {
+    const { removeSubscription, countSubscriptions } = await import('../ops/push.ts');
+    const endpoint = requireString(req.body?.endpoint, 'Endpoint', { max: 2000 });
+    if (!(await removeSubscription(userOf(req).id, endpoint))) throw notFound('That device is not subscribed.');
+    res.json({ devices: await countSubscriptions(userOf(req).id) });
+  }),
+);
+
+opsRouter.post(
+  '/me/test-push',
+  asyncRoute(async (req, res) => {
+    const { sendPush } = await import('../ops/push.ts');
+    const result = await sendPush(userOf(req).id, {
+      title: 'InfraTicket test',
+      body: 'Push notifications reach this device. A real page also has an Acknowledge button.',
+      url: '/profile',
+      tag: 'test-push',
+    });
+    res.json({ result });
+  }),
+);
+
+/* ------------------------------ Teams calls ------------------------------- */
+
+opsRouter.get(
+  '/teams-calls',
+  requirePermission('oncall.manage'),
+  asyncRoute(async (_req, res) => {
+    const { teamsCallSettings } = await import('../ops/teams-calls.ts');
+    res.json({ settings: await teamsCallSettings() });
+  }),
+);
+
+opsRouter.put(
+  '/teams-calls',
+  requirePermission('oncall.manage'),
+  asyncRoute(async (req, res) => {
+    const { setTeamsCallsEnabled } = await import('../ops/teams-calls.ts');
+    const settings = await setTeamsCallsEnabled(req.body?.enabled === true);
+    await audit(req, { entityType: 'oncall', action: 'teams_calls_updated', summary: `Turned Teams calls ${settings.enabled ? 'on' : 'off'}` });
+    res.json({ settings });
+  }),
+);
+
+opsRouter.put(
+  '/teams-calls/prompt',
+  requirePermission('oncall.manage'),
+  express.raw({ type: () => true, limit: '600kb' }),
+  asyncRoute(async (req, res) => {
+    const { savePrompt } = await import('../ops/teams-calls.ts');
+    if (!Buffer.isBuffer(req.body) || !req.body.length) throw badRequest('Upload a WAV file.');
+    const settings = await savePrompt(req.body);
+    await audit(req, { entityType: 'oncall', action: 'teams_call_prompt_uploaded', summary: 'Uploaded the Teams call prompt' });
+    res.json({ settings });
+  }),
+);
+
+opsRouter.delete(
+  '/teams-calls/prompt',
+  requirePermission('oncall.manage'),
+  asyncRoute(async (req, res) => {
+    const { removePrompt } = await import('../ops/teams-calls.ts');
+    const settings = await removePrompt();
+    await audit(req, { entityType: 'oncall', action: 'teams_call_prompt_removed', summary: 'Removed the Teams call prompt' });
+    res.json({ settings });
+  }),
+);
+
+/** "Call me in Teams now": a real call to whoever clicks, with Graph's own error if it fails. */
+opsRouter.post(
+  '/teams-calls/test',
+  requirePermission('oncall.manage'),
+  asyncRoute(async (req, res) => {
+    const { placeTeamsCall } = await import('../ops/teams-calls.ts');
+    const user = userOf(req);
+    const attemptId = randomId();
+    const result = await placeTeamsCall(user, attemptId);
+    await db.run(
+      `INSERT INTO notification_attempts (id, page_id, user_id, channel, provider, status, level, cycle, seq, external_id, detail, created_at)
+       VALUES (?, NULL, ?, 'teams_call', ?, ?, 0, 0, 0, ?, ?, ?)`,
+      [attemptId, user.id, result.provider, result.status, result.externalId ?? null, result.detail.slice(0, 1000), new Date().toISOString()],
+    );
+    res.json({ result });
+  }),
+);
+
 opsRouter.get('/telephony', requirePermission('oncall.manage'), asyncRoute(async (_req, res) => res.json({ telephony: await publicTelephony() })));
 
 opsRouter.put(
@@ -650,7 +852,7 @@ opsRouter.post(
     const page = await getStatusPage(req.params.id);
     if (!page) throw notFound('That status page does not exist.');
     const state = String(req.body?.state ?? 'investigating') as StatusUpdateState;
-    if (!STATUS_UPDATE_STATES.includes(state)) throw badRequest('Unknown state.');
+    if (!STATUS_UPDATE_STATES.includes(state as (typeof STATUS_UPDATE_STATES)[number])) throw badRequest('Unknown state.');
     await addStatusUpdate(
       page.id,
       { title: requireString(req.body?.title, 'Title', { max: 200 }), state, body: optionalString(req.body?.body, 5000) ?? '', ticketId: optionalString(req.body?.ticketId, 60) },

@@ -69,8 +69,8 @@ ticket it opens and who it pages.
    opens a ticket without paging.
 5. **Auto-resolve.** When the last open alert on an incident resolves, the
    incident resolves and paging stops.
-6. **Maintenance windows** suppress paging, never recording: the alert and
-   ticket still appear, marked as suppressed.
+6. **Maintenance windows** pause paging, or alerting altogether, for what they
+   cover. Alerts are always recorded. See *Maintenance* below.
 
 Every incident ticket says, on its page, why it paged and whom it reached.
 
@@ -135,11 +135,12 @@ refused, because they can stall the pipeline.
   five times.
 - **Personal notification rules** decide how each person is reached and when,
   per urgency (SEV1–2 are high, SEV3–4 low). The default for high urgency is
-  the in-app bell, email and the ticket's chat thread at once, SMS after 1
-  minute, and a call after 3, with calls repeated every 2 minutes up to 5 times.
-  High urgency must include SMS or a call.
-- **Acknowledge** from the web, by replying `ACK` to the SMS, or by pressing 1
-  on the call (2 escalates now, 3 reads the details). Acknowledging stops the
+  the in-app bell, phone push, email and the ticket's chat thread at once, SMS
+  after 1 minute, and a call after 3, with calls repeated every 2 minutes up to
+  5 times. High urgency must include SMS, a phone call or a Teams call.
+- **Acknowledge** from the web, from the push notification, by replying `ACK`
+  to the SMS, or by pressing 1 on a phone or Teams call (2 escalates now, 3
+  reads the details on a phone call). Acknowledging stops the
   escalation, assigns the incident to you if nobody had it, and moves it to
   *in progress*.
 
@@ -160,6 +161,122 @@ against Twilio's signature, and call callbacks carry a per-attempt signed token.
 Phone numbers on profiles must be in international format (`+27 82 123 4567`).
 Ask each on-call person to save the Twilio number as a contact and allow it
 through Do Not Disturb.
+
+### Phone push notifications
+
+Pages arrive on phones and computers as notifications with an **Acknowledge**
+button, even with InfraTicket closed, through the browser's own push service
+(Web Push). No app store app is involved, and sending is outbound only, so it
+works from a server nothing on the internet can reach.
+
+Each person turns it on, once per device, under *Profile → Phone
+notifications*:
+
+- **Android:** open InfraTicket in Chrome, tap *Turn on for this device* and
+  allow notifications. *Install app* from Chrome's menu keeps it one tap away.
+- **iPhone (iOS 16.4+):** in Safari tap *Share → Add to Home Screen*, open
+  InfraTicket from the new home-screen icon, then turn it on there. iOS only
+  allows push from the home-screen app.
+- **Computers:** Chrome, Edge and Firefox, the same way.
+
+Push needs InfraTicket to be opened over **https** (or on `localhost`), which
+is why the lab guide puts every app behind a wildcard certificate. A
+notification reaches the phone wherever it is; tapping *Acknowledge* needs the
+phone to reach InfraTicket (company Wi-Fi, VPN, or a tunnel). When it cannot,
+the notification opens InfraTicket instead. *Send a test notification* proves
+a device works. Devices that uninstall or revoke permission are forgotten on
+the next send.
+
+The VAPID key pair that signs pushes is generated on first use and stored in
+the database, the private half encrypted with `SECRET_KEY`. Keep `SECRET_KEY`
+when moving a workspace, or every device has to turn push on again.
+
+### Teams calls
+
+The Teams bot can ring the person being paged in Microsoft Teams, on their
+desktop and on the Teams app on their phone, repeating like a phone call until
+someone acknowledges. People add **Teams call** to their own notification
+rules; it counts as a wake-up channel for high urgency.
+
+Setup, in order (*On-call → Phone & SMS → Teams calls* shows the same steps
+with ticks for the parts it can check):
+
+1. The Teams integration is in **bot mode** with the app id, client secret
+   and **tenant id** filled in (*Integrations → Microsoft Teams*).
+2. *Settings → App URL* is a public **https** address: Microsoft posts call
+   events to it. A Cloudflare Tunnel exposing only `/api/webhooks/*` and
+   `/api/public/*` is enough.
+3. Azure portal → your **Azure Bot** → *Channels* → *Microsoft Teams* →
+   **Calling** → *Enable calling*, with *Webhook (for calling)* set to
+   `<App URL>/api/webhooks/msteams/calling`.
+4. Entra admin centre → *App registrations* → the bot's app → *API
+   permissions* → *Add a permission* → *Microsoft Graph* → **Application
+   permissions**: `Calls.Initiate.All` (place the call), `Calls.AccessMedia.All`
+   (hear the keypress) and `User.Read.All` (find each person's directory id
+   from their email) → **Grant admin consent**.
+5. Download the Teams app package again (*Integrations → Microsoft Teams*):
+   with Teams calls on, it declares `supportsCalling`. Upload the new version
+   in the Teams admin centre.
+6. Turn Teams calls on and press **Call me in Teams now**. If Microsoft refuses,
+   the message names the missing permission.
+
+**Spoken prompt.** Teams plays recordings only, with no text-to-speech, so
+upload a WAV prompt: mono, 16-bit, 16 kHz PCM, up to 512 KB (about 15
+seconds). Record something like *"This is InfraTicket. You are being paged
+for an incident. Press 1 to acknowledge, or 2 to escalate."* In Audacity, set
+the project rate to 16000 Hz and the track to mono, then *File → Export →
+WAV (signed 16-bit PCM)*. The file is served at an unguessable URL that
+changes with each upload, because Microsoft fetches it to play.
+
+With a prompt, answering plays it: **1** acknowledges and **2** escalates now,
+then the call ends. **Without a prompt, answering is recorded but does not
+acknowledge**, because a call answered in a pocket looks the same; the call
+ends, and the person acknowledges from the Teams card, the web or push. Each
+call's progress is on the incident's attempts: *sent* (ringing), *answered*,
+*missed* or *acknowledged*. When a page is acknowledged anywhere, Teams calls
+still ringing for it are hung up.
+
+Call events are checked like every other inbound request: each carries a
+JWT signed by Microsoft's calling service (keys from
+`api.aps.skype.com`), issued by `https://api.botframework.com` and addressed
+to the bot's app id; anything else is refused.
+
+## Maintenance
+
+*Operations → Maintenance.* Schedule planned work so that expected disruption
+does not wake anyone.
+
+- **What it covers:** everything, or any mix of teams (every monitor and alert
+  source they own), monitors, alert sources and status page components.
+- **What it does:**
+  - *Pause paging*: problems still open incident tickets, so there is a
+    record, but nobody is called, texted or notified.
+  - *Pause alerting*: problems are only recorded, marked as maintenance. No
+    tickets, no pages.
+- **When:** once (a start and an end), or daily, weekly (chosen days) or
+  monthly (a day of the month; a shorter month uses its last day) at a
+  wall-clock time in a time zone, Africa/Johannesburg by default, for a set
+  length, from a date and optionally until one. Recurring windows are worked
+  out on the fly, so editing the series changes every future occurrence.
+- **While it runs:** a banner across the top of the app says what is in
+  maintenance and until when; affected monitors show a *Maintenance* badge on
+  the Monitoring page and the Command centre. Monitors keep checking. A failed
+  check during maintenance is counted as maintenance, not as an outage: it is
+  left out of the uptime figure, and the day shows blue on the 90-day bars.
+- **Notice:** optionally, everyone in the affected teams gets an in-app
+  notification 15 minutes to a day before it starts.
+- **Status pages:** a published window appears on every page showing an
+  affected component, under *Scheduled maintenance* for the next 7 days and
+  *Maintenance in progress* while it runs, with times in the window's own
+  zone. The component shows *Under maintenance*, and "Maintenance in
+  progress" and "Maintenance completed" updates are posted automatically, once
+  each.
+- **Actions:** end now, extend by 30 minutes or an hour, skip the next
+  occurrence of a recurring window, or cancel it. Each is in the audit log.
+- **When it ends** (on time, early, or cancelled), whatever it held back that
+  is still firing is raised normally, once: a ticket whose paging was paused
+  is paged now, and an alert that only was recorded becomes a ticket and pages.
+  Monitors that came back during the work raise nothing.
 
 ## Status pages
 

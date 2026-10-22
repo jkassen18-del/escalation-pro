@@ -7,6 +7,7 @@ import { sendSlack } from './slack.ts';
 import { sendMsTeams } from './msteams.ts';
 import { createLinearIssue, shouldMirror, type LinearConfig } from './linear.ts';
 import { sendEmail } from './email.ts';
+import { sendDiscord } from './discord.ts';
 import { listHttpIntegrations, sendHttpIntegration, wants, type HttpIntegrationRecord } from './http-custom.ts';
 import type { DeliveryResult, IntegrationEvent, NotificationContext } from './types.ts';
 import type { IntegrationProvider, Ticket } from '../../shared/types.ts';
@@ -62,7 +63,7 @@ export async function dispatch(
    * but sending it back to Slack would post the message into the thread it
    * came from.
    */
-  const providers: IntegrationProvider[] = (['slack', 'msteams', 'email'] as const).filter(
+  const providers: IntegrationProvider[] = (['slack', 'msteams', 'email', 'discord'] as const).filter(
     (provider) => !options.exclude?.includes(provider),
   );
   await Promise.all(
@@ -74,6 +75,7 @@ export async function dispatch(
         let result: DeliveryResult;
         if (provider === 'slack') result = await sendSlack(record, ctx);
         else if (provider === 'msteams') result = await sendMsTeams(record, ctx);
+        else if (provider === 'discord') result = await sendDiscord(record, ctx);
         else result = await sendEmail(record, ctx, await emailRecipients(ctx.ticket));
 
         await logDelivery(provider, event, ctx.ticket.id, result);

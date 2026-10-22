@@ -5,6 +5,7 @@ import { badRequest } from '../lib/http.ts';
 import { getSettings } from '../repositories/settings.ts';
 import { MONITOR_KINDS, SEVERITIES, type BackupEngine, type Monitor, type MonitorCheck, type MonitorConfig, type MonitorDay, type MonitorKind, type MonitorState, type Severity } from '../../shared/ops.ts';
 import { ingestSignal } from './alerts.ts';
+import { activeOccurrences, maintenanceFor, scopeCovers, scopeOf } from './maintenance.ts';
 import { checkDatabaseHealth } from './db-health.ts';
 import { runProbe, type ProbeResult } from './probes.ts';
 
@@ -51,7 +52,7 @@ async function baseUrl(): Promise<string> {
   return (settings.appUrl || process.env.APP_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/+$/, '');
 }
 
-function mapMonitor(row: MonitorRow, base: string): Monitor {
+function mapMonitor(row: MonitorRow, base: string, maintenance: Monitor['maintenance'] = null): Monitor {
   const checks = Number(row.checks_24h ?? 0);
   return {
     id: row.id,
@@ -75,6 +76,7 @@ function mapMonitor(row: MonitorRow, base: string): Monitor {
     consecutiveFailures: Number(row.consecutive_failures),
     heartbeatUrl: row.kind === 'heartbeat' && row.heartbeat_token ? `${base}/api/heartbeat/${row.heartbeat_token}` : null,
     uptime24h: checks ? Math.round(((checks - Number(row.failures_24h ?? 0)) / checks) * 10000) / 100 : null,
+    maintenance,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -90,13 +92,21 @@ export async function listMonitors(): Promise<Monitor[]> {
   const since = new Date(Date.now() - 86_400_000).toISOString();
   const base = await baseUrl();
   const rows = await db.all<MonitorRow>(`${SELECT_MONITOR} ORDER BY m.name`, [since, since]);
-  return rows.map((row) => mapMonitor(row, base));
+  const active = await activeOccurrences();
+  return rows.map((row) => mapMonitor(row, base, coveringNow(active, row)));
 }
 
 export async function getMonitor(id: string): Promise<Monitor | null> {
   const since = new Date(Date.now() - 86_400_000).toISOString();
   const row = await db.get<MonitorRow>(`${SELECT_MONITOR} WHERE m.id = ?`, [since, since, id]);
-  return row ? mapMonitor(row, await baseUrl()) : null;
+  return row ? mapMonitor(row, await baseUrl(), coveringNow(await activeOccurrences(), row)) : null;
+}
+
+/** The maintenance covering a monitor among the occurrences active now; pause_alerting wins. */
+function coveringNow(active: Awaited<ReturnType<typeof activeOccurrences>>, row: Pick<MonitorRow, 'id' | 'team_id'>): Monitor['maintenance'] {
+  const matches = active.filter(({ row: window }) => scopeCovers(scopeOf(window), { sourceId: row.id, teamId: row.team_id }));
+  const pick = matches.find(({ occurrence }) => occurrence.effect === 'pause_alerting') ?? matches[0];
+  return pick ? { windowId: pick.row.id, title: pick.row.title, endsAt: pick.occurrence.endsAt, effect: pick.occurrence.effect } : null;
 }
 
 export async function monitorChecks(id: string, limit = 100): Promise<MonitorCheck[]> {
@@ -115,11 +125,11 @@ export async function monitorChecks(id: string, limit = 100): Promise<MonitorChe
 
 export async function monitorDays(id: string, days = 90): Promise<MonitorDay[]> {
   const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
-  const rows = await db.all<{ day: string; total: number; failures: number }>(
-    `SELECT day, total, failures FROM monitor_daily WHERE monitor_id = ? AND day >= ? ORDER BY day`,
+  const rows = await db.all<{ day: string; total: number; failures: number; maintenance: number | null }>(
+    `SELECT day, total, failures, maintenance FROM monitor_daily WHERE monitor_id = ? AND day >= ? ORDER BY day`,
     [id, since],
   );
-  return rows.map((row) => ({ day: row.day, total: Number(row.total), failures: Number(row.failures) }));
+  return rows.map((row) => ({ day: row.day, total: Number(row.total), failures: Number(row.failures), maintenance: Number(row.maintenance ?? 0) }));
 }
 
 /* --------------------------------- Writes -------------------------------- */
@@ -278,8 +288,16 @@ async function recordResult(row: MonitorRow, result: ProbeResult): Promise<Monit
     result.message.slice(0, 500),
     nowIso,
   ]);
+  // A failed check during planned maintenance is neither uptime nor an
+  // outage: it is counted separately, and left out of the uptime figure.
+  const inMaintenanceNow = !result.ok && (await maintenanceFor({ sourceId: row.id, teamId: row.team_id }, now.getTime()));
   await db.run(`INSERT INTO monitor_daily (monitor_id, day, total, failures) VALUES (?, ?, 0, 0) ON CONFLICT (monitor_id, day) DO NOTHING`, [row.id, day]);
-  await db.run(`UPDATE monitor_daily SET total = total + 1, failures = failures + ? WHERE monitor_id = ? AND day = ?`, [result.ok ? 0 : 1, row.id, day]);
+  await db.run(`UPDATE monitor_daily SET total = total + 1, failures = failures + ?, maintenance = maintenance + ? WHERE monitor_id = ? AND day = ?`, [
+    result.ok || inMaintenanceNow ? 0 : 1,
+    inMaintenanceNow ? 1 : 0,
+    row.id,
+    day,
+  ]);
   await db.run(
     `UPDATE monitors SET state = ?, consecutive_failures = ?, last_checked_at = ?, last_latency_ms = ?, last_message = ?,
        last_change_at = ?, next_check_at = ? WHERE id = ?`,

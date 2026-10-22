@@ -87,6 +87,55 @@ const heartbeat = (fail: boolean) =>
 opsPublicRouter.all('/api/heartbeat/:token', anyText, heartbeat(false));
 opsPublicRouter.all('/api/heartbeat/:token/fail', anyText, heartbeat(true));
 
+/* ------------------------------- Web Push --------------------------------- */
+
+/** The public half of the VAPID key pair, which a browser needs to subscribe. */
+opsPublicRouter.get(
+  '/api/ops/push/key',
+  asyncRoute(async (_req, res) => {
+    const { vapidKeys } = await import('../ops/push.ts');
+    res.json({ publicKey: (await vapidKeys()).publicKey });
+  }),
+);
+
+/* ------------------------------ Teams calls ------------------------------- */
+
+/**
+ * Call events for Teams calls the bot placed. Microsoft signs each one; the
+ * token is checked before anything is read, and the work is done after
+ * answering, because Microsoft expects a prompt 2xx.
+ */
+opsPublicRouter.post(
+  '/api/webhooks/msteams/calling',
+  asyncRoute(async (req, res) => {
+    const { loadIntegration } = await import('../integrations/store.ts');
+    const { verifyCallingRequest } = await import('../integrations/teams-auth.ts');
+    const config = (await loadIntegration('msteams')).config as { appId?: string };
+    const verified = await verifyCallingRequest(req.header('authorization'), config.appId ?? '');
+    if (!verified.ok) {
+      console.warn(`[teams-calls] refused a calling notification: ${verified.reason}`);
+      return res.status(401).json({ error: 'Unauthorised' });
+    }
+    res.status(202).end();
+    const { handleCallingNotifications } = await import('../ops/teams-calls.ts');
+    const attempt = typeof req.query.attempt === 'string' ? req.query.attempt.slice(0, 64) : null;
+    void handleCallingNotifications(req.body, attempt).catch((error) => console.error('[teams-calls] notification failed', error));
+  }),
+);
+
+/** The recorded prompt, which Microsoft fetches to play. The token in the name is the only key. */
+opsPublicRouter.get(
+  '/api/public/teams-call-prompt/:file',
+  asyncRoute(async (req, res) => {
+    const token = req.params.file.replace(/\.wav$/, '');
+    const { promptByToken } = await import('../ops/teams-calls.ts');
+    const wav = /^[A-Za-z0-9_-]{16,64}$/.test(token) ? await promptByToken(token) : null;
+    if (!wav) return res.status(404).end();
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.type('audio/wav').send(wav);
+  }),
+);
+
 /* ------------------------------ Twilio voice ------------------------------ */
 
 /** Twilio signs the URL it called, so the public URL is rebuilt, not trusted from Host. */

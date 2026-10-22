@@ -67,6 +67,11 @@ export async function resolveTeamsAuthor(
         : `SELECT id, name FROM users WHERE LOWER(email) = ? AND status = 'active'`,
       [email],
     );
+    if (row) {
+      // Remembered so the bot can ring this person in Teams when they are paged.
+      const { rememberTeamsUserId } = await import('../ops/teams-calls.ts');
+      await rememberTeamsUserId(row.id, activity.from?.aadObjectId).catch(() => undefined);
+    }
     return row ? { userId: row.id, displayName: row.name } : { userId: null, displayName: member.name || displayName };
   } catch {
     // The roster call needs the bot to still be installed. Losing the

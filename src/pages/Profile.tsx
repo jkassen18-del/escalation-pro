@@ -11,6 +11,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { useDocumentTitle } from '@/state/branding';
 import { RulesEditor } from '@/components/ops/RulesEditor';
+import { DiscordLinkCard } from '@/components/DiscordLinkCard';
 
 export function ProfilePage() {
   useDocumentTitle('Profile');
@@ -96,6 +97,8 @@ export function ProfilePage() {
         </section>
 
         <RulesEditor />
+
+        <DiscordLinkCard />
 
         <section className="rounded-md border surface">
           <h2 className="border-b px-4 py-2.5 text-xs font-semibold">Appearance</h2>

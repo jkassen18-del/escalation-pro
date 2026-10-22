@@ -20,6 +20,7 @@ export const SECRET_FIELDS: Record<IntegrationProvider, string[]> = {
   msteams: ['webhookUrl', 'appPassword'],
   linear: ['apiKey', 'webhookSecret'],
   email: ['password'],
+  discord: ['botToken'],
 };
 
 export interface IntegrationRecord {

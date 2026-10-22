@@ -695,6 +695,48 @@ const TABLES: string[] = [
     updated_at TEXT NOT NULL
   )`,
 
+  /*
+   * Browser and phone push subscriptions. One person can have several (a
+   * phone and a laptop); a subscription the push service reports as gone is
+   * deleted on the next send.
+   */
+  `CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    /* SHA-256 of the endpoint, which is the key: endpoints can be longer
+       than MySQL will index. */
+    endpoint_hash TEXT NOT NULL UNIQUE,
+    endpoint TEXT NOT NULL,
+    keys TEXT NOT NULL,
+    user_agent TEXT,
+    created_at TEXT NOT NULL,
+    last_used_at TEXT
+  )`,
+
+  /*
+   * One-time "state" values for OAuth installs (Add to Slack, Microsoft admin
+   * consent). Only a hash is stored; each is single-use, expires in minutes,
+   * and is bound to the session that started it, so a link cannot be
+   * replayed or completed in someone else's browser.
+   */
+  `CREATE TABLE IF NOT EXISTS oauth_states (
+    state_hash TEXT PRIMARY KEY,
+    purpose TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    session_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT
+  )`,
+
+  /* Short-lived codes from Discord's /link, typed into a profile to prove the account. */
+  `CREATE TABLE IF NOT EXISTS discord_link_codes (
+    code TEXT PRIMARY KEY,
+    discord_user_id TEXT NOT NULL,
+    discord_username TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+  )`,
+
   `CREATE TABLE IF NOT EXISTS sessions (
     sid TEXT PRIMARY KEY,
     data TEXT NOT NULL,
@@ -720,6 +762,8 @@ const INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_form_fields_team ON team_form_fields(team_id, position)`,
   `CREATE INDEX IF NOT EXISTS idx_field_values_ticket ON ticket_field_values(ticket_id, position)`,
   `CREATE INDEX IF NOT EXISTS idx_login_attempts ON login_attempts(key, created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_attempts_external ON notification_attempts(external_id)`,
   `CREATE INDEX IF NOT EXISTS idx_monitor_checks ON monitor_checks(monitor_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_monitors_next ON monitors(next_check_at)`,
   `CREATE INDEX IF NOT EXISTS idx_alerts_dedup ON alerts(source_id, dedup_key, status)`,
@@ -757,6 +801,84 @@ interface AdditiveColumn {
  * place without a migration tool.
  */
 const ADDITIVE_COLUMNS: AdditiveColumn[] = [
+  {
+    table: 'maintenance_windows',
+    column: 'description',
+    definition: `TEXT`,
+    why: 'shown on status pages when the window is published',
+  },
+  {
+    table: 'maintenance_windows',
+    column: 'scope',
+    definition: `TEXT NOT NULL DEFAULT '{}'`,
+    why: 'monitors, sources, teams or components a window covers; empty falls back to monitor_ids',
+  },
+  {
+    table: 'maintenance_windows',
+    column: 'effect',
+    definition: `TEXT NOT NULL DEFAULT 'pause_paging'`,
+    why: 'pause paging only, or pause alerting entirely',
+  },
+  {
+    table: 'maintenance_windows',
+    column: 'recurrence',
+    definition: `TEXT NOT NULL DEFAULT '{}'`,
+    why: 'daily, weekly or monthly windows, expanded on the fly',
+  },
+  {
+    table: 'maintenance_windows',
+    column: 'time_zone',
+    definition: `TEXT NOT NULL DEFAULT 'Africa/Johannesburg'`,
+    why: 'the zone the wall-clock time of a recurring window is written in',
+  },
+  {
+    table: 'maintenance_windows',
+    column: 'notify_before_mins',
+    definition: `INTEGER NOT NULL DEFAULT 0`,
+    why: 'warn the affected teams before a window starts',
+  },
+  {
+    table: 'maintenance_windows',
+    column: 'publish',
+    definition: `INTEGER NOT NULL DEFAULT 0`,
+    why: 'show the window on status pages',
+  },
+  {
+    table: 'maintenance_windows',
+    column: 'overrides',
+    definition: `TEXT NOT NULL DEFAULT '{}'`,
+    why: 'per-occurrence early ends, extensions and skips',
+  },
+  {
+    table: 'maintenance_windows',
+    column: 'announced',
+    definition: `TEXT NOT NULL DEFAULT '{}'`,
+    why: 'which notices each occurrence has already sent, so they go out once',
+  },
+  {
+    table: 'maintenance_windows',
+    column: 'cancelled_at',
+    definition: `TEXT`,
+    why: 'a cancelled window stays in the history',
+  },
+  {
+    table: 'maintenance_windows',
+    column: 'updated_at',
+    definition: `TEXT`,
+    why: 'last edit',
+  },
+  {
+    table: 'monitor_daily',
+    column: 'maintenance',
+    definition: `INTEGER NOT NULL DEFAULT 0`,
+    why: 'failed checks during maintenance count as neither up nor down',
+  },
+  {
+    table: 'alerts',
+    column: 'maintenance_id',
+    definition: `TEXT`,
+    why: 'the window that suppressed an alert, so it can be raised again when the window ends',
+  },
   {
     table: 'oncall_layers',
     column: 'entries',
@@ -800,6 +922,12 @@ const ADDITIVE_COLUMNS: AdditiveColumn[] = [
     why: 'the incident commander, who may differ from the assignee',
   },
   {
+    table: 'users',
+    column: 'teams_user_id',
+    definition: 'TEXT',
+    why: "the person's Entra object id, which a Teams call has to be addressed to",
+  },
+  {
     table: 'status_pages',
     column: 'appearance',
     definition: `TEXT NOT NULL DEFAULT '{}'`,
@@ -816,6 +944,18 @@ const ADDITIVE_COLUMNS: AdditiveColumn[] = [
     column: 'is_system',
     definition: 'INTEGER NOT NULL DEFAULT 0',
     why: 'notes written by monitors and the pager, told apart from a deleted author',
+  },
+  {
+    table: 'users',
+    column: 'discord_user_id',
+    definition: 'VARCHAR(32)',
+    why: 'the Discord account linked with /link, for tickets, replies and pages from Discord',
+  },
+  {
+    table: 'users',
+    column: 'discord_username',
+    definition: 'VARCHAR(100)',
+    why: 'shown on the profile next to the linked Discord account',
   },
   {
     table: 'teams',

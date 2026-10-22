@@ -222,6 +222,21 @@ export const api = {
         `/integrations/${provider}/test`,
         body,
       ),
+    discord: {
+      overview: () =>
+        get<{
+          gateway: { running: boolean; connected: boolean; botUserId: string | null };
+          inviteUrl: string | null;
+          routes: Array<{ teamId: string; channelId: string }>;
+        }>('/integrations/discord/overview'),
+      channels: () =>
+        get<{ channels: Array<{ id: string; name: string; guildId: string; guildName: string }> }>('/integrations/discord/channels'),
+      saveRoutes: (routes: Array<{ teamId: string; channelId: string }>) =>
+        request<{ routes: Array<{ teamId: string; channelId: string }> }>('/integrations/discord/routes', {
+          method: 'PUT',
+          body: JSON.stringify({ routes }),
+        }),
+    },
     /** The key is optional: without it the server uses the saved one. */
     linearTeams: (apiKey?: string) =>
       post<{ teams: Array<{ id: string; key: string; name: string }> }>('/integrations/linear/teams', { apiKey }),
@@ -263,6 +278,12 @@ export const api = {
         `/reports/summary${toQuery(params)}`,
       ),
     exportUrl: (params: { from?: string; to?: string }) => `/api/reports/export${toQuery(params)}`,
+  },
+
+  discord: {
+    me: () => get<{ available: boolean; linked: boolean; discordUsername: string | null }>('/discord/me'),
+    link: (code: string) => post<{ linked: true; discordUsername: string }>('/discord/link', { code }),
+    unlink: () => del<{ linked: false }>('/discord/link'),
   },
 
   audit: {

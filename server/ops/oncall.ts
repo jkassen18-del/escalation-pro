@@ -4,6 +4,7 @@ import { badRequest } from '../lib/http.ts';
 import {
   ESCALATION_TARGET_TYPES,
   NOTIFY_CHANNELS,
+  WAKE_UP_CHANNELS,
   ROTATION_KINDS,
   type EscalationLevel,
   type EscalationPolicy,
@@ -491,11 +492,13 @@ export async function resolveTargets(targets: EscalationTarget[]): Promise<strin
 /** What applies to anyone who has not written their own. */
 export const DEFAULT_RULES: Array<Omit<NotificationRule, 'id'>> = [
   { urgency: 'high', channel: 'in_app', delayMins: 0 },
+  { urgency: 'high', channel: 'push', delayMins: 0 },
   { urgency: 'high', channel: 'email', delayMins: 0 },
   { urgency: 'high', channel: 'chat', delayMins: 0 },
   { urgency: 'high', channel: 'sms', delayMins: 1 },
   { urgency: 'high', channel: 'voice', delayMins: 3 },
   { urgency: 'low', channel: 'in_app', delayMins: 0 },
+  { urgency: 'low', channel: 'push', delayMins: 0 },
   { urgency: 'low', channel: 'email', delayMins: 0 },
 ];
 
@@ -518,7 +521,8 @@ export async function rulesFor(userId: string): Promise<{ rules: NotificationRul
 
 /**
  * A person cannot leave high urgency with no way to wake them: push and email
- * are easy to sleep through, so SMS or a call has to be in there somewhere.
+ * are easy to sleep through, so SMS or a call (phone or Teams) has to be in
+ * there somewhere.
  */
 export function validateRules(value: unknown, allowQuietHighUrgency = false): Array<Omit<NotificationRule, 'id'>> {
   if (!Array.isArray(value)) throw badRequest('Send a list of rules.');
@@ -531,8 +535,8 @@ export function validateRules(value: unknown, allowQuietHighUrgency = false): Ar
     return { urgency: rule.urgency as Urgency, channel: rule.channel as NotifyChannel, delayMins };
   });
   const high = rules.filter((rule) => rule.urgency === 'high');
-  if (!allowQuietHighUrgency && !high.some((rule) => rule.channel === 'sms' || rule.channel === 'voice')) {
-    throw badRequest('High-urgency pages need an SMS or phone-call rule, so a critical alert can wake you.');
+  if (!allowQuietHighUrgency && !high.some((rule) => WAKE_UP_CHANNELS.includes(rule.channel))) {
+    throw badRequest('High-urgency pages need an SMS, phone-call, Teams-call or Discord rule, so a critical alert can wake you.');
   }
   return rules;
 }

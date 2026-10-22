@@ -19,6 +19,7 @@ import { ProfilePage } from '@/pages/Profile';
 import { QuickLinksPage } from '@/pages/QuickLinks';
 import { OperationsPage } from '@/pages/Operations';
 import { MonitorsPage } from '@/pages/Monitors';
+import { MaintenancePage } from '@/pages/Maintenance';
 import { OnCallPage } from '@/pages/OnCall';
 import { StatusPagesPage } from '@/pages/StatusPages';
 import { DatabasesPage } from '@/pages/Databases';
@@ -60,6 +61,7 @@ export function App() {
         <Route path="/links" element={<QuickLinksPage />} />
         <Route path="/operations" element={<OperationsPage />} />
         <Route path="/monitors" element={<MonitorsPage />} />
+        <Route path="/maintenance" element={<MaintenancePage />} />
         <Route path="/oncall" element={<OnCallPage />} />
         <Route path="/status-pages" element={<StatusPagesPage />} />
         <Route path="/databases" element={<Guard permission="backups.manage"><DatabasesPage /></Guard>} />
