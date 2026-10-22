@@ -14,6 +14,11 @@ import { IntegrationsPage } from '@/pages/Integrations';
 import { SettingsPage } from '@/pages/Settings';
 import { AuditLogPage } from '@/pages/AuditLog';
 import { ProfilePage } from '@/pages/Profile';
+import { OperationsPage } from '@/pages/Operations';
+import { MonitorsPage } from '@/pages/Monitors';
+import { OnCallPage } from '@/pages/OnCall';
+import { StatusPagesPage } from '@/pages/StatusPages';
+import { DatabasesPage } from '@/pages/Databases';
 import type { Permission } from '@shared/types';
 
 export function App() {
@@ -47,6 +52,11 @@ export function App() {
         <Route path="/settings" element={<Guard permission="settings.manage"><SettingsPage /></Guard>} />
         <Route path="/audit" element={<Guard permission="audit.view"><AuditLogPage /></Guard>} />
         <Route path="/profile" element={<ProfilePage />} />
+        <Route path="/operations" element={<OperationsPage />} />
+        <Route path="/monitors" element={<MonitorsPage />} />
+        <Route path="/oncall" element={<OnCallPage />} />
+        <Route path="/status-pages" element={<StatusPagesPage />} />
+        <Route path="/databases" element={<Guard permission="backups.manage"><DatabasesPage /></Guard>} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </AppShell>

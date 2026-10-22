@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
+  Activity,
   Bell,
+  Database,
+  Globe,
+  PhoneCall,
+  Siren,
   Building2,
   ChevronDown,
   Inbox,
@@ -45,6 +50,14 @@ const PRIMARY_NAV: NavItem[] = [
   { to: '/tickets', label: 'All tickets', icon: TicketIcon, countKey: 'all', end: true },
   { to: '/tickets?unassigned=true', label: 'Unassigned', icon: LayoutGrid, countKey: 'unassigned' },
   { to: '/tickets?overdue=true', label: 'Breached SLA', icon: TriangleAlert, countKey: 'overdue' },
+];
+
+const OPERATIONS_NAV: NavItem[] = [
+  { to: '/operations', label: 'Command centre', icon: Siren },
+  { to: '/monitors', label: 'Monitoring', icon: Activity },
+  { to: '/oncall', label: 'On-call', icon: PhoneCall },
+  { to: '/status-pages', label: 'Status pages', icon: Globe },
+  { to: '/databases', label: 'Databases', icon: Database, permission: 'backups.manage' },
 ];
 
 const MANAGE_NAV: NavItem[] = [
@@ -142,6 +155,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <ul className="space-y-px">
           {PRIMARY_NAV.map((item) => (
             <NavRow key={item.to} item={item} count={item.countKey ? counts[item.countKey] : undefined} />
+          ))}
+        </ul>
+
+        <p className="eyebrow mt-5 mb-1.5 px-2">Operations</p>
+        <ul className="space-y-px">
+          {OPERATIONS_NAV.filter((item) => !item.permission || can(item.permission)).map((item) => (
+            <NavRow key={item.to} item={item} />
           ))}
         </ul>
 
