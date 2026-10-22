@@ -29,6 +29,8 @@ export const SYSTEM_ACTOR: PublicUser = {
   username: 'system',
   name: 'InfraTicket',
   role: 'admin',
+  roleId: null,
+  roleName: 'System',
   status: 'active',
   jobTitle: null,
   phone: null,

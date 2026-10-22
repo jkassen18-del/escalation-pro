@@ -27,10 +27,25 @@ const ROTATION_LABELS: Record<RotationKind, string> = {
   roster: 'Fixed roster',
 };
 
+/**
+ * Whether the signed-in person may edit a department's on-call: every
+ * department with "Manage all on-call", only their own with "Manage own
+ * department's on-call". The server applies the same rule.
+ */
+function useOnCallAccess() {
+  const { user, can } = useAuth();
+  return {
+    canCreate: can('oncall.manage', 'oncall.manage_own_department'),
+    managesAll: can('oncall.manage'),
+    manages: (teamId: string | null | undefined) =>
+      can('oncall.manage') || (can('oncall.manage_own_department') && Boolean(teamId && user?.teamIds.includes(teamId))),
+  };
+}
+
 export function ScheduleTab({ people, teams }: { people: DirectoryPerson[]; teams: Team[] }) {
-  const { can } = useAuth();
   const toast = useToast();
-  const manage = can('oncall.manage');
+  const access = useOnCallAccess();
+  const manage = access.canCreate;
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -86,7 +101,7 @@ export function ScheduleTab({ people, teams }: { people: DirectoryPerson[]; team
               ))}
             </Select>
             <div className="flex-1" />
-            {manage && current && (
+            {current && access.manages(current.teamId) && (
               <>
                 <Button variant="ghost" size="sm" onClick={() => setDeleting(current)}>
                   <Trash2 className="size-3.5" />
@@ -148,6 +163,7 @@ export function ScheduleTab({ people, teams }: { people: DirectoryPerson[]; team
 
 function ScheduleDetail({ schedule, people, onChanged }: { schedule: Schedule; people: DirectoryPerson[]; onChanged: () => Promise<void> }) {
   const { user, can } = useAuth();
+  const managesThis = useOnCallAccess().manages(schedule.teamId);
   const toast = useToast();
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [adding, setAdding] = useState(false);
@@ -262,10 +278,12 @@ function ScheduleDetail({ schedule, people, onChanged }: { schedule: Schedule; p
       <div className="rounded-md border surface">
         <div className="flex items-center justify-between border-b px-4 py-2.5">
           <p className="text-xs font-semibold">Overrides</p>
-          <Button variant="secondary" size="sm" onClick={() => setAdding(true)}>
-            <Plus className="size-3.5" />
-            Add override
-          </Button>
+          {(managesThis || can('oncall.cover')) && (
+            <Button variant="secondary" size="sm" onClick={() => setAdding(true)}>
+              <Plus className="size-3.5" />
+              Add override
+            </Button>
+          )}
         </div>
         {schedule.overrides.length === 0 ? (
           <p className="px-4 py-3 text-xs text-muted">No overrides. Add one to cover a shift, swap, or holiday.</p>
@@ -281,7 +299,7 @@ function ScheduleDetail({ schedule, people, onChanged }: { schedule: Schedule; p
                   </span>
                   {override.note && <span className="block truncate text-subtle">{override.note}</span>}
                 </span>
-                {(can('oncall.manage') || override.userId === user?.id) && (
+                {(managesThis || (override.userId === user?.id && can('oncall.cover'))) && (
                   <Button variant="ghost" size="icon" onClick={() => removeOverride(override.id)} aria-label="Remove override">
                     <X className="size-3.5" />
                   </Button>
@@ -319,9 +337,9 @@ function OverrideDialog({
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
-  const { user, can } = useAuth();
+  const { user } = useAuth();
   const toast = useToast();
-  const manage = can('oncall.manage');
+  const manage = useOnCallAccess().manages(schedule.teamId);
   const start = new Date();
   start.setMinutes(0, 0, 0);
   start.setHours(start.getHours() + 1);
@@ -424,10 +442,12 @@ function ScheduleDialog({
   onSaved: (schedule: Schedule) => Promise<void>;
 }) {
   const toast = useToast();
+  const access = useOnCallAccess();
   const [form, setForm] = useState({
     name: schedule?.name ?? '',
     description: schedule?.description ?? '',
-    teamId: schedule?.teamId ?? '',
+    // Someone who manages only their own departments starts on one of them.
+    teamId: schedule?.teamId ?? (access.managesAll ? '' : teams.find((team) => access.manages(team.id))?.id ?? ''),
     timeZone: schedule?.timeZone ?? 'Africa/Johannesburg',
   });
   const [layers, setLayers] = useState<LayerDraft[]>(
@@ -481,8 +501,8 @@ function ScheduleDialog({
           </Field>
           <Field label="Team">
             <Select value={form.teamId} onChange={(event) => setForm((f) => ({ ...f, teamId: event.target.value }))}>
-              <option value="">No team</option>
-              {teams.map((team) => (
+              {access.managesAll && <option value="">No team</option>}
+              {teams.filter((team) => access.manages(team.id)).map((team) => (
                 <option key={team.id} value={team.id}>
                   {team.name}
                 </option>

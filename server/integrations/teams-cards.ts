@@ -102,9 +102,13 @@ export interface TicketCardOptions {
   fields: TeamFormField[];
   /** Shown at the top so somebody knows which department they are writing to. */
   organizationName?: string;
+  /** Filled in already, e.g. the message a ticket is being raised from. */
+  prefill?: { subject?: string; description?: string };
+  /** Added to what the submit button sends, e.g. which step of a form this is. */
+  submitData?: Record<string, unknown>;
 }
 
-export function buildTicketCard({ team, fields, organizationName }: TicketCardOptions) {
+export function buildTicketCard({ team, fields, organizationName, prefill, submitData }: TicketCardOptions) {
   const body: unknown[] = [
     {
       type: 'TextBlock',
@@ -124,9 +128,10 @@ export function buildTicketCard({ team, fields, organizationName }: TicketCardOp
       isRequired: true,
       errorMessage: 'Give it a one-line summary',
       placeholder: 'One line: what is wrong?',
+      ...(prefill?.subject ? { value: prefill.subject.slice(0, 200) } : {}),
     },
     { type: 'TextBlock', text: 'Details', weight: 'Bolder', size: 'Small', spacing: 'Medium' },
-    { type: 'Input.Text', id: 'description', isMultiline: true },
+    { type: 'Input.Text', id: 'description', isMultiline: true, ...(prefill?.description ? { value: prefill.description } : {}) },
     { type: 'TextBlock', text: 'Priority', weight: 'Bolder', size: 'Small', spacing: 'Medium' },
     {
       type: 'Input.ChoiceSet',
@@ -150,7 +155,7 @@ export function buildTicketCard({ team, fields, organizationName }: TicketCardOp
       {
         type: 'Action.Submit',
         title: 'Raise it',
-        data: { action: TICKET_CARD_ACTION, teamId: team.id },
+        data: { ...submitData, action: TICKET_CARD_ACTION, teamId: team.id },
       },
     ],
   };

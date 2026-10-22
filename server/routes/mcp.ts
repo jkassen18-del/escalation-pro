@@ -328,7 +328,7 @@ connectorRouter.get(
 
 connectorRouter.put(
   '/settings',
-  requirePermission('settings.manage'),
+  requirePermission('connector.manage'),
   asyncRoute(async (req, res) => {
     const user = (req as AuthedRequest).user;
     const body = (req.body ?? {}) as Record<string, unknown>;
@@ -364,7 +364,7 @@ connectorRouter.get(
 
 connectorRouter.get(
   '/tokens/all',
-  requirePermission('settings.manage'),
+  requirePermission('connector.manage'),
   asyncRoute(async (_req, res) => {
     res.json(await listApiTokens(null));
   }),
@@ -372,6 +372,7 @@ connectorRouter.get(
 
 connectorRouter.post(
   '/tokens',
+  requirePermission('connector.use'),
   asyncRoute(async (req, res) => {
     const user = (req as AuthedRequest).user;
     if (!(await loadConnectorSettings()).enabled) throw forbidden('An administrator has turned off the Claude connector.');
@@ -402,7 +403,7 @@ connectorRouter.delete(
     const user = (req as AuthedRequest).user;
     const token = await findApiToken(String(req.params.id));
     if (!token) throw notFound('Token not found');
-    if (token.userId !== user.id && !can(user, 'settings.manage')) throw notFound('Token not found');
+    if (token.userId !== user.id && !can(user, 'connector.manage')) throw notFound('Token not found');
     await revokeApiToken(token.id);
     await recordAudit({
       actorId: user.id,
@@ -460,6 +461,7 @@ connectorRouter.get(
 
 connectorRouter.post(
   '/requests/:id/approve',
+  requirePermission('connector.use'),
   asyncRoute(async (req, res) => {
     const user = (req as AuthedRequest).user;
     const settings = await loadConnectorSettings();
@@ -494,7 +496,7 @@ connectorRouter.post(
 
 connectorRouter.get(
   '/clients',
-  requirePermission('settings.manage'),
+  requirePermission('connector.manage'),
   asyncRoute(async (_req, res) => {
     res.json(await listConfidentialClients());
   }),
@@ -502,7 +504,7 @@ connectorRouter.get(
 
 connectorRouter.post(
   '/clients',
-  requirePermission('settings.manage'),
+  requirePermission('connector.manage'),
   asyncRoute(async (req, res) => {
     const user = (req as AuthedRequest).user;
     const body = (req.body ?? {}) as Record<string, unknown>;
@@ -523,7 +525,7 @@ connectorRouter.post(
 
 connectorRouter.patch(
   '/clients/:id',
-  requirePermission('settings.manage'),
+  requirePermission('connector.manage'),
   asyncRoute(async (req, res) => {
     const user = (req as AuthedRequest).user;
     const body = (req.body ?? {}) as Record<string, unknown>;
@@ -548,7 +550,7 @@ connectorRouter.patch(
 
 connectorRouter.delete(
   '/clients/:id',
-  requirePermission('settings.manage'),
+  requirePermission('connector.manage'),
   asyncRoute(async (req, res) => {
     const user = (req as AuthedRequest).user;
     if (!(await deleteConfidentialClient(String(req.params.id)))) throw notFound('Client not found');

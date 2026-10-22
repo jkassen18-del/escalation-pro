@@ -11,6 +11,7 @@ import type {
   IntegrationSummary,
   Notification,
   Permission,
+  Role,
   PublicUser,
   ReportSummary,
   Team,
@@ -145,10 +146,10 @@ export const api = {
       }>('/users/directory'),
     meta: () =>
       get<{
-        roles: Array<{ value: string; label: string; description: string }>;
+        roles: Role[];
         permissionGroups: Array<{
           label: string;
-          permissions: Array<{ key: Permission; label: string; hint: string }>;
+          permissions: Array<{ key: Permission; label: string; hint: string; impliedBy?: Permission; everyone?: boolean }>;
         }>;
         allPermissions: Permission[];
       }>('/users/meta'),
@@ -159,6 +160,14 @@ export const api = {
     resetPassword: (id: string, body: { password?: string; mustChangePassword?: boolean }) =>
       post<{ ok: true; temporaryPassword?: string }>(`/users/${id}/reset-password`, body),
     remove: (id: string) => del<{ ok: true }>(`/users/${id}`),
+  },
+  roles: {
+    list: () => get<{ roles: Role[] }>('/roles'),
+    create: (body: { name: string; description?: string | null; permissions: Permission[] }) => post<{ role: Role }>('/roles', body),
+    update: (id: string, body: { name?: string; description?: string | null; permissions?: Permission[] }) =>
+      patch<{ role: Role }>(`/roles/${id}`, body),
+    remove: (id: string, replacementRoleId?: string) =>
+      del<{ ok: true }>(`/roles/${id}${replacementRoleId ? `?replacementRoleId=${encodeURIComponent(replacementRoleId)}` : ''}`),
   },
 
   teams: {

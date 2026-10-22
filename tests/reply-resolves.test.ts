@@ -114,6 +114,14 @@ before(async () => {
   await addUser('u-viewer', 'viewer@acme.test', 'viewer');
   await addUser('u-req', 'requester@acme.test', 'agent');
 
+  // Departmental access: the agent works the department these tickets belong to.
+  await db.run(
+    `INSERT INTO teams (id, key, name, color, auto_assign, default_priority, sla_response_mins, sla_resolve_mins, created_at, updated_at)
+     VALUES ('team-sup', 'SUP', 'Support', '#888', 'none', 'normal', 240, 2880, ?, ?)`,
+    [now, now],
+  );
+  await db.run(`INSERT INTO team_members (team_id, user_id, is_lead) VALUES ('team-sup', 'u-agent', 0)`);
+
   await db.run('INSERT INTO counters (name, value) VALUES (?, ?) ON CONFLICT (name) DO NOTHING', ['ticket_number', 1000]);
 
   const { saveIntegration } = await import('../server/integrations/store.ts');
@@ -156,8 +164,8 @@ async function newTicket(status = 'open') {
   const issue = `lin-issue-${counter}`;
   const now = new Date().toISOString();
   await db.run(
-    `INSERT INTO tickets (id, number, subject, description, description_format, requester_id, status, priority, type, source, tags, escalation_level, created_at, updated_at)
-     VALUES (?, ?, 'Payments failing', '', 'text', 'u-req', ?, 'high', 'incident', 'web', '[]', 0, ?, ?)`,
+    `INSERT INTO tickets (id, number, subject, description, description_format, team_id, requester_id, status, priority, type, source, tags, escalation_level, created_at, updated_at)
+     VALUES (?, ?, 'Payments failing', '', 'text', 'team-sup', 'u-req', ?, 'high', 'incident', 'web', '[]', 0, ?, ?)`,
     [id, 5000 + counter, status, now, now],
   );
   await db.run(

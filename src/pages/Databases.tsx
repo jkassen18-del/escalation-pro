@@ -42,6 +42,7 @@ function destinationLabel(job: BackupJob): string {
 export function DatabasesPage() {
   useDocumentTitle('Databases');
   const toast = useToast();
+  const { can } = useAuth();
   const [databases, setDatabases] = useState<BackupJob[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(true);
@@ -75,10 +76,12 @@ export function DatabasesPage() {
         title="Databases"
         description="Connect the databases you run to check their health and back them up on a schedule: compressed, encrypted with a key per backup, and verified."
         actions={
-          <Button variant="primary" size="sm" onClick={() => setEditing('new')}>
-            <Plus className="size-3.5" />
-            Add database
-          </Button>
+          can('databases.manage') ? (
+            <Button variant="primary" size="sm" onClick={() => setEditing('new')}>
+              <Plus className="size-3.5" />
+              Add database
+            </Button>
+          ) : undefined
         }
       />
 
@@ -146,8 +149,12 @@ export function DatabasesPage() {
                       )}
                       items={[
                         { label: 'Open', onSelect: () => setSelected(db.id) },
-                        { label: 'Edit', onSelect: () => setEditing(db) },
-                        { label: 'Remove', icon: Trash2, destructive: true, onSelect: () => setDeleting(db) },
+                        ...(can('databases.manage')
+                          ? [
+                              { label: 'Edit', onSelect: () => setEditing(db) },
+                              { label: 'Remove', icon: Trash2, destructive: true, onSelect: () => setDeleting(db) },
+                            ]
+                          : []),
                       ]}
                     />
                   </td>
@@ -268,16 +275,22 @@ function DatabaseDetail({
             <p className="mt-1 break-all font-mono text-2xs text-subtle">{database.connectionHint}</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" size="sm" loading={testing} onClick={testConnection}>
-              Test connection
-            </Button>
-            <Button variant="secondary" size="sm" onClick={onEdit}>
-              Edit
-            </Button>
-            <Button variant="primary" size="sm" loading={running} onClick={backUpNow}>
-              <Play className="size-3.5" />
-              Back up now
-            </Button>
+            {can('databases.manage', 'monitors.manage') && (
+              <Button variant="secondary" size="sm" loading={testing} onClick={testConnection}>
+                Test connection
+              </Button>
+            )}
+            {can('databases.manage') && (
+              <Button variant="secondary" size="sm" onClick={onEdit}>
+                Edit
+              </Button>
+            )}
+            {can('backups.manage') && (
+              <Button variant="primary" size="sm" loading={running} onClick={backUpNow}>
+                <Play className="size-3.5" />
+                Back up now
+              </Button>
+            )}
           </div>
         </div>
         <dl className="mt-3 grid gap-2 border-t pt-3 text-xs sm:grid-cols-4">

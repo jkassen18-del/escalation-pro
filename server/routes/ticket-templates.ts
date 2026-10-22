@@ -31,7 +31,7 @@ ticketTemplatesRouter.get(
   asyncRoute(async (req, res) => {
     const user = (req as AuthedRequest).user;
     const templates = await listTemplates();
-    if (req.query.all === '1' && can(user, 'teams.manage')) {
+    if (req.query.all === '1' && can(user, 'templates.manage')) {
       res.json({ templates });
       return;
     }
@@ -41,7 +41,7 @@ ticketTemplatesRouter.get(
 
 ticketTemplatesRouter.post(
   '/',
-  requirePermission('teams.manage'),
+  requirePermission('templates.manage'),
   asyncRoute(async (req, res) => {
     const user = (req as AuthedRequest).user;
     const template = await saveTemplate(null, validateTemplate(req.body ?? {}), user.id);
@@ -60,7 +60,7 @@ ticketTemplatesRouter.post(
 
 ticketTemplatesRouter.put(
   '/:id',
-  requirePermission('teams.manage'),
+  requirePermission('templates.manage'),
   asyncRoute(async (req, res) => {
     const user = (req as AuthedRequest).user;
     const previous = await findTemplate(req.params.id);
@@ -81,7 +81,7 @@ ticketTemplatesRouter.put(
 
 ticketTemplatesRouter.delete(
   '/:id',
-  requirePermission('teams.manage'),
+  requirePermission('templates.manage'),
   asyncRoute(async (req, res) => {
     const user = (req as AuthedRequest).user;
     const template = await findTemplate(req.params.id);

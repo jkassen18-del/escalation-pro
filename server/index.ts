@@ -15,6 +15,7 @@ import { attachUser } from './middleware/auth.ts';
 import { authRouter } from './routes/auth.ts';
 import { brandingRouter } from './routes/branding.ts';
 import { usersRouter } from './routes/users.ts';
+import { rolesRouter } from './routes/roles.ts';
 import { teamsRouter } from './routes/teams.ts';
 import { ticketsRouter } from './routes/tickets.ts';
 import { ticketTemplatesRouter } from './routes/ticket-templates.ts';
@@ -176,6 +177,7 @@ export async function createApp() {
   const screenshotJson = express.json({ limit: '30mb' });
   app.use(SCREENSHOT_ROUTES, (req, res, next) => ((req as Request & { user?: unknown }).user ? screenshotJson(req, res, next) : next()));
   app.use('/api/users', usersRouter);
+  app.use('/api/roles', rolesRouter);
   app.use('/api/teams', teamsRouter);
   app.use('/api/tickets/:id/attachments', attachmentsRouter);
   app.use('/api/tickets', ticketsRouter);

@@ -14,6 +14,8 @@ import {
 } from '../integrations/linear.ts';
 import { findUserById } from '../repositories/users.ts';
 import { can } from '../middleware/auth.ts';
+import { statusPermission } from '../permissions.ts';
+import { canSeeTicket } from '../services/ticket-actions.ts';
 import { findTicketBySlackThread, type SlackConfig } from '../integrations/slack.ts';
 import {
   isThreadReply,
@@ -46,6 +48,7 @@ import {
   readCardSubmission,
   TICKET_CARD_ACTION,
 } from '../integrations/teams-cards.ts';
+import { handleTeamsAppMessage, handleTeamsInvoke } from '../integrations/teams-app.ts';
 import { rememberConversation } from '../repositories/teams-conversations.ts';
 import type { MsTeamsConfig } from '../integrations/msteams.ts';
 import { buildTicketModal, readSubmission, TEAM_ACTION, TICKET_MODAL_CALLBACK } from '../integrations/slack-modal.ts';
@@ -347,7 +350,7 @@ async function respondToLinearComment(payload: LinearCommentPayload, config: Lin
    */
   if (saysResolved(body) && !TERMINAL_STATUSES.includes(ticket.status)) {
     const user = author ? await findUserById(author.id) : null;
-    if (user && user.status === 'active' && can(user, 'tickets.update')) {
+    if (user && user.status === 'active' && can(user, 'tickets.close') && canSeeTicket(user, ticket)) {
       const change = await applyStatus(ticket.id, 'resolved', user.id);
       if (change?.changed) {
         await announceStatusChange(ticket, 'resolved', change.from, user, 'Linear', 'commented on the issue');
@@ -562,7 +565,10 @@ async function resolveFromSlack(
   // back to resolved.
   if (TERMINAL_STATUSES.includes(ticket.status)) return 'already';
 
-  const actor = await resolveActor(config.botToken ?? '', slackUserId, 'tickets.update');
+  const resolved = await resolveActor(config.botToken ?? '', slackUserId, 'tickets.close');
+  // Departmental access: a person may only resolve tickets they could open.
+  const actor: typeof resolved =
+    resolved.ok && !canSeeTicket(resolved.user, ticket) ? { ok: false, message: 'That ticket belongs to a department you are not in.' } : resolved;
   if (!actor.ok) {
     if (channel && config.botToken) {
       await slackApi(config.botToken, 'chat.postEphemeral', {
@@ -630,17 +636,19 @@ webhooksRouter.post(
     // handle. Acknowledged and dropped.
     if (!next || !ticketId || !payload.user?.id) return res.json({ ok: true, ignored: true });
 
-    const actor = await resolveActor(config.botToken ?? '', payload.user.id, 'tickets.update');
-    if (!actor.ok) {
-      if (responseUrl) await respondEphemeral(responseUrl, actor.message);
-      return res.json({ ok: true, refused: true });
-    }
-
     const settings = await getSettings();
     const ticket = await findTicket(ticketId, settings.ticketPrefix);
     if (!ticket) {
       if (responseUrl) await respondEphemeral(responseUrl, 'That ticket no longer exists.');
       return res.json({ ok: true, ignored: true });
+    }
+
+    const resolved = await resolveActor(config.botToken ?? '', payload.user.id, statusPermission(ticket.status, next));
+    const actor: typeof resolved =
+      resolved.ok && !canSeeTicket(resolved.user, ticket) ? { ok: false, message: 'That ticket belongs to a department you are not in.' } : resolved;
+    if (!actor.ok) {
+      if (responseUrl) await respondEphemeral(responseUrl, actor.message);
+      return res.json({ ok: true, refused: true });
     }
 
     const change = await applyStatus(ticket.id, next, actor.user.id);
@@ -916,6 +924,10 @@ webhooksRouter.post(
       return res.json({ ok: true });
     }
 
+    // Forms opened from the compose box, a message's … menu or a card: Teams
+    // reads the answer from this response's body.
+    if (activity.type === 'invoke') return res.json(await handleTeamsInvoke(activity, config));
+
     if (!isFromPerson(activity)) return res.json({ ok: true, ignored: true });
 
     // A submitted card carries its data in `value`, with no text at all.
@@ -929,6 +941,9 @@ webhooksRouter.post(
       const ticketId = await findTicketByTeamsThread(rootId);
       if (ticketId) return handleTeamsReply(activity, config, ticketId, res);
     }
+
+    // The app's own commands (help, new, status, mine, oncall, custom ones).
+    if (await handleTeamsAppMessage(activity, config)) return res.json({ ok: true });
 
     return handleTeamsCommand(activity, config, res);
   }),

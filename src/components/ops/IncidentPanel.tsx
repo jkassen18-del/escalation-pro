@@ -71,6 +71,7 @@ export function IncidentPanel({
   onChanged: () => Promise<void>;
 }) {
   const toast = useToast();
+  const canPage = useAuth().can('tickets.page');
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [pages, setPages] = useState<Page[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -115,7 +116,7 @@ export function IncidentPanel({
           <BellRing className="size-3.5 text-[var(--priority-urgent)]" />
           Incident
         </h2>
-        {editable && (
+        {canPage && (
           <Button size="sm" variant="secondary" onClick={() => setPageOpen(true)}>
             <PhoneCall className="size-3.5" />
             Page someone
@@ -208,11 +209,12 @@ export function IncidentPanel({
 }
 
 function PageCard({ page, onAck, onEscalate }: { page: Page; onAck: () => Promise<void>; onEscalate: () => Promise<void> }) {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState<Page | null>(null);
   const [working, setWorking] = useState<'ack' | 'esc' | null>(null);
   const live = page.status === 'triggered';
+  const canRespond = can('pages.respond', 'oncall.manage');
   const pagingMe = Boolean(user && page.currentTargetIds.includes(user.id));
 
   const toggle = async () => {
@@ -246,7 +248,7 @@ function PageCard({ page, onAck, onEscalate }: { page: Page; onAck: () => Promis
             {page.cycle > 0 ? ` · pass ${page.cycle + 1}` : ''}
           </span>
         </div>
-        {live && (
+        {live && canRespond && (
           <div className="flex gap-1.5">
             <Button size="sm" variant={pagingMe ? 'danger' : 'primary'} loading={working === 'ack'} onClick={() => run('ack', onAck)}>
               Acknowledge

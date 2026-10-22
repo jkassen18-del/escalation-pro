@@ -227,7 +227,8 @@ test('only someone a page reached, or an on-call manager, can ack or escalate it
   assert.equal((await call('viewer', 'POST', '/api/ops/pages/page-1/ack')).status, 403);
   const acked = await call('agent', 'POST', '/api/ops/pages/page-1/ack');
   assert.equal(acked.status, 200, JSON.stringify(acked.payload));
-  // A manager holds oncall.manage.
+  // A manager may act on pages for their own department's tickets.
+  await db.run('INSERT INTO team_members (team_id, user_id, is_lead) VALUES (?, ?, 0) ON CONFLICT (team_id, user_id) DO NOTHING', [teamId, 'manager']);
   assert.equal((await call('manager', 'POST', '/api/ops/pages/page-2/ack')).status, 200);
 });
 

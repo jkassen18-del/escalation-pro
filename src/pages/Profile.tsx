@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { api, ApiError } from '@/lib/api';
-import { ROLE_LABELS, fullDateTime } from '@/lib/format';
+import { fullDateTime } from '@/lib/format';
 import { useAuth } from '@/state/auth';
 import { useTheme } from '@/state/theme';
 import { useToast } from '@/components/ui/Toast';
@@ -16,7 +16,7 @@ import { ConnectClaudeCard } from '@/components/connector/ConnectClaudeCard';
 
 export function ProfilePage() {
   useDocumentTitle('Profile');
-  const { user, refresh } = useAuth();
+  const { user, refresh, can } = useAuth();
   const { theme, setTheme } = useTheme();
   const toast = useToast();
 
@@ -69,7 +69,7 @@ export function ProfilePage() {
               <p className="truncate text-xs text-muted">{user.email}</p>
             </div>
             <Badge dot={false} className="ml-auto">
-              {ROLE_LABELS[user.role]}
+              {user.roleName}
             </Badge>
           </div>
 
@@ -101,7 +101,7 @@ export function ProfilePage() {
 
         <DiscordLinkCard />
 
-        <ConnectClaudeCard />
+        {can('connector.use') && <ConnectClaudeCard />}
 
         <section className="rounded-md border surface">
           <h2 className="border-b px-4 py-2.5 text-xs font-semibold">Appearance</h2>

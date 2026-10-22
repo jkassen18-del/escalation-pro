@@ -14,7 +14,7 @@ import {
   storeMode,
   uploadTempDir,
 } from '../lib/attachment-store.ts';
-import { can, requireAuth, type AuthedRequest } from '../middleware/auth.ts';
+import { can, requireAuth, requirePermission, type AuthedRequest } from '../middleware/auth.ts';
 import { findTicket, INTERNAL_ATTACHMENT_FILTER, recordEvent } from '../repositories/tickets.ts';
 import { canSeeTicket } from '../services/ticket-actions.ts';
 import { getSettings } from '../repositories/settings.ts';
@@ -95,6 +95,7 @@ async function checkUpload(req: Request) {
 
 attachmentsRouter.post(
   '/',
+  requirePermission('tickets.attach'),
   upload.array('files', 5),
   asyncRoute(async (req, res) => {
     const user = (req as AuthedRequest).user;
@@ -167,7 +168,7 @@ attachmentsRouter.delete(
       [req.params.attachmentId, ticket.id],
     );
     if (!row) throw notFound('That attachment does not exist.');
-    if (row.uploaded_by !== user.id && !can(user, 'tickets.delete')) {
+    if (row.uploaded_by !== user.id && !can(user, 'tickets.delete_attachment')) {
       throw forbidden('You can only remove attachments you uploaded.');
     }
 

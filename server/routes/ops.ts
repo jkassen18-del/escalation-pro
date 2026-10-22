@@ -23,7 +23,7 @@ import {
   validateMaintenance,
 } from '../ops/maintenance.ts';
 import { deleteJob, getJob, jobConnection, listJobs, listRuns, openDecryptedBackup, runBackup, saveJob, validateJob } from '../ops/backups.ts';
-import { canActOnPage, redactMonitor, redactSource } from '../ops/access.ts';
+import { canActOnPage, canManageOnCallFor, filterToVisibleTickets, redactMonitor, redactSource } from '../ops/access.ts';
 import { checkDatabaseHealth } from '../ops/db-health.ts';
 import { checkMonitorNow, deleteMonitor, getMonitor, listMonitors, monitorChecks, monitorDays, saveMonitor, validateMonitor } from '../ops/monitors.ts';
 import {
@@ -69,6 +69,7 @@ async function audit(req: Request, input: Omit<AuditInput, 'actorId' | 'actorNam
 
 opsRouter.get(
   '/overview',
+  requirePermission('ops.view'),
   asyncRoute(async (req, res) => {
     const [monitors, alerts, pages, schedules, jobs] = await Promise.all([
       listMonitors(),
@@ -82,8 +83,8 @@ opsRouter.get(
       inMaintenance: monitors
         .filter((m) => m.maintenance)
         .map((m) => ({ monitorId: m.id, name: m.name, state: m.state, ...m.maintenance! })),
-      openAlerts: alerts,
-      activePages: pages,
+      openAlerts: await filterToVisibleTickets(alerts, userOf(req)),
+      activePages: await filterToVisibleTickets(pages, userOf(req)),
       myPages: pages.filter((p) => p.currentTargetIds.includes(userOf(req).id)),
       onCall: schedules.map((s) => ({ scheduleId: s.id, scheduleName: s.name, teamName: s.teamName, ...s.onCallNow })),
       backups: { total: jobs.length, failing: jobs.filter((j) => j.lastStatus === 'failed').length },
@@ -93,10 +94,11 @@ opsRouter.get(
 
 /* -------------------------------- Monitors -------------------------------- */
 
-opsRouter.get('/monitors', asyncRoute(async (req, res) => res.json({ monitors: (await listMonitors()).map((m) => redactMonitor(m, userOf(req))) })));
+opsRouter.get('/monitors', requirePermission('ops.view'), asyncRoute(async (req, res) => res.json({ monitors: (await listMonitors()).map((m) => redactMonitor(m, userOf(req))) })));
 
 opsRouter.get(
   '/monitors/:id',
+  requirePermission('ops.view'),
   asyncRoute(async (req, res) => {
     const monitor = await getMonitor(req.params.id);
     if (!monitor) throw notFound('That monitor does not exist.');
@@ -151,12 +153,14 @@ opsRouter.post(
 
 opsRouter.get(
   '/alerts',
+  requirePermission('ops.view'),
   asyncRoute(async (req, res) => {
-    res.json({ alerts: await listAlerts({ status: optionalString(req.query.status, 20) ?? undefined, ticketId: optionalString(req.query.ticketId, 60) ?? undefined }) });
+    const alerts = await listAlerts({ status: optionalString(req.query.status, 20) ?? undefined, ticketId: optionalString(req.query.ticketId, 60) ?? undefined });
+    res.json({ alerts: await filterToVisibleTickets(alerts, userOf(req)) });
   }),
 );
 
-opsRouter.get('/alert-sources', asyncRoute(async (req, res) => res.json({ sources: (await listSources()).map((s) => redactSource(s, userOf(req))) })));
+opsRouter.get('/alert-sources', requirePermission('ops.view'), asyncRoute(async (req, res) => res.json({ sources: (await listSources()).map((s) => redactSource(s, userOf(req))) })));
 
 opsRouter.post(
   '/alert-sources',
@@ -235,11 +239,12 @@ async function maintenanceListing() {
   return { windows: await listMaintenanceWindows(), occurrences };
 }
 
-opsRouter.get('/maintenance', asyncRoute(async (_req, res) => res.json(await maintenanceListing())));
+opsRouter.get('/maintenance', requirePermission('ops.view'), asyncRoute(async (_req, res) => res.json(await maintenanceListing())));
 
 /** What is in maintenance right now, for the banner every page shows. */
 opsRouter.get(
   '/maintenance/active',
+  requirePermission('ops.view'),
   asyncRoute(async (_req, res) => {
     const active = await activeOccurrences();
     res.json({
@@ -258,7 +263,7 @@ async function loadWindow(id: string) {
 
 opsRouter.post(
   '/maintenance',
-  requirePermission('monitors.manage'),
+  requirePermission('maintenance.manage'),
   asyncRoute(async (req, res) => {
     const window = await saveMaintenance(null, validateMaintenance(req.body ?? {}), userOf(req).id);
     await audit(req, {
@@ -273,7 +278,7 @@ opsRouter.post(
 
 opsRouter.put(
   '/maintenance/:id',
-  requirePermission('monitors.manage'),
+  requirePermission('maintenance.manage'),
   asyncRoute(async (req, res) => {
     await loadWindow(req.params.id);
     const window = await saveMaintenance(req.params.id, validateMaintenance(req.body ?? {}), userOf(req).id);
@@ -285,7 +290,7 @@ opsRouter.put(
 /** Cancels the window, or with `occurrence` skips one occurrence of a recurring window. */
 opsRouter.post(
   '/maintenance/:id/cancel',
-  requirePermission('monitors.manage'),
+  requirePermission('maintenance.manage'),
   asyncRoute(async (req, res) => {
     const row = await loadWindow(req.params.id);
     const occurrence = optionalString(req.body?.occurrence, 40) ?? undefined;
@@ -302,7 +307,7 @@ opsRouter.post(
 
 opsRouter.post(
   '/maintenance/:id/end',
-  requirePermission('monitors.manage'),
+  requirePermission('maintenance.manage'),
   asyncRoute(async (req, res) => {
     const row = await loadWindow(req.params.id);
     if (!(await endMaintenanceNow(row))) throw badRequest('This maintenance is not in progress.');
@@ -313,7 +318,7 @@ opsRouter.post(
 
 opsRouter.post(
   '/maintenance/:id/extend',
-  requirePermission('monitors.manage'),
+  requirePermission('maintenance.manage'),
   asyncRoute(async (req, res) => {
     const row = await loadWindow(req.params.id);
     const until = optionalString(req.body?.until, 40) ?? undefined;
@@ -333,7 +338,7 @@ opsRouter.post(
 /** Removes a window from the history entirely. Cancel is the usual way to stop one. */
 opsRouter.delete(
   '/maintenance/:id',
-  requirePermission('monitors.manage'),
+  requirePermission('maintenance.manage'),
   asyncRoute(async (req, res) => {
     const row = await loadWindow(req.params.id);
     await db.run(`DELETE FROM maintenance_windows WHERE id = ?`, [row.id]);
@@ -344,11 +349,11 @@ opsRouter.delete(
 
 /* ------------------------------ Alert routing ----------------------------- */
 
-opsRouter.get('/alert-rules', asyncRoute(async (_req, res) => res.json({ rules: await listRules() })));
+opsRouter.get('/alert-rules', requirePermission('ops.view'), asyncRoute(async (_req, res) => res.json({ rules: await listRules() })));
 
 opsRouter.post(
   '/alert-rules',
-  requirePermission('monitors.manage'),
+  requirePermission('alerts.routing'),
   asyncRoute(async (req, res) => {
     const rule = await saveRule(null, validateRule(req.body ?? {}));
     await audit(req, { entityType: 'alert', entityId: rule.id, action: 'alert_rule_created', summary: `Created routing rule "${rule.name}"` });
@@ -358,7 +363,7 @@ opsRouter.post(
 
 opsRouter.put(
   '/alert-rules/order',
-  requirePermission('monitors.manage'),
+  requirePermission('alerts.routing'),
   asyncRoute(async (req, res) => {
     const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String).slice(0, 500) : [];
     const rules = await reorderRules(ids);
@@ -369,7 +374,7 @@ opsRouter.put(
 
 opsRouter.put(
   '/alert-rules/:id',
-  requirePermission('monitors.manage'),
+  requirePermission('alerts.routing'),
   asyncRoute(async (req, res) => {
     if (!(await getRule(req.params.id))) throw notFound('That rule does not exist.');
     const rule = await saveRule(req.params.id, validateRule(req.body ?? {}));
@@ -380,7 +385,7 @@ opsRouter.put(
 
 opsRouter.delete(
   '/alert-rules/:id',
-  requirePermission('monitors.manage'),
+  requirePermission('alerts.routing'),
   asyncRoute(async (req, res) => {
     const rule = await getRule(req.params.id);
     if (!rule) throw notFound('That rule does not exist.');
@@ -396,6 +401,7 @@ opsRouter.delete(
  */
 opsRouter.post(
   '/alert-rules/test',
+  requirePermission('ops.view'),
   asyncRoute(async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const severity = (SEVERITIES as readonly string[]).includes(String(body.severity)) ? (body.severity as Severity) : 'sev2';
@@ -441,10 +447,11 @@ function scheduleInput(body: Record<string, unknown>) {
   };
 }
 
-opsRouter.get('/schedules', asyncRoute(async (_req, res) => res.json({ schedules: await listSchedules() })));
+opsRouter.get('/schedules', requirePermission('ops.view'), asyncRoute(async (_req, res) => res.json({ schedules: await listSchedules() })));
 
 opsRouter.get(
   '/schedules/:id',
+  requirePermission('ops.view'),
   asyncRoute(async (req, res) => {
     const schedule = await getSchedule(req.params.id);
     if (!schedule) throw notFound('That schedule does not exist.');
@@ -458,6 +465,7 @@ opsRouter.get(
 /** iCalendar feed of the next 90 days, for Outlook or Google Calendar. Needs a signed-in session. */
 opsRouter.get(
   '/schedules/:id/calendar.ics',
+  requirePermission('ops.view'),
   asyncRoute(async (req, res) => {
     const schedule = await getSchedule(req.params.id);
     if (!schedule) throw notFound('That schedule does not exist.');
@@ -471,9 +479,11 @@ opsRouter.get(
 
 opsRouter.post(
   '/schedules',
-  requirePermission('oncall.manage'),
+  requirePermission('oncall.manage', 'oncall.manage_own_department'),
   asyncRoute(async (req, res) => {
-    const schedule = await saveSchedule(null, scheduleInput(req.body ?? {}));
+    const input = scheduleInput(req.body ?? {});
+    assertCanManageOnCall(req, input.teamId);
+    const schedule = await saveSchedule(null, input);
     await audit(req, { entityType: 'oncall', entityId: schedule.id, action: 'schedule_created', summary: `Created on-call schedule "${schedule.name}"` });
     res.status(201).json({ schedule });
   }),
@@ -481,10 +491,15 @@ opsRouter.post(
 
 opsRouter.put(
   '/schedules/:id',
-  requirePermission('oncall.manage'),
+  requirePermission('oncall.manage', 'oncall.manage_own_department'),
   asyncRoute(async (req, res) => {
-    if (!(await getSchedule(req.params.id))) throw notFound('That schedule does not exist.');
-    const schedule = await saveSchedule(req.params.id, scheduleInput(req.body ?? {}));
+    const existing = await getSchedule(req.params.id);
+    if (!existing) throw notFound('That schedule does not exist.');
+    const input = scheduleInput(req.body ?? {});
+    // Both ends: you cannot take another department's schedule, nor give yours away.
+    assertCanManageOnCall(req, existing.teamId);
+    assertCanManageOnCall(req, input.teamId);
+    const schedule = await saveSchedule(req.params.id, input);
     await audit(req, { entityType: 'oncall', entityId: schedule.id, action: 'schedule_updated', summary: `Updated on-call schedule "${schedule.name}"` });
     res.json({ schedule });
   }),
@@ -492,15 +507,22 @@ opsRouter.put(
 
 opsRouter.delete(
   '/schedules/:id',
-  requirePermission('oncall.manage'),
+  requirePermission('oncall.manage', 'oncall.manage_own_department'),
   asyncRoute(async (req, res) => {
     const schedule = await getSchedule(req.params.id);
     if (!schedule) throw notFound('That schedule does not exist.');
+    assertCanManageOnCall(req, schedule.teamId);
     await db.run(`DELETE FROM oncall_schedules WHERE id = ?`, [schedule.id]);
     await audit(req, { entityType: 'oncall', entityId: schedule.id, action: 'schedule_deleted', summary: `Deleted on-call schedule "${schedule.name}"` });
     res.status(204).end();
   }),
 );
+
+function assertCanManageOnCall(req: Request, teamId: string | null | undefined): void {
+  if (!canManageOnCallFor(userOf(req), teamId)) {
+    throw forbidden(teamId ? 'You can only change on-call for your own departments.' : 'Only an on-call manager can change a schedule that belongs to no department.');
+  }
+}
 
 /**
  * Overrides: an on-call manager can put anyone in; anyone else can only cover
@@ -514,7 +536,9 @@ opsRouter.post(
     const schedule = await getSchedule(req.params.id);
     if (!schedule) throw notFound('That schedule does not exist.');
     const userId = requireString(req.body?.userId ?? user.id, 'Person', { max: 60 });
-    if (userId !== user.id && !user.permissions.includes('oncall.manage')) throw badRequest('You can only add yourself as cover.');
+    const manages = canManageOnCallFor(user, schedule.teamId);
+    if (userId !== user.id && !manages) throw badRequest('You can only add yourself as cover.');
+    if (!manages && !user.permissions.includes('oncall.cover')) throw forbidden('You cannot cover on-call shifts.');
     const startsAt = new Date(String(req.body?.startsAt ?? ''));
     const endsAt = new Date(String(req.body?.endsAt ?? ''));
     if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) throw badRequest('Give a start and an end.');
@@ -530,7 +554,9 @@ opsRouter.delete(
     const user = userOf(req);
     const row = await db.get<{ user_id: string }>(`SELECT user_id FROM oncall_overrides WHERE id = ? AND schedule_id = ?`, [req.params.overrideId, req.params.id]);
     if (!row) throw notFound('That override does not exist.');
-    if (row.user_id !== user.id && !user.permissions.includes('oncall.manage')) throw badRequest('You can only remove your own cover.');
+    const manages = canManageOnCallFor(user, (await getSchedule(req.params.id))?.teamId);
+    if (row.user_id !== user.id && !manages) throw badRequest('You can only remove your own cover.');
+    if (!manages && !user.permissions.includes('oncall.cover')) throw forbidden('You cannot cover on-call shifts.');
     await db.run(`DELETE FROM oncall_overrides WHERE id = ?`, [req.params.overrideId]);
     res.status(204).end();
   }),
@@ -548,7 +574,7 @@ function policyInput(body: Record<string, unknown>) {
   };
 }
 
-opsRouter.get('/policies', asyncRoute(async (_req, res) => res.json({ policies: await listPolicies() })));
+opsRouter.get('/policies', requirePermission('ops.view'), asyncRoute(async (_req, res) => res.json({ policies: await listPolicies() })));
 
 opsRouter.post(
   '/policies',
@@ -602,6 +628,7 @@ opsRouter.delete(
 /** Which policy pages for a team's alerts when the monitor or source does not name one. */
 opsRouter.get(
   '/team-policies',
+  requirePermission('ops.view'),
   asyncRoute(async (_req, res) => {
     const rows = await db.all<{ id: string; name: string; escalation_policy_id: string | null }>(`SELECT id, name, escalation_policy_id FROM teams ORDER BY name`);
     res.json({ teams: rows.map((row) => ({ teamId: row.id, teamName: row.name, policyId: row.escalation_policy_id })) });
@@ -635,6 +662,7 @@ async function assertCanActOnPage(req: Request): Promise<void> {
 
 opsRouter.get(
   '/pages',
+  requirePermission('ops.view'),
   asyncRoute(async (req, res) => {
     const filter = String(req.query.filter ?? 'active');
     const pages = await listPages({
@@ -642,15 +670,16 @@ opsRouter.get(
       ticketId: optionalString(req.query.ticketId, 60) ?? undefined,
       userId: filter === 'mine' ? userOf(req).id : undefined,
     });
-    res.json({ pages });
+    res.json({ pages: await filterToVisibleTickets(pages, userOf(req)) });
   }),
 );
 
 opsRouter.get(
   '/pages/:id',
+  requirePermission('ops.view'),
   asyncRoute(async (req, res) => {
     const page = await getPage(req.params.id);
-    if (!page) throw notFound('That page does not exist.');
+    if (!page || !(await filterToVisibleTickets([page], userOf(req))).length) throw notFound('That page does not exist.');
     res.json({ page });
   }),
 );
@@ -677,7 +706,7 @@ opsRouter.post(
 /** Page someone about an existing ticket by hand ("get me the database on-call"). */
 opsRouter.post(
   '/tickets/:ticketId/page',
-  requirePermission('tickets.update'),
+  requirePermission('tickets.page'),
   asyncRoute(async (req, res) => {
     const settings = await getSettings();
     const ticket = await findTicket(req.params.ticketId, settings.ticketPrefix);
@@ -828,10 +857,11 @@ opsRouter.put(
 
 /* ------------------------------ Status pages ------------------------------ */
 
-opsRouter.get('/status-pages', asyncRoute(async (_req, res) => res.json({ pages: await listStatusPages() })));
+opsRouter.get('/status-pages', requirePermission('ops.view'), asyncRoute(async (_req, res) => res.json({ pages: await listStatusPages() })));
 
 opsRouter.get(
   '/status-pages/:id',
+  requirePermission('ops.view'),
   asyncRoute(async (req, res) => {
     const page = await getStatusPage(req.params.id);
     if (!page) throw notFound('That status page does not exist.');
@@ -874,7 +904,7 @@ opsRouter.delete(
 
 opsRouter.post(
   '/status-pages/:id/updates',
-  requirePermission('statuspages.manage'),
+  requirePermission('statuspages.post'),
   asyncRoute(async (req, res) => {
     const page = await getStatusPage(req.params.id);
     if (!page) throw notFound('That status page does not exist.');
@@ -892,11 +922,11 @@ opsRouter.post(
 
 /* ------------------------- Databases and backups -------------------------- */
 
-opsRouter.get('/databases', requirePermission('backups.manage', 'monitors.manage'), asyncRoute(async (_req, res) => res.json({ databases: await listJobs() })));
+opsRouter.get('/databases', requirePermission('databases.manage', 'backups.manage', 'backups.restore', 'monitors.manage'), asyncRoute(async (_req, res) => res.json({ databases: await listJobs() })));
 
 opsRouter.get(
   '/databases/:id',
-  requirePermission('backups.manage', 'monitors.manage'),
+  requirePermission('databases.manage', 'backups.manage', 'backups.restore', 'monitors.manage'),
   asyncRoute(async (req, res) => {
     const job = await getJob(req.params.id);
     if (!job) throw notFound('That database does not exist.');
@@ -906,7 +936,7 @@ opsRouter.get(
 
 opsRouter.post(
   '/databases',
-  requirePermission('backups.manage'),
+  requirePermission('databases.manage'),
   asyncRoute(async (req, res) => {
     const job = await saveJob(null, validateJob(req.body ?? {}, false));
     await audit(req, { entityType: 'backup', entityId: job.id, action: 'database_added', summary: `Added ${job.engine} database "${job.name}" (${job.connectionHint})` });
@@ -916,7 +946,7 @@ opsRouter.post(
 
 opsRouter.put(
   '/databases/:id',
-  requirePermission('backups.manage'),
+  requirePermission('databases.manage'),
   asyncRoute(async (req, res) => {
     const job = await saveJob(req.params.id, validateJob(req.body ?? {}, true));
     await audit(req, { entityType: 'backup', entityId: job.id, action: 'database_updated', summary: `Updated database "${job.name}"` });
@@ -926,7 +956,7 @@ opsRouter.put(
 
 opsRouter.delete(
   '/databases/:id',
-  requirePermission('backups.manage'),
+  requirePermission('databases.manage'),
   asyncRoute(async (req, res) => {
     const job = await getJob(req.params.id);
     if (!job) throw notFound('That database does not exist.');
@@ -939,7 +969,7 @@ opsRouter.delete(
 /** Tests a connection before it is saved, or a saved one when no connection is sent. */
 opsRouter.post(
   '/databases/test',
-  requirePermission('backups.manage', 'monitors.manage'),
+  requirePermission('databases.manage', 'monitors.manage'),
   asyncRoute(async (req, res) => {
     let engine = req.body?.engine;
     let connection = optionalString(req.body?.connection, 2000);

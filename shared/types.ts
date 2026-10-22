@@ -35,7 +35,10 @@ export interface PublicUser {
   email: string;
   username: string;
   name: string;
+  /** The legacy tier of the person's role: admin only for the Administrator role. */
   role: UserRole;
+  roleId: string | null;
+  roleName: string;
   status: UserStatus;
   jobTitle: string | null;
   phone: string | null;
@@ -45,7 +48,7 @@ export interface PublicUser {
   createdAt: string;
   updatedAt: string;
   teamIds: string[];
-  /** Role defaults plus per-user grants, already merged. */
+  /** The role's permissions plus per-user grants, already merged. */
   permissions: Permission[];
   /** Grants stored explicitly against this user, on top of their role. */
   extraPermissions: Permission[];
@@ -392,29 +395,82 @@ export interface ReportSummary {
   slaCompliancePct: number | null;
 }
 
-export type Permission =
-  | 'tickets.view_all'
-  | 'tickets.create'
-  | 'tickets.update'
-  | 'tickets.assign'
-  | 'tickets.delete'
-  | 'tickets.comment_internal'
-  | 'users.view'
-  | 'users.create'
-  | 'users.update'
-  | 'users.delete'
-  | 'users.reset_password'
-  | 'teams.manage'
-  | 'settings.manage'
-  | 'integrations.manage'
-  | 'reports.view'
-  | 'reports.export'
-  | 'audit.view'
-  | 'monitors.manage'
-  | 'oncall.manage'
-  | 'statuspages.manage'
-  | 'backups.manage'
-  | 'backups.restore';
+/** Every permission, in the order the role editor shows them. */
+export const PERMISSIONS = [
+  'tickets.view_all',
+  'tickets.create',
+  'tickets.update',
+  'tickets.change_status',
+  'tickets.close',
+  'tickets.reopen',
+  'tickets.change_priority',
+  'tickets.assign',
+  'tickets.escalate',
+  'tickets.page',
+  'tickets.push_linear',
+  'tickets.reply',
+  'tickets.comment_internal',
+  'tickets.attach',
+  'tickets.delete_attachment',
+  'tickets.delete',
+  'templates.manage',
+  'users.view',
+  'users.create',
+  'users.update',
+  'users.assign_roles',
+  'users.delete',
+  'users.reset_password',
+  'roles.manage',
+  'teams.manage',
+  'teams.forms',
+  'teams.links',
+  'settings.manage',
+  'branding.manage',
+  'sso.manage',
+  'integrations.manage',
+  'connector.manage',
+  'connector.use',
+  'reports.view',
+  'reports.export',
+  'audit.view',
+  'ops.view',
+  'monitors.manage',
+  'alerts.routing',
+  'maintenance.manage',
+  'oncall.manage',
+  'oncall.manage_own_department',
+  'oncall.cover',
+  'pages.respond',
+  'statuspages.manage',
+  'statuspages.post',
+  'databases.manage',
+  'backups.manage',
+  'backups.restore',
+] as const;
+export type Permission = (typeof PERMISSIONS)[number];
+
+/** Which permission moving a ticket from one status to another takes. */
+export function statusPermission(from: string, to: string): Permission {
+  const terminal = (status: string) => status === 'resolved' || status === 'closed';
+  if (terminal(to)) return 'tickets.close';
+  if (terminal(from)) return 'tickets.reopen';
+  return 'tickets.change_status';
+}
+
+/** A named set of permissions people are given. The four built-ins carry a `systemKey`. */
+export interface Role {
+  id: string;
+  name: string;
+  description: string | null;
+  permissions: Permission[];
+  /** admin, manager, agent or viewer for the built-ins; null for roles people created. */
+  systemKey: UserRole | null;
+  /** The legacy tier the role behaves as in older code paths. */
+  tier: UserRole;
+  memberCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface ApiError {
   error: string;

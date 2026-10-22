@@ -24,7 +24,7 @@ export function QuickTicketGrid() {
 
   if (!templates) return null;
   if (templates.length === 0) {
-    if (!can('teams.manage')) return null;
+    if (!can('templates.manage')) return null;
     return (
       <p className="mt-4 rounded-md border border-dashed px-3 py-2.5 text-xs text-subtle">
         <Zap className="mr-1 inline size-3.5" aria-hidden />

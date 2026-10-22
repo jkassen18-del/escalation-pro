@@ -16,7 +16,8 @@ import {
 import { clientIp, recordAudit } from '../lib/audit.ts';
 import { sessionStore } from '../lib/session-store.ts';
 import { can, requireAuth, requirePermission, type AuthedRequest } from '../middleware/auth.ts';
-import { ALL_PERMISSIONS, PERMISSION_GROUPS, ROLE_DESCRIPTIONS, ROLE_LABELS, isPermission, ungrantablePermissions } from '../permissions.ts';
+import { ALL_PERMISSIONS, PERMISSION_GROUPS, isPermission, ungrantablePermissions } from '../permissions.ts';
+import { builtInRoleId, getRole, listRoles } from '../repositories/roles.ts';
 import {
   countActiveAdmins,
   createUser,
@@ -28,20 +29,23 @@ import {
   updatePassword,
   usernameInUse,
 } from '../repositories/users.ts';
-import { USER_ROLES, USER_STATUSES, type Permission, type PublicUser } from '../../shared/types.ts';
+import { USER_ROLES, USER_STATUSES, type Permission, type PublicUser, type Role } from '../../shared/types.ts';
 
 export const usersRouter: Router = Router();
 
 usersRouter.use(requireAuth);
 
-/** Static metadata the UI needs to render role and permission pickers. */
-usersRouter.get('/meta', (_req, res) => {
-  res.json({
-    roles: USER_ROLES.map((role) => ({ value: role, label: ROLE_LABELS[role], description: ROLE_DESCRIPTIONS[role] })),
-    permissionGroups: PERMISSION_GROUPS,
-    allPermissions: ALL_PERMISSIONS,
-  });
-});
+/** What the UI needs to render role and permission pickers. */
+usersRouter.get(
+  '/meta',
+  asyncRoute(async (_req, res) => {
+    res.json({
+      roles: await listRoles(),
+      permissionGroups: PERMISSION_GROUPS,
+      allPermissions: ALL_PERMISSIONS,
+    });
+  }),
+);
 
 /**
  * Lightweight directory for assignee pickers. Available to any signed-in user
@@ -103,6 +107,36 @@ function assertCanManage(actor: PublicUser, target: PublicUser): void {
 }
 
 /**
+ * The role a request asks for: `roleId`, or the older `role` tier name, which
+ * means that tier's built-in role. Undefined when neither is given.
+ */
+async function requestedRole(body: Record<string, unknown> | undefined): Promise<Role | undefined> {
+  if (body?.roleId !== undefined && body.roleId !== null && body.roleId !== '') {
+    const role = await getRole(requireString(body.roleId, 'Role', { max: 60 }));
+    if (!role) throw badRequest('That role does not exist.', { roleId: 'Unknown role' });
+    return role;
+  }
+  if (body?.role !== undefined) {
+    const tier = requireEnum(body.role, USER_ROLES, 'Role');
+    const role = await getRole(builtInRoleId(tier));
+    if (!role) throw badRequest('That role does not exist.');
+    return role;
+  }
+  return undefined;
+}
+
+/** Giving someone a role hands them its permissions, so the granting rule applies. */
+function assertRoleGrantable(actor: PublicUser, role: Role): void {
+  if (role.systemKey === 'admin' && actor.role !== 'admin') {
+    throw forbidden('Only an administrator can make someone an administrator.');
+  }
+  const refused = ungrantablePermissions(actor, role.permissions);
+  if (refused.length) {
+    throw forbidden(`The "${role.name}" role includes permissions you do not hold: ${refused.map((permission) => `"${permission}"`).join(', ')}.`);
+  }
+}
+
+/**
  * Accounts are created here by an administrator or manager. There is no public
  * sign-up route anywhere in the application - this is the only way in.
  */
@@ -118,14 +152,15 @@ usersRouter.post(
 
     const username =
       optionalString(req.body?.username, 60)?.replace(/[^a-zA-Z0-9._-]/g, '') || email.split('@')[0];
-    const role = requireEnum(req.body?.role ?? 'agent', USER_ROLES, 'Role');
-
-    // Only an admin may mint another admin.
-    if (role === 'admin' && actor.role !== 'admin') {
-      throw forbidden('Only an administrator can create another administrator.');
-    }
+    const roleRecord = (await requestedRole(req.body)) ?? (await getRole(builtInRoleId('agent')));
+    if (!roleRecord) throw badRequest('That role does not exist.');
+    assertRoleGrantable(actor, roleRecord);
+    const role = roleRecord.tier;
 
     const extraPermissions = readPermissions(req.body?.extraPermissions);
+    if (extraPermissions.length && !can(actor, 'users.assign_roles')) {
+      throw forbidden('You cannot grant extra permissions.');
+    }
     assertGrantable(actor, extraPermissions);
 
     if (await emailInUse(email)) throw conflict('An account with that email already exists.');
@@ -142,6 +177,7 @@ usersRouter.post(
         name,
         password,
         role,
+        roleId: roleRecord.id,
         jobTitle: optionalString(req.body?.jobTitle, 120),
         phone: optionalString(req.body?.phone, 40),
         teamIds: toStringArray(req.body?.teamIds),
@@ -158,8 +194,8 @@ usersRouter.post(
       entityType: 'user',
       entityId: id,
       action: 'user_created',
-      summary: `Created ${role} account for ${email}`,
-      meta: { role, teamIds: user?.teamIds },
+      summary: `Created ${roleRecord.name} account for ${email}`,
+      meta: { role: roleRecord.name, roleId: roleRecord.id, teamIds: user?.teamIds },
       ip: clientIp(req),
     });
 
@@ -200,16 +236,16 @@ usersRouter.patch(
       push('username', username);
     }
 
-    if (req.body?.role !== undefined) {
-      const role = requireEnum(req.body.role, USER_ROLES, 'Role');
-      if (role === 'admin' && actor.role !== 'admin') {
-        throw forbidden('Only an administrator can promote someone to administrator.');
-      }
+    const newRole = await requestedRole(req.body);
+    if (newRole && newRole.id !== target.roleId) {
+      if (!can(actor, 'users.assign_roles')) throw forbidden('You cannot change roles.');
+      assertRoleGrantable(actor, newRole);
       // Never let the last working admin lock everyone out.
-      if (target.role === 'admin' && role !== 'admin' && (await countActiveAdmins(target.id)) === 0) {
+      if (target.role === 'admin' && newRole.tier !== 'admin' && (await countActiveAdmins(target.id)) === 0) {
         throw badRequest('This is the only active administrator. Promote someone else first.');
       }
-      push('role', role);
+      push('role', newRole.tier);
+      push('role_id', newRole.id);
     }
 
     if (req.body?.status !== undefined) {
@@ -233,14 +269,16 @@ usersRouter.patch(
       await setUserTeams(target.id, toStringArray(req.body.teamIds));
     }
     if (Array.isArray(req.body?.extraPermissions)) {
-      if (!can(actor, 'users.update') || (actor.role !== 'admin' && actor.role !== 'manager')) {
-        throw forbidden('You cannot change permission grants.');
-      }
       const requested = readPermissions(req.body.extraPermissions);
-      // Only additions are checked: taking away a grant someone else made is
-      // fine, handing out one you could not hold yourself is not.
-      assertGrantable(actor, requested.filter((permission) => !target.extraPermissions.includes(permission)));
-      await setUserPermissions(target.id, requested);
+      const unchanged =
+        requested.length === target.extraPermissions.length && requested.every((permission) => target.extraPermissions.includes(permission));
+      if (!unchanged) {
+        if (!can(actor, 'users.assign_roles')) throw forbidden('You cannot change permission grants.');
+        // Only additions are checked: taking away a grant someone else made is
+        // fine, handing out one you could not hold yourself is not.
+        assertGrantable(actor, requested.filter((permission) => !target.extraPermissions.includes(permission)));
+        await setUserPermissions(target.id, requested);
+      }
     }
 
     // A suspended user must lose their live sessions immediately.

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Copy, KeyRound, MoreHorizontal, Trash2, UserPlus, Users } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { ROLE_LABELS, relativeTime } from '@/lib/format';
+import { relativeTime } from '@/lib/format';
 import { useAuth } from '@/state/auth';
 import { useToast } from '@/components/ui/Toast';
 import { PageHeader } from '@/components/PageHeader';
@@ -13,7 +13,10 @@ import { Badge } from '@/components/ui/Badge';
 import { EmptyState, ErrorPane, LoadingPane } from '@/components/ui/Feedback';
 import { ConfirmDialog, Modal } from '@/components/ui/Modal';
 import { Menu } from '@/components/ui/Menu';
-import { USER_ROLES, type Permission, type PublicUser, type Team } from '@shared/types';
+import type { Permission, PublicUser, Role, Team } from '@shared/types';
+import { PermissionPicker } from '@/components/PermissionPicker';
+import { RolesPanel } from '@/components/RolesPanel';
+import { OnCallTabs } from '@/components/ops/OnCallShared';
 import { useDocumentTitle } from '@/state/branding';
 
 type Meta = Awaited<ReturnType<typeof api.users.meta>>;
@@ -33,6 +36,7 @@ export function PeoplePage() {
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<PublicUser | null>(null);
   const [credentials, setCredentials] = useState<{ email: string; password: string } | null>(null);
+  const [tab, setTab] = useState<'people' | 'roles'>('people');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -76,7 +80,7 @@ export function PeoplePage() {
         title="People"
         description="Accounts are created here. There is no public sign-up — every user is provisioned by an administrator or manager."
         actions={
-          can('users.create') ? (
+          tab === 'people' && can('users.create') ? (
             <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
               <UserPlus className="size-3.5" />
               New user
@@ -84,16 +88,32 @@ export function PeoplePage() {
           ) : undefined
         }
       >
-        <div className="mt-3 max-w-xs">
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search by name, email, or username…"
-          />
-        </div>
+        {tab === 'people' && (
+          <div className="mt-3 max-w-xs">
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search by name, email, or username…"
+            />
+          </div>
+        )}
+        <OnCallTabs
+          value={tab}
+          onChange={setTab}
+          tabs={[
+            { value: 'people', label: 'People' },
+            { value: 'roles', label: 'Roles' },
+          ]}
+        />
       </PageHeader>
 
-      {error ? (
+      {tab === 'roles' ? (
+        meta ? (
+          <RolesPanel meta={meta} onChanged={load} />
+        ) : (
+          <LoadingPane label="Loading roles" />
+        )
+      ) : error ? (
         <ErrorPane message={error} retry={load} />
       ) : loading ? (
         <LoadingPane label="Loading people" />
@@ -114,7 +134,7 @@ export function PeoplePage() {
               <tr className="border-b surface-2">
                 <th className="eyebrow px-3 py-2 pl-4 text-left font-medium sm:pl-6">Name</th>
                 <th className="eyebrow px-3 py-2 text-left font-medium">Role</th>
-                <th className="eyebrow px-3 py-2 text-left font-medium">Teams</th>
+                <th className="eyebrow px-3 py-2 text-left font-medium">Departments</th>
                 <th className="eyebrow px-3 py-2 text-left font-medium">Status</th>
                 <th className="eyebrow px-3 py-2 text-left font-medium">Last seen</th>
                 <th className="w-10 px-3 py-2 pr-4 sm:pr-6" />
@@ -136,7 +156,10 @@ export function PeoplePage() {
                     </div>
                   </td>
                   <td className="px-3 py-2">
-                    <Badge dot={false}>{ROLE_LABELS[user.role]}</Badge>
+                    <Badge dot={false}>{user.roleName}</Badge>
+                    {user.extraPermissions.length > 0 && (
+                      <span className="ml-1.5 text-2xs text-subtle">+{user.extraPermissions.length}</span>
+                    )}
                   </td>
                   <td className="px-3 py-2">
                     <span className="text-xs text-muted">
@@ -246,7 +269,7 @@ export function PeoplePage() {
           user={editing}
           teams={teams}
           meta={meta}
-          currentUserRole={currentUser?.role ?? 'agent'}
+          currentUser={currentUser}
           onClose={() => {
             setCreating(false);
             setEditing(null);
@@ -348,7 +371,7 @@ function UserDialog({
   user,
   teams,
   meta,
-  currentUserRole,
+  currentUser,
   onClose,
   onSaved,
 }: {
@@ -356,24 +379,36 @@ function UserDialog({
   user: PublicUser | null;
   teams: Team[];
   meta: Meta;
-  currentUserRole: string;
+  currentUser: PublicUser | null;
   onClose: () => void;
   onSaved: (temporaryPassword: string | undefined, email: string) => Promise<void>;
 }) {
   const toast = useToast();
+  const { can } = useAuth();
+  const defaultRole = meta.roles.find((role) => role.systemKey === 'agent') ?? meta.roles[0];
   const [form, setForm] = useState({
     name: user?.name ?? '',
     email: user?.email ?? '',
     username: user?.username ?? '',
     jobTitle: user?.jobTitle ?? '',
     phone: user?.phone ?? '',
-    role: user?.role ?? 'agent',
+    roleId: user?.roleId ?? defaultRole?.id ?? '',
     status: user?.status ?? 'active',
   });
   const [teamIds, setTeamIds] = useState<string[]>(user?.teamIds ?? []);
   const [extraPermissions, setExtraPermissions] = useState<Permission[]>(user?.extraPermissions ?? []);
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const mine = currentUser?.permissions ?? [];
+  const isAdmin = currentUser?.role === 'admin';
+  const canAssign = can('users.assign_roles');
+  const selectedRole = meta.roles.find((role) => role.id === form.roleId);
+  // A role is offered when everything in it is something you could hand out.
+  const offerable = (role: Role) =>
+    role.id === user?.roleId || (role.systemKey === 'admin' ? isAdmin : role.permissions.every((key) => mine.includes(key)));
+  const rolePermissions = selectedRole?.permissions ?? [];
+  const extras = extraPermissions.filter((key) => !rolePermissions.includes(key));
 
   const set = (key: keyof typeof form) => (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((current) => ({ ...current, [key]: event.target.value }));
@@ -391,10 +426,11 @@ function UserDialog({
         username: form.username || undefined,
         jobTitle: form.jobTitle || null,
         phone: form.phone || null,
-        role: form.role,
+        roleId: form.roleId,
         status: form.status,
         teamIds,
-        extraPermissions,
+        // Only someone who may change grants sends them; anyone else leaves them as they are.
+        ...(canAssign ? { extraPermissions: extras } : {}),
       };
 
       if (user) {
@@ -433,7 +469,7 @@ function UserDialog({
           <Button
             variant="primary"
             loading={submitting}
-            disabled={!form.name.trim() || !form.email.trim()}
+            disabled={!form.name.trim() || !form.email.trim() || !form.roleId}
             onClick={submit}
           >
             {user ? 'Save changes' : 'Create account'}
@@ -468,21 +504,31 @@ function UserDialog({
 
         <Field
           label="Role"
-          hint={meta.roles.find((role) => role.value === form.role)?.description}
+          error={errors.roleId}
+          hint={
+            selectedRole
+              ? `${selectedRole.description ? `${selectedRole.description} ` : ''}Grants ${selectedRole.permissions.length} of ${meta.allPermissions.length} permissions.`
+              : undefined
+          }
         >
-          <Select value={form.role} onChange={set('role')}>
-            {USER_ROLES.filter((role) => role !== 'admin' || currentUserRole === 'admin').map((role) => (
-              <option key={role} value={role}>
-                {ROLE_LABELS[role]}
+          <Select value={form.roleId} onChange={set('roleId')} disabled={Boolean(user) && !canAssign}>
+            {meta.roles.filter(offerable).map((role) => (
+              <option key={role.id} value={role.id}>
+                {role.name}
+                {role.systemKey ? '' : ' (custom)'}
               </option>
             ))}
           </Select>
         </Field>
 
         <div>
-          <p className="mb-2 text-xs font-medium">Team membership</p>
+          <p className="mb-1 text-xs font-medium">Departments</p>
+          <p className="mb-2 text-xs text-subtle">
+            Without “View all tickets”, people only see the tickets of the departments they are in, plus tickets they
+            raised or are assigned.
+          </p>
           {teams.length === 0 ? (
-            <p className="text-xs text-subtle">No teams have been created yet.</p>
+            <p className="text-xs text-subtle">No departments have been created yet.</p>
           ) : (
             <div className="grid gap-2 rounded-sm border p-3 surface-2 sm:grid-cols-2">
               {teams.map((team) => (
@@ -500,32 +546,24 @@ function UserDialog({
 
         <details className="rounded-sm border surface-2">
           <summary className="cursor-pointer px-3 py-2 text-xs font-medium select-none">
-            Additional permissions
-            {extraPermissions.length > 0 && (
-              <span className="ml-1.5 text-subtle">({extraPermissions.length} granted)</span>
-            )}
+            Permissions
+            <span className="ml-1.5 text-subtle">
+              ({rolePermissions.length} from the role{extras.length > 0 ? `, ${extras.length} extra` : ''})
+            </span>
           </summary>
           <div className="space-y-4 border-t px-3 py-3">
             <p className="text-xs text-muted">
-              These are granted on top of the role. The role&apos;s own permissions always apply and cannot be
-              revoked here — change the role instead.
+              Ticked and greyed out comes from the role. Tick anything else to give this person that access on top of
+              their role. To take away something the role grants, pick a different role or edit the role.
             </p>
-            {meta.permissionGroups.map((group) => (
-              <div key={group.label}>
-                <p className="eyebrow mb-1.5">{group.label}</p>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {group.permissions.map((permission) => (
-                    <Checkbox
-                      key={permission.key}
-                      checked={extraPermissions.includes(permission.key)}
-                      onChange={() => setExtraPermissions((current) => toggle(current, permission.key))}
-                      label={permission.label}
-                      hint={permission.hint}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))}
+            <PermissionPicker
+              groups={meta.permissionGroups}
+              value={extras}
+              onChange={setExtraPermissions}
+              locked={rolePermissions}
+              grantable={isAdmin ? meta.allPermissions : mine}
+              readOnly={!canAssign}
+            />
           </div>
         </details>
       </div>

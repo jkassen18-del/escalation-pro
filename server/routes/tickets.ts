@@ -30,6 +30,7 @@ import {
 } from '../repositories/tickets.ts';
 import { buildTicketUrl, dispatchAsync } from '../integrations/dispatcher.ts';
 import { createTicket, escalateTicketToTeam } from '../services/tickets.ts';
+import { TICKET_EDIT_PERMISSIONS } from '../permissions.ts';
 import { addTicketComment, canSeeTicket, updateTicket, type TicketPatch } from '../services/ticket-actions.ts';
 import { loadIntegration } from '../integrations/store.ts';
 import { createLinearIssue } from '../integrations/linear.ts';
@@ -188,7 +189,7 @@ ticketsRouter.post(
 
 ticketsRouter.patch(
   '/:id',
-  requirePermission('tickets.update', 'tickets.assign'),
+  requirePermission(...TICKET_EDIT_PERMISSIONS),
   asyncRoute(async (req, res) => {
     const user = (req as AuthedRequest).user;
     const settings = await getSettings();
@@ -208,7 +209,7 @@ ticketsRouter.patch(
 /** Raises the escalation level, bumps priority, and notifies every channel. */
 ticketsRouter.post(
   '/:id/escalate',
-  requirePermission('tickets.update'),
+  requirePermission('tickets.escalate'),
   asyncRoute(async (req, res) => {
     const user = (req as AuthedRequest).user;
     const settings = await getSettings();
@@ -292,7 +293,7 @@ ticketsRouter.post(
 /** Manually mirrors a ticket into Linear, independent of the auto-create rule. */
 ticketsRouter.post(
   '/:id/push-to-linear',
-  requirePermission('tickets.update'),
+  requirePermission('tickets.push_linear'),
   asyncRoute(async (req, res) => {
     const user = (req as AuthedRequest).user;
     const settings = await getSettings();

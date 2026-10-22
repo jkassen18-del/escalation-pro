@@ -86,7 +86,7 @@ export function MonitorsPage() {
 
       {tab === 'monitors' && <MonitorsTab canManage={canManage} {...choices} />}
       {tab === 'sources' && <SourcesTab canManage={canManage} {...choices} />}
-      {tab === 'routing' && <RoutingTab canManage={canManage} {...choices} />}
+      {tab === 'routing' && <RoutingTab canManage={can('alerts.routing')} {...choices} />}
       {tab === 'alerts' && <AlertsTab />}
     </div>
   );

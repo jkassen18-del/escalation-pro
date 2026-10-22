@@ -23,7 +23,9 @@ const PAGE_STATUS_COLORS: Record<Page['status'], string> = {
 };
 
 export function OnCallNow({ people }: { people: DirectoryPerson[] }) {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
+  // Server-side, only people the page reached (or on-call managers) may act on it.
+  const respond = can('pages.respond', 'oncall.manage');
   const toast = useToast();
   const [filter, setFilter] = useState<'active' | 'mine' | 'all'>('active');
   const [schedules, setSchedules] = useState<Schedule[]>([]);
@@ -172,12 +174,12 @@ export function OnCallNow({ people }: { people: DirectoryPerson[] }) {
                     <Button variant="ghost" size="sm" onClick={() => setExplaining(page.id)}>
                       Why?
                     </Button>
-                    {page.status === 'triggered' && (
+                    {respond && page.status === 'triggered' && (
                       <Button variant="secondary" size="sm" loading={busy === page.id + 'escalate'} onClick={() => act(page, 'escalate')}>
                         Escalate now
                       </Button>
                     )}
-                    {live && (
+                    {respond && live && (
                       <Button variant="primary" size="sm" loading={busy === page.id + 'ack'} onClick={() => act(page, 'ack')}>
                         <PhoneCall className="size-3.5" />
                         Acknowledge

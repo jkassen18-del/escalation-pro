@@ -111,13 +111,21 @@ before(async () => {
   await addUser('u-gone', 'gone@acme.test', 'admin', 'suspended');
   await addUser('u-req', 'requester@acme.test', 'agent', 'active');
 
+  // Departmental access: the agent works the department these tickets belong to.
+  await db.run(
+    `INSERT INTO teams (id, key, name, color, auto_assign, default_priority, sla_response_mins, sla_resolve_mins, created_at, updated_at)
+     VALUES ('team-sup', 'SUP', 'Support', '#888', 'none', 'normal', 240, 2880, ?, ?)`,
+    [now, now],
+  );
+  await db.run(`INSERT INTO team_members (team_id, user_id, is_lead) VALUES ('team-sup', 'u-agent', 0)`);
+
   await db.run('INSERT INTO counters (name, value) VALUES (?, ?) ON CONFLICT (name) DO NOTHING', [
     'ticket_number',
     1000,
   ]);
   await db.run(
-    `INSERT INTO tickets (id, number, subject, description, description_format, requester_id, status, priority, type, source, tags, escalation_level, created_at, updated_at)
-     VALUES ('tkt-1', 4242, 'Payments failing', '', 'text', 'u-req', 'open', 'high', 'incident', 'web', '[]', 0, ?, ?)`,
+    `INSERT INTO tickets (id, number, subject, description, description_format, team_id, requester_id, status, priority, type, source, tags, escalation_level, created_at, updated_at)
+     VALUES ('tkt-1', 4242, 'Payments failing', '', 'text', 'team-sup', 'u-req', 'open', 'high', 'incident', 'web', '[]', 0, ?, ?)`,
     [now, now],
   );
 

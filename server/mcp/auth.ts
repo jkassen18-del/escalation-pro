@@ -697,6 +697,7 @@ export async function resolveBearer(token: string, expectedResource: string): Pr
     if (row.expires_at && row.expires_at < now) return fail('The token has expired.');
     const user = await findUserById(row.user_id);
     if (!user || user.status !== 'active') return fail('The account behind this token is not active.');
+    if (!user.permissions.includes('connector.use')) return fail('The account behind this token may not use the AI connector.');
     // Written at most once a minute: this runs on every tool call.
     if (!row.last_used_at || Date.now() - new Date(row.last_used_at).getTime() > 60_000) {
       await db.run(`UPDATE api_tokens SET last_used_at = ? WHERE id = ?`, [now, row.id]);
@@ -713,6 +714,7 @@ export async function resolveBearer(token: string, expectedResource: string): Pr
   if (grant.resource !== normaliseResource(expectedResource)) return fail('The token was not issued for this server.');
   const user = await findUserById(grant.user_id);
   if (!user || user.status !== 'active') return fail('The account behind this token is not active.');
+  if (!user.permissions.includes('connector.use')) return fail('The account behind this token may not use the AI connector.');
   if (!grant.last_used_at || Date.now() - new Date(grant.last_used_at).getTime() > 60_000) {
     await db.run(`UPDATE oauth_grants SET last_used_at = ? WHERE id = ?`, [now, grant.id]);
   }

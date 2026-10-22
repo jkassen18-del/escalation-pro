@@ -33,7 +33,7 @@ Azure portal → **App registrations → New registration**. Single tenant is fi
 
 ### 2. Create the bot
 
-Azure portal → **Azure Bot → Create**, using that app registration. Under **Configuration**, set the messaging endpoint to:
+Azure portal → **Azure Bot → Create**, using that app registration. Choose the **F0 (free)** pricing tier: standard channels such as Teams have no message limit and cost nothing, so no paid plan or Azure subscription spend is involved. Under **Configuration**, set the messaging endpoint to:
 
 ```text
 https://tickets.example.com/api/webhooks/msteams
@@ -61,14 +61,32 @@ Set **Settings → Public URL** too; the package needs it.
 https://tickets.example.com/api/integrations/msteams/consent/callback
 ```
 
-### 5. Install InfraBot in Teams
+### 5. Install the Teams app
 
-**Download the app package** gives `infrabot-teams.zip`: the manifest (your app id, your host, and a command menu listing your departments) and two icons. Then either:
+Step 3 of the drawer is the app itself: its version, what changed since the last download, anything Teams would reject, the app's name, descriptions, colour and icon, and its commands.
+
+**Download the Teams app** gives `infrabot-teams.zip`: the manifest (your app id, your host, the command menu and the forms) and two icons. The drawer checks it first against the rules Teams enforces (a GUID app id, an https URL, name and description lengths, at most 10 menu commands, a 192x192 colour icon and a 32x32 outline icon) and lists any problem. Then either:
 
 - **Just you, for testing**: Teams → **Apps → Manage your apps → Upload an app → Upload a custom app**.
-- **Everyone**: Teams admin centre → **Teams apps → Manage apps → Upload new app** (needs the custom-app upload policy).
+- **Everyone**: Teams admin centre → **Teams apps → Manage apps → Upload new app** (needs the custom-app upload policy), then allow it in an app permission or setup policy.
 
-Re-download whenever you add a department and want it in the menu. To build the package before the app is running:
+#### Updating it
+
+Teams only accepts an update whose version is higher than the installed one. InfraTicket handles this: the version stays the same while nothing changes, and goes up by one (1.1.0 → 1.1.1) the first time anything that ends up in the package changes: name, descriptions, colour, icon, commands, departments, calls, or the app URL. The drawer shows **Update ready** and a list of what changed.
+
+1. Change what you need and **Save Teams app**.
+2. **Download updated package**.
+3. Teams admin centre → **Manage apps** → the app → **Upload file**. A custom app you uploaded yourself: **Apps → Manage your apps** → the app's **…** → **Update**.
+
+If the app was uploaded at a higher version from somewhere else (an older package, another server), set **Minimum version** above it once.
+
+The command line builds the same package from the same database, and counts as a download:
+
+```bash
+npm run build:teams-app -- --from-db --out infrabot-teams.zip
+```
+
+Before the app is running at all, it can build one from flags instead:
 
 ```bash
 npm run build:teams-app -- --app-id 00000000-0000-0000-0000-000000000000 \
@@ -79,14 +97,35 @@ npm run build:teams-app -- --app-id 00000000-0000-0000-0000-000000000000 \
 
 Channel → **Apps** → add InfraBot. Microsoft will not let a bot message a conversation it has never seen, so until it is added there is nowhere to post, and **Test** says exactly that. Then **Test** posts a real message.
 
-### Using it
+### Commands
 
-```text
-@InfraBot finance    posts Finance's intake form as an Adaptive Card
-@InfraBot            lists the departments
-```
+In a personal chat with the bot, type the command. In a channel or group chat, mention the bot first (`@InfraBot status ESC-1042`).
 
-Ticket updates arrive in the channel, one thread per ticket; replying in a ticket's thread adds a comment. A mention or click is honoured only when the Teams account's email matches an active user with the right permission.
+| Command | What it does |
+| --- | --- |
+| `help` | Lists the commands |
+| `new` | Asks which department or quick ticket, then posts its form. **Open as a pop-up form** opens the same form in a dialog |
+| `status ESC-1042` | The ticket's status, priority, department and assignee, only if you may see that ticket |
+| `mine` | Your open tickets: assigned to you or raised by you |
+| `oncall` | Who is on call right now, per schedule |
+| a department key, e.g. `finance` | That department's intake form |
+
+Under **Commands** in the drawer you can switch commands off, reorder them (Teams lists the first 10 switched-on ones; the rest still work when typed), reword their descriptions, and **Add command** for your own:
+
+- **Open a department's form**, e.g. `laptop` → IT's form.
+- **Open a quick ticket's form**: the template's questions plus its department's. A quick ticket that requires a screenshot is answered with a pointer to the browser, because Teams forms cannot carry one.
+- **Reply with text or a link**, e.g. `wifi` → the guest Wi-Fi instructions.
+
+Changing commands changes the package, so download and upload the update for the menu to show it.
+
+### Forms
+
+The package also adds a messaging extension:
+
+- **Raise a ticket**: in the compose box's apps (**…** or **+**) and the command box. Pick a department or quick ticket, fill in its form, and the confirmation card is dropped into the compose box to send.
+- **Create ticket from message**: on any message's **… → More actions**. The form opens with the message's text, its author and a link back to it already in **Details**.
+
+Ticket updates arrive in the channel, one thread per ticket; replying in a ticket's thread adds a comment. A command, form or click is honoured only when the Teams account's email matches an active user here, with permission to raise tickets for forms (anyone active for `help`, `status`, `mine` and `oncall`).
 
 ### Teams calls
 
@@ -98,6 +137,9 @@ The bot can ring on-call people. See [Paging channels → Teams calls](paging-ch
 | --- | --- |
 | Test: the bot has not been added to a conversation | Add InfraBot to the channel (step 6) |
 | Azure "Test in Web Chat" fails with 401 | App id or client secret wrong, or the tenant id does not match |
-| Teams rejects the package | Download it again after saving the app id and Public URL; do not edit the manifest by hand |
+| Teams rejects the package | Fix what the drawer lists under *Check before uploading*, then download again; do not edit the manifest by hand |
+| Teams says the app already exists, or will not update | The new version must be higher: download the updated package, or set **Minimum version** above the installed one |
+| A new command is missing from the menu | Download and upload the updated package; only the first 10 switched-on commands are listed |
+| "Raise a ticket" is missing from the compose box | The installed package predates forms: upload the current one |
 | Consent: AADSTS50011 | The consent redirect URI is not on the app registration |
 | Nothing arrives from a webhook | Try the other **Card format** |

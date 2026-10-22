@@ -4,6 +4,7 @@ import { db } from '../db/index.ts';
 import { clientIp, recordAudit } from '../lib/audit.ts';
 import { asyncRoute, badRequest, requireString } from '../lib/http.ts';
 import { requireAuth, requirePermission, type AuthedRequest } from '../middleware/auth.ts';
+import { builtInRoleId } from '../repositories/roles.ts';
 import { createUser, usernameInUse } from '../repositories/users.ts';
 import { findTeamById } from '../repositories/teams.ts';
 import {
@@ -112,7 +113,7 @@ samlRouter.post(
     } else if (groupRole && groupRole !== row.role && row.role !== 'admin') {
       // Group membership in the IdP decides the role. Administrators are left
       // alone, so a mapping mistake can never lock the last one out.
-      await db.run(`UPDATE users SET role = ?, updated_at = ? WHERE id = ?`, [groupRole, new Date().toISOString(), row.id]);
+      await db.run(`UPDATE users SET role = ?, role_id = ?, updated_at = ? WHERE id = ?`, [groupRole, builtInRoleId(groupRole), new Date().toISOString(), row.id]);
       await recordAudit({
         actorId: row.id,
         actorName: row.name,
@@ -146,7 +147,7 @@ samlRouter.post(
 
 /** Mounted at /api/sso, after the session user is resolved. */
 export const ssoAdminRouter: Router = Router();
-ssoAdminRouter.use(requireAuth, requirePermission('settings.manage'));
+ssoAdminRouter.use(requireAuth, requirePermission('sso.manage'));
 
 ssoAdminRouter.get(
   '/saml',

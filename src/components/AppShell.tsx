@@ -47,7 +47,7 @@ interface NavItem {
   to: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
-  permission?: Permission;
+  permission?: Permission | Permission[];
   countKey?: 'mine' | 'unassigned' | 'overdue' | 'all';
   end?: boolean;
 }
@@ -60,22 +60,22 @@ const PRIMARY_NAV: NavItem[] = [
 ];
 
 const OPERATIONS_NAV: NavItem[] = [
-  { to: '/operations', label: 'Command centre', icon: Siren },
-  { to: '/monitors', label: 'Monitoring', icon: Activity },
-  { to: '/maintenance', label: 'Maintenance', icon: Wrench },
-  { to: '/oncall', label: 'On-call', icon: PhoneCall },
-  { to: '/status-pages', label: 'Status pages', icon: Globe },
-  { to: '/databases', label: 'Databases', icon: Database, permission: 'backups.manage' },
+  { to: '/operations', label: 'Command centre', icon: Siren, permission: 'ops.view' },
+  { to: '/monitors', label: 'Monitoring', icon: Activity, permission: 'ops.view' },
+  { to: '/maintenance', label: 'Maintenance', icon: Wrench, permission: 'ops.view' },
+  { to: '/oncall', label: 'On-call', icon: PhoneCall, permission: 'ops.view' },
+  { to: '/status-pages', label: 'Status pages', icon: Globe, permission: 'ops.view' },
+  { to: '/databases', label: 'Databases', icon: Database, permission: ['databases.manage', 'backups.manage', 'backups.restore'] },
   { to: '/links', label: 'Quick links', icon: Link2 },
 ];
 
 const MANAGE_NAV: NavItem[] = [
   { to: '/reports', label: 'Reports', icon: ScrollText, permission: 'reports.view' },
   { to: '/people', label: 'People', icon: UsersIcon, permission: 'users.view' },
-  { to: '/teams', label: 'Teams', icon: Building2, permission: 'teams.manage' },
-  { to: '/quick-tickets', label: 'Quick tickets', icon: Zap, permission: 'teams.manage' },
+  { to: '/teams', label: 'Teams', icon: Building2, permission: ['teams.manage', 'teams.forms', 'teams.links'] },
+  { to: '/quick-tickets', label: 'Quick tickets', icon: Zap, permission: 'templates.manage' },
   { to: '/integrations', label: 'Integrations', icon: Plug, permission: 'integrations.manage' },
-  { to: '/settings', label: 'Settings', icon: SettingsIcon, permission: 'settings.manage' },
+  { to: '/settings', label: 'Settings', icon: SettingsIcon, permission: ['settings.manage', 'branding.manage', 'sso.manage', 'connector.manage'] },
   { to: '/audit', label: 'Audit log', icon: KeyRound, permission: 'audit.view' },
 ];
 
@@ -150,7 +150,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     setNotifications((current) => current.map((item) => ({ ...item, readAt: item.readAt ?? new Date().toISOString() })));
   };
 
-  const visibleManageNav = MANAGE_NAV.filter((item) => !item.permission || can(item.permission));
+  const visibleManageNav = MANAGE_NAV.filter((item) => !item.permission || can(...[item.permission].flat()));
 
   const navContent = (
     <>
@@ -170,7 +170,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         <p className="eyebrow mt-5 mb-1.5 px-2">Operations</p>
         <ul className="space-y-px">
-          {OPERATIONS_NAV.filter((item) => !item.permission || can(item.permission)).map((item) => (
+          {OPERATIONS_NAV.filter((item) => !item.permission || can(...[item.permission].flat())).map((item) => (
             <NavRow key={item.to} item={item} />
           ))}
         </ul>

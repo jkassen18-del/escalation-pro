@@ -597,8 +597,8 @@ function TeamsFields({ config, set }: { config: Record<string, unknown>; set: (k
       ) : (
         <>
           <p className="rounded-sm border border-[var(--border)] bg-[var(--surface)] px-2.5 py-2 text-xs leading-relaxed text-muted">
-            Bot mode needs an Azure Bot registration and the app package installed in Teams. See the Teams section in
-            DEPLOY.md — the manifest is in <code>deploy/teams/</code>.
+            Bot mode needs an Azure Bot registration (the free F0 tier is enough) and the app package installed in
+            Teams. Download the package, and later updates to it, from the Teams app step of the setup guide.
           </p>
 
           <Field label="Bot name" hint="What the app is called in Teams, and how people mention it.">

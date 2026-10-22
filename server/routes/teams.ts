@@ -199,7 +199,7 @@ teamsRouter.get(
 
 teamsRouter.put(
   '/:id/form',
-  requirePermission('teams.manage'),
+  requirePermission('teams.forms'),
   asyncRoute(async (req, res) => {
     const actor = (req as AuthedRequest).user;
     const team = await findTeamById(req.params.id);

@@ -85,7 +85,8 @@ export type TeamsActorResult = { ok: true; user: PublicUser } | { ok: false; mes
 export async function resolveTeamsActor(
   config: MsTeamsConfig,
   activity: TeamsActivity,
-  permission: Permission,
+  /** Null when any active, linked user may do it (looking up a ticket they can see, say). */
+  permission: Permission | null,
 ): Promise<TeamsActorResult> {
   const author = await resolveTeamsAuthor(config, activity, { includeSuspended: true });
 
@@ -102,7 +103,7 @@ export async function resolveTeamsActor(
   if (!user || user.status !== 'active') {
     return { ok: false, message: 'That account is no longer active here, so nothing was done.' };
   }
-  if (!can(user, permission)) {
+  if (permission && !can(user, permission)) {
     return { ok: false, message: 'You do not have permission to do that.' };
   }
 

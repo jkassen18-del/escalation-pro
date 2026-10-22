@@ -140,7 +140,7 @@ export function StatusPagesPage() {
             ))}
           </ul>
 
-          {selected && <StatusPagePreview key={`${selected.id}-${viewVersion}`} page={selected} canManage={canManage} />}
+          {selected && <StatusPagePreview key={`${selected.id}-${viewVersion}`} page={selected} canPost={can('statuspages.post')} />}
         </div>
       )}
 
@@ -186,7 +186,7 @@ export function StatusPagesPage() {
   );
 }
 
-function StatusPagePreview({ page, canManage }: { page: StatusPage; canManage: boolean }) {
+function StatusPagePreview({ page, canPost }: { page: StatusPage; canPost: boolean }) {
   const [view, setView] = useState<StatusPageView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [posting, setPosting] = useState(false);
@@ -223,7 +223,7 @@ function StatusPagePreview({ page, canManage }: { page: StatusPage; canManage: b
               Open page
             </Button>
           </a>
-          {canManage && (
+          {canPost && (
             <Button size="sm" variant="primary" onClick={() => setPosting(true)}>
               <Megaphone className="size-3.5" />
               Post update

@@ -18,7 +18,7 @@ const SLA_PRESETS = [30, 60, 120, 240, 480, 1440, 2880, 4320, 10080];
 export function SettingsPage() {
   useDocumentTitle('Settings');
   const toast = useToast();
-  const { refresh } = useAuth();
+  const { refresh, can } = useAuth();
   const { refresh: refreshBranding } = useBranding();
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -60,13 +60,23 @@ export function SettingsPage() {
         title="Settings"
         description="Organisation profile and the defaults applied to new tickets."
         actions={
-          <Button variant="primary" size="sm" loading={saving} onClick={save}>
-            Save changes
-          </Button>
+          can('settings.manage') ? (
+            <Button variant="primary" size="sm" loading={saving} onClick={save}>
+              Save changes
+            </Button>
+          ) : undefined
         }
       />
 
       <div className="max-w-2xl space-y-4 p-4 sm:p-6">
+        {can('branding.manage') && (
+          <Section title="Logo">
+            <LogoUploader />
+          </Section>
+        )}
+
+        {can('settings.manage') && (
+        <>
         <Section title="Organisation">
           <Field label="Name" hint="Shown in the sidebar, the browser tab, emails, and chat notifications.">
             <Input
@@ -75,7 +85,6 @@ export function SettingsPage() {
             />
           </Field>
 
-          <LogoUploader />
 
           <Field label="Support email" hint="Used as the reply-to address on outgoing notifications.">
             <Input
@@ -170,10 +179,12 @@ export function SettingsPage() {
             </Select>
           </Field>
         </Section>
+        </>
+        )}
 
-        <SsoSettings teams={teams} />
+        {can('sso.manage') && <SsoSettings teams={teams} />}
 
-        <ConnectorSettingsPanel />
+        {can('connector.manage') && <ConnectorSettingsPanel />}
       </div>
     </div>
   );

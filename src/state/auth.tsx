@@ -27,7 +27,8 @@ interface AuthState {
     sampleWorkspace?: boolean;
   }) => Promise<void>;
   refresh: () => Promise<void>;
-  can: (permission: Permission) => boolean;
+  /** True when the signed-in person holds any one of the permissions given. */
+  can: (...permissions: Permission[]) => boolean;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -113,7 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const can = useCallback(
-    (permission: Permission) => Boolean(user?.permissions.includes(permission)),
+    (...permissions: Permission[]) => permissions.some((permission) => Boolean(user?.permissions.includes(permission))),
     [user],
   );
 

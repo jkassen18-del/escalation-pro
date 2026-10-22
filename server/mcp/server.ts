@@ -11,12 +11,13 @@ import { asFormFields, canUseTemplate, findTemplate, listTemplates, renderSubjec
 import { buildReportSummary } from '../routes/reports.ts';
 import { createTicket, escalateTicketToTeam } from '../services/tickets.ts';
 import { addTicketComment, canSeeTicket, updateTicket } from '../services/ticket-actions.ts';
+import { TICKET_EDIT_PERMISSIONS } from '../permissions.ts';
 import { listAlerts } from '../ops/alerts.ts';
 import { listMaintenanceWindows } from '../ops/maintenance.ts';
 import { getMonitor, listMonitors, monitorChecks } from '../ops/monitors.ts';
 import { listSchedules, scheduleShifts } from '../ops/oncall.ts';
 import { acknowledgePage, getPage, listPages } from '../ops/pager.ts';
-import { canActOnPage, redactMonitor } from '../ops/access.ts';
+import { canActOnPage, filterToVisibleTickets, redactMonitor } from '../ops/access.ts';
 import { getStatusPage, listStatusPages, renderStatusPage } from '../ops/status-pages.ts';
 import { APP_VERSION } from '../../shared/version.ts';
 import {
@@ -320,6 +321,7 @@ export function buildMcpServer(ctx: ServerContext): McpServer {
     },
     async ({ at, schedule }) =>
       guarded(async () => {
+        if (!can(user, 'ops.view')) return refuse(`${user.name} does not have access to operations.`);
         const when = at ? new Date(at).getTime() : Date.now();
         if (!Number.isFinite(when)) return refuse('"at" must be an ISO date-time.');
         const schedules = (await listSchedules()).filter(
@@ -352,6 +354,7 @@ export function buildMcpServer(ctx: ServerContext): McpServer {
     },
     async ({ state }) =>
       guarded(async () => {
+        if (!can(user, 'ops.view')) return refuse(`${user.name} does not have access to operations.`);
         const monitors = (await listMonitors()).filter((m) => !state || m.state === state);
         return ok({
           monitors: monitors.map((m) => ({
@@ -381,6 +384,7 @@ export function buildMcpServer(ctx: ServerContext): McpServer {
     },
     async ({ monitor: ref }) =>
       guarded(async () => {
+        if (!can(user, 'ops.view')) return refuse(`${user.name} does not have access to operations.`);
         const monitor = (await getMonitor(ref)) ?? (await listMonitors()).find((m) => m.name.toLowerCase() === ref.toLowerCase()) ?? null;
         if (!monitor) return refuse(`No monitor "${ref}".`);
         const checks = await monitorChecks(monitor.id, 20);
@@ -413,7 +417,8 @@ export function buildMcpServer(ctx: ServerContext): McpServer {
     },
     async ({ status, limit }) =>
       guarded(async () => {
-        const alerts = await listAlerts({ status: status ?? 'open', limit: limit ?? 25 });
+        if (!can(user, 'ops.view')) return refuse(`${user.name} does not have access to operations.`);
+        const alerts = await filterToVisibleTickets(await listAlerts({ status: status ?? 'open', limit: limit ?? 25 }), user);
         return ok({
           alerts: alerts.map((a) => ({
             title: a.title,
@@ -441,6 +446,7 @@ export function buildMcpServer(ctx: ServerContext): McpServer {
     },
     async ({ page: ref }) =>
       guarded(async () => {
+        if (!can(user, 'ops.view')) return refuse(`${user.name} does not have access to operations.`);
         if (!ref) {
           const pages = await listStatusPages();
           return ok({ pages: pages.map((p) => ({ id: p.id, title: p.title, slug: p.slug, public: p.isPublic, url: `${baseUrl}/status/${p.slug}` })) });
@@ -469,6 +475,7 @@ export function buildMcpServer(ctx: ServerContext): McpServer {
     },
     async () =>
       guarded(async () => {
+        if (!can(user, 'ops.view')) return refuse(`${user.name} does not have access to operations.`);
         const windows = await listMaintenanceWindows();
         const relevant = windows.filter((w) => w.state === 'in_progress' || w.state === 'scheduled');
         return ok({
@@ -676,11 +683,11 @@ export function buildMcpServer(ctx: ServerContext): McpServer {
     },
     async (args) =>
       guarded(async () => {
-        const needsAssign = args.assignee !== undefined;
-        const needsUpdate = args.status !== undefined || args.priority !== undefined || args.team !== undefined || args.severity !== undefined;
-        const blocked = writeBlocked(needsUpdate ? 'tickets.update' : needsAssign ? 'tickets.assign' : 'tickets.update');
+        // Each field's own permission (status, priority, assignee...) is
+        // checked by updateTicket, exactly as on the web.
+        const blocked = writeBlocked();
         if (blocked) return refuse(blocked);
-        if (needsAssign && !can(user, 'tickets.assign')) return refuse(`${user.name} cannot reassign tickets.`);
+        if (!TICKET_EDIT_PERMISSIONS.some((permission) => can(user, permission))) return refuse(`${user.name} cannot change tickets.`);
         const ticket = await loadVisibleTicket(args.ticket);
         if (!ticket) return refuse(`No ticket "${args.ticket}" that ${user.name} can see.`);
 
@@ -716,7 +723,7 @@ export function buildMcpServer(ctx: ServerContext): McpServer {
     },
     async (args) =>
       guarded(async () => {
-        const blocked = writeBlocked('tickets.update');
+        const blocked = writeBlocked('tickets.escalate');
         if (blocked) return refuse(blocked);
         const ticket = await loadVisibleTicket(args.ticket);
         if (!ticket) return refuse(`No ticket "${args.ticket}" that ${user.name} can see.`);

@@ -389,7 +389,7 @@ async function handleTake(interaction: Interaction, ticketId: string): Promise<v
 }
 
 async function handleResolve(interaction: Interaction, ticketId: string): Promise<void> {
-  const actor = await actorFor(personOf(interaction).id, 'tickets.update');
+  const actor = await actorFor(personOf(interaction).id, 'tickets.close');
   if (!actor.ok) return reply(interaction, actor.message);
   const ticket = await loadTicket(ticketId);
   if (!ticket || !canSee(actor.user, ticket)) return reply(interaction, 'That ticket does not exist, or you cannot see it.');
@@ -424,7 +424,7 @@ async function handleResolve(interaction: Interaction, ticketId: string): Promis
 }
 
 async function handleEscalateButton(interaction: Interaction, ticketId: string): Promise<void> {
-  const actor = await actorFor(personOf(interaction).id, 'tickets.update');
+  const actor = await actorFor(personOf(interaction).id, 'tickets.escalate');
   if (!actor.ok) return reply(interaction, actor.message);
   const ticket = await loadTicket(ticketId);
   if (!ticket || !canSee(actor.user, ticket)) return reply(interaction, 'That ticket does not exist, or you cannot see it.');
@@ -452,7 +452,7 @@ async function handleEscalateTo(interaction: Interaction, ticketId: string): Pro
 }
 
 async function handleEscalateReason(interaction: Interaction, ticketId: string, teamId: string): Promise<void> {
-  const actor = await actorFor(personOf(interaction).id, 'tickets.update');
+  const actor = await actorFor(personOf(interaction).id, 'tickets.escalate');
   if (!actor.ok) return reply(interaction, actor.message);
   const ticket = await loadTicket(ticketId);
   if (!ticket || !canSee(actor.user, ticket)) return reply(interaction, 'That ticket does not exist, or you cannot see it.');

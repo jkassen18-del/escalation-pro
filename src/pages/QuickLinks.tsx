@@ -44,12 +44,12 @@ export function QuickLinksPage() {
             icon={Link2}
             title="No links yet"
             description={
-              can('teams.manage')
+              can('teams.links')
                 ? 'Open a team under Teams and add links to the systems it works in.'
                 : 'Your teams have no links yet. Ask a team manager to add them.'
             }
             action={
-              can('teams.manage') ? (
+              can('teams.links') ? (
                 <Link to="/teams" className="text-xs text-[var(--accent)] underline-offset-2 hover:underline">
                   Go to Teams
                 </Link>

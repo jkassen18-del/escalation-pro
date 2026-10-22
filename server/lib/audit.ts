@@ -9,6 +9,7 @@ export interface AuditInput {
   entityType:
     | 'ticket'
     | 'user'
+    | 'role'
     | 'team'
     | 'settings'
     | 'integration'

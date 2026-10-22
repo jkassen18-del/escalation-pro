@@ -1,5 +1,6 @@
 import type { DbDriver } from './driver.ts';
 import { addColumnToMysql, indexToMysql, tableToMysql } from './mysql-dialect.ts';
+import { syncRoles } from './roles-sync.ts';
 
 /**
  * One portable schema for both engines.
@@ -27,6 +28,18 @@ const TABLES: string[] = [
     avatar_color TEXT NOT NULL DEFAULT '#9a7b2f',
     must_change_password INTEGER NOT NULL DEFAULT 0,
     last_login_at TEXT,
+    role_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS roles (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    permissions TEXT NOT NULL DEFAULT '[]',
+    system_key TEXT,
+    tier TEXT NOT NULL DEFAULT 'agent',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`,
@@ -1007,6 +1020,12 @@ export const ADDITIVE_COLUMNS: AdditiveColumn[] = [
   },
   {
     table: 'users',
+    column: 'role_id',
+    definition: 'TEXT',
+    why: 'the role a person holds, now that roles can be created and edited',
+  },
+  {
+    table: 'users',
     column: 'teams_user_id',
     definition: 'TEXT',
     why: "the person's Entra object id, which a Teams call has to be addressed to",
@@ -1197,4 +1216,5 @@ async function migrateUnlocked(driver: DbDriver): Promise<void> {
     `INSERT INTO counters (name, value) VALUES ('ticket_number', 1000)
      ON CONFLICT (name) DO NOTHING`,
   );
+  await syncRoles(driver);
 }

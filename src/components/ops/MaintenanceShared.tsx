@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Wrench } from 'lucide-react';
 import { opsApi } from '@/lib/ops-api';
+import { useAuth } from '@/state/auth';
 import type { MaintenanceEffect, MaintenanceOccurrence } from '@shared/ops';
 
 export const MAINTENANCE_COLOR = '#2563eb';
@@ -48,9 +49,11 @@ export function MaintenanceBadge({ maintenance }: { maintenance: { title: string
  */
 export function MaintenanceBanner() {
   const location = useLocation();
+  const allowed = useAuth().can('ops.view');
   const [active, setActive] = useState<Array<MaintenanceOccurrence & { scopeSummary: string }>>([]);
 
   useEffect(() => {
+    if (!allowed) return;
     let cancelled = false;
     const load = () =>
       opsApi.maintenance
@@ -63,9 +66,9 @@ export function MaintenanceBanner() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [location.pathname]);
+  }, [location.pathname, allowed]);
 
-  if (!active.length) return null;
+  if (!allowed || !active.length) return null;
   const [first, ...others] = active;
   return (
     <div

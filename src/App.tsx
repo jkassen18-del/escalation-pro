@@ -50,25 +50,25 @@ export function App() {
         <Route path="/tickets" element={<TicketListPage />} />
         <Route path="/tickets/new" element={<Guard permission="tickets.create"><NewTicketPage /></Guard>} />
         <Route path="/tickets/quick/:id" element={<Guard permission="tickets.create"><QuickTicketPage /></Guard>} />
-        <Route path="/quick-tickets" element={<Guard permission="teams.manage"><QuickTicketsPage /></Guard>} />
+        <Route path="/quick-tickets" element={<Guard permission="templates.manage"><QuickTicketsPage /></Guard>} />
         <Route path="/tickets/:id" element={<TicketDetailPage />} />
         <Route path="/people" element={<Guard permission="users.view"><PeoplePage /></Guard>} />
-        <Route path="/teams" element={<Guard permission="teams.manage"><TeamsPage /></Guard>} />
+        <Route path="/teams" element={<Guard permission={['teams.manage', 'teams.forms', 'teams.links']}><TeamsPage /></Guard>} />
         <Route path="/reports" element={<Guard permission="reports.view"><ReportsPage /></Guard>} />
         <Route
           path="/integrations"
           element={<Guard permission="integrations.manage"><IntegrationsPage /></Guard>}
         />
-        <Route path="/settings" element={<Guard permission="settings.manage"><SettingsPage /></Guard>} />
+        <Route path="/settings" element={<Guard permission={['settings.manage', 'branding.manage', 'sso.manage', 'connector.manage']}><SettingsPage /></Guard>} />
         <Route path="/audit" element={<Guard permission="audit.view"><AuditLogPage /></Guard>} />
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/links" element={<QuickLinksPage />} />
-        <Route path="/operations" element={<OperationsPage />} />
-        <Route path="/monitors" element={<MonitorsPage />} />
-        <Route path="/maintenance" element={<MaintenancePage />} />
-        <Route path="/oncall" element={<OnCallPage />} />
-        <Route path="/status-pages" element={<StatusPagesPage />} />
-        <Route path="/databases" element={<Guard permission="backups.manage"><DatabasesPage /></Guard>} />
+        <Route path="/operations" element={<Guard permission="ops.view"><OperationsPage /></Guard>} />
+        <Route path="/monitors" element={<Guard permission="ops.view"><MonitorsPage /></Guard>} />
+        <Route path="/maintenance" element={<Guard permission="ops.view"><MaintenancePage /></Guard>} />
+        <Route path="/oncall" element={<Guard permission="ops.view"><OnCallPage /></Guard>} />
+        <Route path="/status-pages" element={<Guard permission="ops.view"><StatusPagesPage /></Guard>} />
+        <Route path="/databases" element={<Guard permission={['databases.manage', 'backups.manage', 'backups.restore']}><DatabasesPage /></Guard>} />
         <Route path="/docs" element={<DocsPage />} />
         <Route path="/docs/:slug" element={<DocsPage />} />
         <Route path="*" element={<NotFound />} />
@@ -78,9 +78,9 @@ export function App() {
 }
 
 /** Route-level permission check. The API enforces the same rules server-side. */
-function Guard({ permission, children }: { permission: Permission; children: React.ReactNode }) {
+function Guard({ permission, children }: { permission: Permission | Permission[]; children: React.ReactNode }) {
   const { can } = useAuth();
-  if (!can(permission)) {
+  if (!can(...(Array.isArray(permission) ? permission : [permission]))) {
     return (
       <div className="px-6 py-16 text-center">
         <p className="text-sm font-medium">You do not have access to this area</p>

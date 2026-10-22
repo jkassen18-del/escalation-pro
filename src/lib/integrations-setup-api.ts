@@ -45,6 +45,44 @@ export interface TeamsConsentState {
   redirectUrl: string;
 }
 
+export type TeamsCommandAction =
+  | { type: 'department'; teamId: string }
+  | { type: 'template'; templateId: string }
+  | { type: 'reply'; text: string; url?: string | null };
+
+export interface TeamsCommand {
+  id: string;
+  kind: 'builtin' | 'department' | 'custom';
+  title: string;
+  description: string;
+  enabled: boolean;
+  builtin?: string;
+  teamId?: string;
+  action?: TeamsCommandAction;
+  listed: boolean;
+}
+
+export interface TeamsAppState {
+  version: string;
+  lastDownload: { version: string; at: string } | null;
+  updateAvailable: boolean;
+  changes: string[];
+  problems: string[];
+  settings: { name: string; defaultName: string; shortDescription: string; fullDescription: string; accentColor: string; hasCustomIcon: boolean; minimumVersion: string };
+  commands: TeamsCommand[];
+  limits: { commands: number; commandTitle: number; commandDescription: number; shortName: number; fullName: number; shortDescription: number; fullDescription: number };
+}
+
+export interface TeamsAppInput {
+  name?: string;
+  shortDescription?: string;
+  fullDescription?: string;
+  accentColor?: string;
+  icon?: string | null;
+  minimumVersion?: string;
+  commands?: Array<{ id?: string; kind: TeamsCommand['kind']; ref?: string; title?: string; description: string; enabled: boolean; action?: TeamsCommandAction }>;
+}
+
 export const setupApi = {
   catalogue: () => request<{ status: Record<string, CatalogueStatus> }>('GET', '/catalogue'),
   slack: {
@@ -58,5 +96,8 @@ export const setupApi = {
   teams: {
     consent: () => request<TeamsConsentState>('GET', '/msteams/consent'),
     startConsent: () => request<{ url: string }>('POST', '/msteams/consent/start'),
+    app: () => request<TeamsAppState>('GET', '/msteams/app'),
+    saveApp: (input: TeamsAppInput) => request<TeamsAppState>('PUT', '/msteams/app', input),
+    packageUrl: '/api/integrations/msteams/app-package',
   },
 };

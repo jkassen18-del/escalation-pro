@@ -14,6 +14,7 @@ import { HttpIntegrationsPanel } from '@/components/HttpIntegrationsPanel';
 import { SsoSettings } from '@/components/SsoSettings';
 import { SourceDialog } from '@/pages/Monitors';
 import { Step, Steps } from './SetupDrawer';
+import { TeamsAppPanel } from './TeamsAppPanel';
 import { SOURCE_STEPS, type CatalogueTile } from './catalogue';
 import { ALERT_SOURCE_LABELS, type AlertSource, type EscalationPolicy } from '@shared/ops';
 import type { Team } from '@shared/types';
@@ -264,8 +265,8 @@ export function TeamsSetup({ result, card }: { result: URLSearchParams; card: Re
             {state?.consent.error && !state.consent.grantedAt && <span className="text-2xs text-[var(--priority-urgent)]">{state.consent.error}</span>}
           </div>
         </Step>
-        <Step n={3} title="Install InfraBot in Teams">
-          <p>Download the InfraBot package from the form above (step 1), then in Teams: Apps → Manage your apps → Upload an app → Upload a custom app. An admin can publish it to the whole organisation from the Teams admin centre.</p>
+        <Step n={3} title="Install, update and customise the Teams app">
+          <TeamsAppPanel appConfigured={Boolean(state?.appId)} />
         </Step>
         <Step n={4} title="Optional: ring on-call people in Teams">
           <p>

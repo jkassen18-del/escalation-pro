@@ -37,11 +37,10 @@ import {
   type Ticket,
 } from '../../shared/types.ts';
 import { buildTeamsAppPackage, ManifestError } from '../integrations/teams-manifest.ts';
+import { packageForDownload, saveTeamsApp, teamsAppState } from '../integrations/teams-app.ts';
 import { catalogueStatus } from '../integrations/catalogue.ts';
 import { integrationSetupRouter } from './integration-setup.ts';
-import { listTeams } from '../repositories/teams.ts';
 import { getSettings } from '../repositories/settings.ts';
-import type { MsTeamsConfig } from '../integrations/msteams.ts';
 
 export const integrationsRouter: Router = Router();
 
@@ -456,26 +455,20 @@ integrationsRouter.post(
  */
 integrationsRouter.get(
   '/msteams/app-package',
-  asyncRoute(async (_req, res) => {
-    const record = await loadIntegration('msteams');
-    const config = record.config as MsTeamsConfig;
-    const settings = await getSettings();
-
-    const appUrl = settings.appUrl || process.env.APP_URL || '';
-    if (!appUrl) {
-      throw badRequest(
-        'Set the app URL in Settings first. Teams needs to know where this deployment lives, and Microsoft has to be able to reach it.',
-      );
-    }
-
+  asyncRoute(async (req, res) => {
+    const { options, record } = await packageForDownload();
     try {
-      const { filename, zip } = buildTeamsAppPackage({
-        appId: config.appId ?? '',
-        appUrl,
-        botName: config.botName,
-        organizationName: settings.organizationName,
-        teams: await listTeams(),
-        supportsCalling: (await (await import('../ops/teams-calls.ts')).teamsCallSettings()).enabled,
+      const { filename, zip } = buildTeamsAppPackage(options);
+      // Recorded as downloaded, so the next change bumps the version past it.
+      await record();
+      await recordAudit({
+        actorId: (req as AuthedRequest).user.id,
+        actorName: (req as AuthedRequest).user.name,
+        entityType: 'integration',
+        entityId: 'msteams',
+        action: 'download_teams_app',
+        summary: `Downloaded the Teams app package, version ${options.version}`,
+        ip: clientIp(req),
       });
 
       res.setHeader('Content-Type', 'application/zip');
@@ -487,6 +480,31 @@ integrationsRouter.get(
       if (error instanceof ManifestError) throw badRequest(error.message);
       throw error;
     }
+  }),
+);
+
+/** The Teams app as an admin looks after it: version, what changed, problems, menu. */
+integrationsRouter.get(
+  '/msteams/app',
+  asyncRoute(async (_req, res) => {
+    res.json(await teamsAppState());
+  }),
+);
+
+integrationsRouter.put(
+  '/msteams/app',
+  asyncRoute(async (req, res) => {
+    const state = await saveTeamsApp(req.body ?? {});
+    await recordAudit({
+      actorId: (req as AuthedRequest).user.id,
+      actorName: (req as AuthedRequest).user.name,
+      entityType: 'integration',
+      entityId: 'msteams',
+      action: 'update_teams_app',
+      summary: 'Updated the Teams app details and commands',
+      ip: clientIp(req),
+    });
+    res.json(state);
   }),
 );
 

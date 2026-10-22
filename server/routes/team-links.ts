@@ -63,7 +63,7 @@ teamLinksRouter.get(
   '/mine',
   asyncRoute(async (req, res) => {
     const user = (req as AuthedRequest).user;
-    if (can(user, 'teams.manage')) {
+    if (can(user, 'teams.links')) {
       res.json({ links: (await db.all<LinkRow>(`${SELECT} ORDER BY t.name, l.position, l.name`)).map(mapLink) });
       return;
     }
@@ -81,7 +81,7 @@ teamLinksRouter.get(
 
 teamLinksRouter.get(
   '/',
-  requirePermission('teams.manage'),
+  requirePermission('teams.links'),
   asyncRoute(async (req, res) => {
     const teamId = requireString(req.query.teamId, 'Team', { max: 60 });
     const rows = await db.all<LinkRow>(`${SELECT} WHERE l.team_id = ? ORDER BY l.position, l.name`, [teamId]);
@@ -96,7 +96,7 @@ async function audit(req: Request, action: string, summary: string, teamId: stri
 
 teamLinksRouter.post(
   '/',
-  requirePermission('teams.manage'),
+  requirePermission('teams.links'),
   asyncRoute(async (req, res) => {
     const team = await findTeamById(requireString(req.body?.teamId, 'Team', { max: 60 }));
     if (!team) throw notFound('That team does not exist.');
@@ -116,7 +116,7 @@ teamLinksRouter.post(
 
 teamLinksRouter.put(
   '/:id',
-  requirePermission('teams.manage'),
+  requirePermission('teams.links'),
   asyncRoute(async (req, res) => {
     const existing = await db.get<LinkRow>(`${SELECT} WHERE l.id = ?`, [req.params.id]);
     if (!existing) throw notFound('That link does not exist.');
@@ -138,7 +138,7 @@ teamLinksRouter.put(
 
 teamLinksRouter.delete(
   '/:id',
-  requirePermission('teams.manage'),
+  requirePermission('teams.links'),
   asyncRoute(async (req, res) => {
     const existing = await db.get<LinkRow>(`${SELECT} WHERE l.id = ?`, [req.params.id]);
     if (!existing) throw notFound('That link does not exist.');

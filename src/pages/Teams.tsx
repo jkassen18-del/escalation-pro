@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Building2, MoreHorizontal, Plus, Trash2 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { duration } from '@/lib/format';
+import { useAuth } from '@/state/auth';
 import { useToast } from '@/components/ui/Toast';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/Button';
@@ -38,6 +39,7 @@ const SLA_PRESETS = [
 export function TeamsPage() {
   useDocumentTitle('Teams');
   const toast = useToast();
+  const { can } = useAuth();
   const [teams, setTeams] = useState<Team[]>([]);
   const [directory, setDirectory] = useState<Awaited<ReturnType<typeof api.users.directory>>['users']>([]);
   const [loading, setLoading] = useState(true);
@@ -70,10 +72,12 @@ export function TeamsPage() {
         title="Teams"
         description="Teams own queues of tickets. Routing rules and SLA targets are set per team."
         actions={
-          <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
-            <Plus className="size-3.5" />
-            New team
-          </Button>
+          can('teams.manage') ? (
+            <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+              <Plus className="size-3.5" />
+              New team
+            </Button>
+          ) : undefined
         }
       />
 
@@ -87,9 +91,11 @@ export function TeamsPage() {
           title="No teams yet"
           description="Create a team for each queue you want tickets routed into — Support, Operations, Engineering, and so on."
           action={
-            <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
-              Create the first team
-            </Button>
+            can('teams.manage') ? (
+              <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+                Create the first team
+              </Button>
+            ) : undefined
           }
         />
       ) : (
@@ -111,8 +117,10 @@ export function TeamsPage() {
                     </Button>
                   )}
                   items={[
-                    { label: 'Edit team', onSelect: () => setEditing(team) },
-                    { label: 'Delete team', icon: Trash2, destructive: true, onSelect: () => setDeleting(team) },
+                    { label: can('teams.manage') ? 'Edit team' : 'Open team', onSelect: () => setEditing(team) },
+                    ...(can('teams.manage')
+                      ? [{ label: 'Delete team', icon: Trash2, destructive: true, onSelect: () => setDeleting(team) }]
+                      : []),
                   ]}
                 />
               </header>
@@ -212,6 +220,10 @@ function TeamDialog({
   onSaved: () => Promise<void>;
 }) {
   const toast = useToast();
+  const { can } = useAuth();
+  // Department details and routing need "Manage departments"; links and the
+  // intake form have their own permissions and can be edited without it.
+  const manage = can('teams.manage');
   /* Offered as a field type only where a connection actually exists. */
   const [dataSources, setDataSources] = useState<Array<{ id: string; name: string }>>([]);
 
@@ -259,13 +271,16 @@ function TeamDialog({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" loading={submitting} disabled={!form.name.trim()} onClick={submit}>
-            {team ? 'Save changes' : 'Create team'}
-          </Button>
+          {manage && (
+            <Button variant="primary" loading={submitting} disabled={!form.name.trim()} onClick={submit}>
+              {team ? 'Save changes' : 'Create team'}
+            </Button>
+          )}
         </>
       }
     >
       <div className="space-y-4">
+        <fieldset disabled={!manage} className="min-w-0 space-y-4">
         <div className="grid gap-3 sm:grid-cols-[1fr_8rem_5rem]">
           <Field label="Name" required>
             <Input
@@ -387,26 +402,28 @@ function TeamDialog({
           </div>
         </div>
 
+        </fieldset>
+
         {/*
           * Only offered for a team that already exists: the form is stored
           * against a team id, so there is nothing to attach questions to until
           * the team has been created.
           */}
-        {team && (
+        {team && manage && (
           <div>
             <p className="mb-2 text-xs font-medium">Where these tickets are announced</p>
             <TeamRouting teamId={team.id} teamName={team.name} />
           </div>
         )}
 
-        {team && (
+        {team && can('teams.links') && (
           <div>
             <p className="mb-2 text-xs font-medium">Links to other systems</p>
             <TeamLinks teamId={team.id} />
           </div>
         )}
 
-        {team && (
+        {team && can('teams.forms') && (
           <div>
             <p className="mb-2 text-xs font-medium">Intake form</p>
             <FormBuilder teamId={team.id} teamName={team.name} dataSources={dataSources} />

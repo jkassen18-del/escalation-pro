@@ -71,21 +71,37 @@ downloads rather than rendered inline.
 Every route enforces permissions server-side. The UI hiding a control is a
 convenience, never the boundary.
 
+Access is permission-based: about fifty permissions, one per capability (see
+`server/permissions.ts` and [docs/roles-and-permissions.md](docs/roles-and-permissions.md)).
+Roles are rows in the `roles` table; a person holds their role's permissions
+plus any extras granted to them. Administrator always holds every permission.
+The same checks run for the web app, the MCP connector and the Slack, Teams,
+Discord and Linear actions that act as a person.
+
 Verified by test:
 
-- An agent cannot read or modify a ticket outside their teams, and such tickets
-  are absent from their list view.
+- An agent cannot read or modify a ticket outside their departments, and such
+  tickets are absent from their list view, counts, reports, exports, alerts
+  and pages (a page ringing them excepted). A Slack button or "done" reply
+  from someone outside the ticket's department changes nothing.
 - An agent cannot promote themselves, grant themselves permissions, or create an
   administrator.
 - A manager cannot promote themselves to administrator, create one, or read
   integration credentials.
-- Nobody can grant a permission they do not hold, and only an administrator
-  can grant the administrator-only ones (`settings.manage`,
-  `integrations.manage`, `backups.*`, `tickets.delete`, `users.delete`).
+- Nobody can grant a permission they do not hold, as an extra or by putting it
+  in a role, or give someone a role that holds one; only an administrator can
+  grant the administrator-only ones (everything the built-in Manager role does
+  not start with, such as `settings.manage`, `integrations.manage`,
+  `roles.manage`, `backups.*`, `tickets.delete`, `users.delete`).
+- A custom role's permissions are enforced route by route (allowed and 403).
 - Only an administrator can edit, suspend, reset the password of, or delete an
-  administrator account.
+  administrator account, or assign the Administrator role.
 - An on-call page can only be acknowledged or escalated by someone it reached
-  or by a holder of `oncall.manage`.
+  (with `pages.respond`), by a holder of `oncall.manage`, or by a holder of
+  `oncall.manage_own_department` in the ticket's department.
+- On-call schedules and overrides for others can be changed only by holders of
+  `oncall.manage`, or of `oncall.manage_own_department` for their own
+  departments' schedules.
 - Attachments follow the ticket's visibility for upload, download and delete,
   and files on an internal note are hidden from anyone who cannot read
   internal notes. The XLSX export covers only the tickets the exporter can see

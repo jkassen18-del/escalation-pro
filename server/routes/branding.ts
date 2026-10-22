@@ -63,7 +63,7 @@ brandingRouter.put(
   // the writes resolve the session themselves.
   attachUser,
   requireAuth,
-  requirePermission('settings.manage'),
+  requirePermission('branding.manage'),
   upload.single('logo'),
   asyncRoute(async (req, res) => {
     const actor = (req as AuthedRequest).user;
@@ -95,7 +95,7 @@ brandingRouter.delete(
   '/logo',
   attachUser,
   requireAuth,
-  requirePermission('settings.manage'),
+  requirePermission('branding.manage'),
   asyncRoute(async (req, res) => {
     const actor = (req as AuthedRequest).user;
     await removeBrandingAsset();

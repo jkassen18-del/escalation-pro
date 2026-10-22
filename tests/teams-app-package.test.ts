@@ -273,12 +273,12 @@ test('the manifest names the host, which Teams checks links against', () => {
   assert.equal(manifest.developer.websiteUrl, 'https://tickets.example.internal');
 });
 
-test('the command menu lists the departments that actually exist', () => {
+test('the command menu lists the built-in commands, then the departments that actually exist', () => {
   const files = readZip(build().zip);
   const manifest = JSON.parse(files.get('manifest.json')!.toString('utf8'));
 
   const titles = manifest.bots[0].commandLists[0].commands.map((c: any) => c.title);
-  assert.deepEqual(titles, ['finance', 'hr']);
+  assert.deepEqual(titles, ['help', 'new', 'status', 'mine', 'oncall', 'finance', 'hr']);
 });
 
 test('a department list longer than Teams allows is trimmed, not rejected', () => {
@@ -377,6 +377,8 @@ test('once configured it serves a real zip as a download', async () => {
   // The departments come from the database, not from a template.
   assert.deepEqual(
     manifest.bots[0].commandLists[0].commands.map((c: any) => c.title).sort(),
-    ['finance', 'hr'],
+    ['finance', 'help', 'hr', 'mine', 'new', 'oncall', 'status'],
   );
+  // The first package is above the 1.0.0 every earlier build said.
+  assert.equal(manifest.version, '1.1.0');
 });

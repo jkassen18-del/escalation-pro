@@ -10,6 +10,7 @@ import { useToast } from '@/components/ui/Toast';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { ErrorPane, LoadingPane } from '@/components/ui/Feedback';
+import { useAuth } from '@/state/auth';
 import { SeverityBadge } from '@/components/ops/IncidentPanel';
 import { useDocumentTitle } from '@/state/branding';
 import type { Page } from '@shared/ops';
@@ -27,6 +28,7 @@ export function OperationsPage() {
   const [overview, setOverview] = useState<OpsOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [acking, setAcking] = useState<string | null>(null);
+  const { can } = useAuth();
 
   const load = useCallback(async () => {
     try {
@@ -88,9 +90,11 @@ export function OperationsPage() {
                       {page.policyName} · level {page.currentLevel + 1} · started {relativeTime(page.createdAt)}
                     </p>
                   </div>
-                  <Button variant="danger" size="lg" className="w-full sm:w-auto" loading={acking === page.id} onClick={() => acknowledge(page)}>
-                    Acknowledge
-                  </Button>
+                  {can('pages.respond', 'oncall.manage') && (
+                    <Button variant="danger" size="lg" className="w-full sm:w-auto" loading={acking === page.id} onClick={() => acknowledge(page)}>
+                      Acknowledge
+                    </Button>
+                  )}
                 </li>
               ))}
             </ul>

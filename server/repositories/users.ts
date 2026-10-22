@@ -1,7 +1,8 @@
 import { db, fromBool, toBool } from '../db/index.ts';
 import { hashPassword, randomId } from '../lib/crypto.ts';
-import { resolvePermissions } from '../permissions.ts';
-import type { Permission, PublicUser, UserRole, UserStatus } from '../../shared/types.ts';
+import { ROLE_LABELS, permissionsForRole, resolvePermissions } from '../permissions.ts';
+import type { Permission, PublicUser, Role, UserRole, UserStatus } from '../../shared/types.ts';
+import { builtInRoleId, roleMap } from './roles.ts';
 
 export interface UserRow {
   id: string;
@@ -17,6 +18,7 @@ export interface UserRow {
   avatar_color: string;
   must_change_password: number;
   last_login_at: string | null;
+  role_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -58,16 +60,21 @@ async function loadRelations() {
     perms.get(row.user_id)!.push(row.permission as Permission);
   }
 
-  return { teams, perms };
+  return { teams, perms, roles: await roleMap() };
 }
 
-export function mapUser(row: UserRow, teamIds: string[], extraPermissions: Permission[]): PublicUser {
+export function mapUser(row: UserRow, teamIds: string[], extraPermissions: Permission[], role: Role | undefined): PublicUser {
+  // A role deleted underneath someone (it cannot happen through the API)
+  // falls back to what their tier could always do.
+  const rolePermissions = role?.permissions ?? permissionsForRole(row.role);
   return {
     id: row.id,
     email: row.email,
     username: row.username,
     name: row.name,
-    role: row.role,
+    role: role?.tier ?? row.role,
+    roleId: role?.id ?? null,
+    roleName: role?.name ?? ROLE_LABELS[row.role] ?? row.role,
     status: row.status,
     jobTitle: row.job_title,
     phone: row.phone,
@@ -78,7 +85,7 @@ export function mapUser(row: UserRow, teamIds: string[], extraPermissions: Permi
     updatedAt: row.updated_at,
     teamIds,
     extraPermissions,
-    permissions: resolvePermissions(row.role, extraPermissions),
+    permissions: resolvePermissions(rolePermissions, extraPermissions),
   };
 }
 
@@ -86,15 +93,15 @@ export async function listUsers(options: { activeOnly?: boolean } = {}): Promise
   const rows = await db.all<UserRow>(
     `SELECT * FROM users ${options.activeOnly ? `WHERE status = 'active'` : ''} ORDER BY ${nameOrder()}`,
   );
-  const { teams, perms } = await loadRelations();
-  return rows.map((row) => mapUser(row, teams.get(row.id) ?? [], perms.get(row.id) ?? []));
+  const { teams, perms, roles } = await loadRelations();
+  return rows.map((row) => mapUser(row, teams.get(row.id) ?? [], perms.get(row.id) ?? [], roles.get(row.role_id ?? '')));
 }
 
 export async function findUserById(id: string): Promise<PublicUser | null> {
   const row = await db.get<UserRow>(`SELECT * FROM users WHERE id = ?`, [id]);
   if (!row) return null;
-  const { teams, perms } = await loadRelations();
-  return mapUser(row, teams.get(id) ?? [], perms.get(id) ?? []);
+  const { teams, perms, roles } = await loadRelations();
+  return mapUser(row, teams.get(id) ?? [], perms.get(id) ?? [], roles.get(row.role_id ?? ''));
 }
 
 export function findUserRowById(id: string) {
@@ -117,7 +124,10 @@ export interface CreateUserInput {
   username: string;
   name: string;
   password: string;
+  /** The legacy tier; must match the role's. */
   role: UserRole;
+  /** Defaults to the built-in role for `role`. */
+  roleId?: string | null;
   jobTitle?: string | null;
   phone?: string | null;
   teamIds?: string[];
@@ -132,9 +142,9 @@ export async function createUser(input: CreateUserInput): Promise<string> {
   const { hash, salt } = hashPassword(input.password);
 
   await db.run(
-    `INSERT INTO users (id, email, username, name, password_hash, password_salt, role, status,
+    `INSERT INTO users (id, email, username, name, password_hash, password_salt, role, role_id, status,
        job_title, phone, avatar_color, must_change_password, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       input.email.toLowerCase(),
@@ -143,6 +153,7 @@ export async function createUser(input: CreateUserInput): Promise<string> {
       hash,
       salt,
       input.role,
+      input.roleId ?? builtInRoleId(input.role),
       input.status ?? 'active',
       input.jobTitle ?? null,
       input.phone ?? null,

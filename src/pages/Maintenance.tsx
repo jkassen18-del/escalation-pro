@@ -60,7 +60,7 @@ function recurrenceLabel(w: MaintenanceWindow): string | null {
 export function MaintenancePage() {
   useDocumentTitle('Maintenance');
   const { can } = useAuth();
-  const canManage = can('monitors.manage');
+  const canManage = can('maintenance.manage');
   const toast = useToast();
   const [windows, setWindows] = useState<MaintenanceWindow[]>([]);
   const [occurrences, setOccurrences] = useState<MaintenanceOccurrence[]>([]);

@@ -7,6 +7,7 @@ import { badRequest, forbidden, optionalDate, optionalString, requireEnum, requi
 import { recordAudit } from '../lib/audit.ts';
 import { notifyUsers } from '../lib/notifications.ts';
 import { can } from '../middleware/auth.ts';
+import { statusPermission } from '../permissions.ts';
 import { findTeamById } from '../repositories/teams.ts';
 import { findUserById } from '../repositories/users.ts';
 import { getSettings } from '../repositories/settings.ts';
@@ -20,6 +21,7 @@ import {
   TICKET_PRIORITIES,
   TICKET_STATUSES,
   TICKET_TYPES,
+  type Permission,
   type PublicUser,
   type Ticket,
 } from '../../shared/types.ts';
@@ -84,10 +86,14 @@ export async function updateTicket(before: Ticket, patch: TicketPatch, ctx: Acti
   };
 
   const now = new Date().toISOString();
+  const needs = (permission: Permission, what: string) => {
+    if (!can(user, permission)) throw forbidden(`You cannot ${what}.`);
+  };
 
   if (patch.subject !== undefined) {
     const subject = requireString(patch.subject, 'Subject', { max: 200 });
     if (subject !== before.subject) {
+      needs('tickets.update', 'edit ticket details');
       push('subject', subject);
       changes.push({ field: 'subject', from: before.subject, to: subject });
     }
@@ -102,6 +108,7 @@ export async function updateTicket(before: Ticket, patch: TicketPatch, ctx: Acti
       description = await extractInlineImages(description, { ticketId: before.id, uploadedBy: user.id || null });
     }
     if (description !== before.description) {
+      needs('tickets.update', 'edit ticket details');
       push('description', description);
       changes.push({ field: 'description', from: null, to: null });
     }
@@ -110,7 +117,8 @@ export async function updateTicket(before: Ticket, patch: TicketPatch, ctx: Acti
   if (patch.status !== undefined) {
     const status = requireEnum(patch.status, TICKET_STATUSES, 'Status');
     if (status !== before.status) {
-      if (!can(user, 'tickets.update')) throw forbidden('You cannot change a ticket status.');
+      const permission = statusPermission(before.status, status);
+      needs(permission, permission === 'tickets.close' ? 'resolve or close tickets' : permission === 'tickets.reopen' ? 'reopen tickets' : 'change a ticket status');
       push('status', status);
       changes.push({ field: 'status', from: before.status, to: status });
 
@@ -127,6 +135,7 @@ export async function updateTicket(before: Ticket, patch: TicketPatch, ctx: Acti
   if (patch.priority !== undefined) {
     const priority = requireEnum(patch.priority, TICKET_PRIORITIES, 'Priority');
     if (priority !== before.priority) {
+      needs('tickets.change_priority', 'change priority');
       push('priority', priority);
       changes.push({ field: 'priority', from: before.priority, to: priority });
     }
@@ -135,6 +144,7 @@ export async function updateTicket(before: Ticket, patch: TicketPatch, ctx: Acti
   if (patch.type !== undefined) {
     const type = requireEnum(patch.type, TICKET_TYPES, 'Type');
     if (type !== before.type) {
+      needs('tickets.update', 'edit ticket details');
       push('type', type);
       changes.push({ field: 'type', from: before.type, to: type });
     }
@@ -143,6 +153,7 @@ export async function updateTicket(before: Ticket, patch: TicketPatch, ctx: Acti
   if (patch.teamId !== undefined) {
     const teamId = optionalString(patch.teamId, 60);
     if (teamId !== before.teamId) {
+      if (!can(user, 'tickets.update') && !can(user, 'tickets.assign')) throw forbidden('You cannot move tickets between departments.');
       if (teamId && !(await findTeamById(teamId))) throw badRequest('That team no longer exists.');
       push('team_id', teamId);
       changes.push({ field: 'team', from: before.teamName, to: teamId });
@@ -162,6 +173,7 @@ export async function updateTicket(before: Ticket, patch: TicketPatch, ctx: Acti
   if (patch.severity !== undefined) {
     const severity = patch.severity === null || patch.severity === '' ? null : requireEnum(patch.severity, SEVERITIES, 'Severity');
     if (severity !== before.severity) {
+      needs('tickets.update', 'edit ticket details');
       push('severity', severity);
       changes.push({ field: 'severity', from: before.severity, to: severity });
     }
@@ -170,6 +182,7 @@ export async function updateTicket(before: Ticket, patch: TicketPatch, ctx: Acti
   if (patch.commanderId !== undefined) {
     const commanderId = optionalString(patch.commanderId, 60);
     if (commanderId !== before.commanderId) {
+      needs('tickets.update', 'edit ticket details');
       if (commanderId && !(await findUserById(commanderId))) throw badRequest('That person no longer exists.');
       push('commander_id', commanderId);
       changes.push({ field: 'commander', from: before.commanderName, to: commanderId });
@@ -178,12 +191,14 @@ export async function updateTicket(before: Ticket, patch: TicketPatch, ctx: Acti
 
   if (patch.dueAt !== undefined) {
     const dueAt = optionalDate(patch.dueAt, 'Due date');
+    if (dueAt !== before.dueAt) needs('tickets.update', 'edit ticket details');
     push('due_at', dueAt);
     changes.push({ field: 'dueAt', from: before.dueAt, to: dueAt });
   }
 
   if (patch.tags !== undefined) {
     const tags = toStringArray(patch.tags, 20).map((tag) => tag.toLowerCase());
+    if (tags.join(',') !== before.tags.join(',')) needs('tickets.update', 'edit ticket details');
     push('tags', JSON.stringify(tags));
     changes.push({ field: 'tags', from: before.tags.join(', '), to: tags.join(', ') });
   }
@@ -271,6 +286,9 @@ export async function addTicketComment(ticket: Ticket, input: CommentInput, ctx:
   const { bodyFormat, isInternal } = input;
   if (isInternal && !can(user, 'tickets.comment_internal')) {
     throw forbidden('You cannot post internal notes.');
+  }
+  if (!isInternal && !can(user, 'tickets.reply')) {
+    throw forbidden('You cannot reply on tickets.');
   }
 
   const now = new Date().toISOString();

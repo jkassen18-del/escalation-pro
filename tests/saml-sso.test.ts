@@ -404,7 +404,7 @@ test('team links: https only, managed by team managers, visible to members', asy
 
   // A member of the team sees it; a non-member does not; neither can change it.
   await db.run(`INSERT INTO team_members (team_id, user_id, is_lead) VALUES (?, 'u-agent', 0) ON CONFLICT (team_id, user_id) DO NOTHING`, [teamId]);
-  await db.run(`UPDATE users SET role = 'agent' WHERE id = 'u-agent'`);
+  await db.run(`UPDATE users SET role = 'agent', role_id = 'role-agent' WHERE id = 'u-agent'`);
   await addUser('u-outsider', 'outsider@acme.test', 'agent', 'Outsider-Password-1');
   const memberCookie = (await passwordLogin('agent@acme.test', 'Agent-Password-1')).headers.get('set-cookie')!.split(';')[0];
   const outsiderCookie = (await passwordLogin('outsider@acme.test', 'Outsider-Password-1')).headers.get('set-cookie')!.split(';')[0];

@@ -41,6 +41,7 @@ import {
   TICKET_PRIORITIES,
   TICKET_STATUSES,
   TICKET_TYPES,
+  statusPermission,
   type Team,
   type TicketDetail as TicketDetailType,
 } from '@shared/types';
@@ -114,6 +115,9 @@ export function TicketDetailPage() {
   const sla = slaRemaining(ticket.dueAt, isTerminal);
   const watching = user ? ticket.watcherIds.includes(user.id) : false;
   const editable = can('tickets.update');
+  // Resolve/Reopen from the header follows the same rule as the status field.
+  const canResolve = can(statusPermission(ticket.status, isTerminal ? 'open' : 'resolved'));
+  const canCloseOrReopen = can(statusPermission(ticket.status, ticket.status === 'closed' ? 'open' : 'closed'));
   const linearLink = ticket.links.find((link) => link.provider === 'linear');
 
   return (
@@ -171,14 +175,14 @@ export function TicketDetailPage() {
               {watching ? 'Unwatch' : 'Watch'}
             </Button>
 
-            {editable && !isTerminal && (
+            {can('tickets.escalate') && !isTerminal && (
               <Button variant="secondary" size="sm" onClick={() => setEscalateOpen(true)}>
                 <TriangleAlert className="size-3.5" />
                 Escalate
               </Button>
             )}
 
-            {editable && (
+            {canResolve && (
               <Button
                 variant="primary"
                 size="sm"
@@ -201,7 +205,7 @@ export function TicketDetailPage() {
                 </Button>
               )}
               items={[
-                ...(editable && !linearLink
+                ...(can('tickets.push_linear') && !linearLink
                   ? [
                       {
                         label: 'Create Linear issue',
@@ -221,7 +225,7 @@ export function TicketDetailPage() {
                       },
                     ]
                   : []),
-                ...(editable
+                ...(canCloseOrReopen
                   ? [
                       {
                         label: ticket.status === 'closed' ? 'Reopen ticket' : 'Close ticket',
@@ -263,6 +267,8 @@ export function TicketDetailPage() {
             directory={directory}
             editable={editable}
             canAssign={can('tickets.assign')}
+            canPriority={can('tickets.change_priority')}
+            canStatusTo={(next) => can(statusPermission(ticket.status, next))}
             busy={busy}
             onPatch={patch}
           />
@@ -313,8 +319,11 @@ export function TicketDetailPage() {
 function Conversation({ ticket, onChanged }: { ticket: TicketDetailType; onChanged: () => Promise<void> }) {
   const { can } = useAuth();
   const toast = useToast();
+  const canReply = can('tickets.reply');
+  const canNote = can('tickets.comment_internal');
   const [body, setBody] = useState('');
-  const [internal, setInternal] = useState(false);
+  // Someone who may only write internal notes starts (and stays) on a note.
+  const [internal, setInternal] = useState(!canReply && canNote);
   const [sending, setSending] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -442,6 +451,7 @@ function Conversation({ ticket, onChanged }: { ticket: TicketDetailType; onChang
         )}
       </div>
 
+      {(canReply || canNote) && (
       <div className="mt-5 rounded-md border surface">
         <RichTextEditor
           value={body}
@@ -485,12 +495,14 @@ function Conversation({ ticket, onChanged }: { ticket: TicketDetailType; onChang
                 event.target.value = '';
               }}
             />
-            <Button variant="ghost" size="sm" onClick={() => fileInputRef.current?.click()}>
-              <Paperclip className="size-3.5" />
-              Attach
-            </Button>
+            {can('tickets.attach') && (
+              <Button variant="ghost" size="sm" onClick={() => fileInputRef.current?.click()}>
+                <Paperclip className="size-3.5" />
+                Attach
+              </Button>
+            )}
 
-            {can('tickets.comment_internal') && (
+            {canNote && canReply && (
               <Button
                 variant={internal ? 'secondary' : 'ghost'}
                 size="sm"
@@ -514,6 +526,7 @@ function Conversation({ ticket, onChanged }: { ticket: TicketDetailType; onChang
           </Button>
         </div>
       </div>
+      )}
     </div>
   );
 }
@@ -586,6 +599,8 @@ function PropertiesPanel({
   directory,
   editable,
   canAssign,
+  canPriority,
+  canStatusTo,
   busy,
   onPatch,
 }: {
@@ -594,6 +609,8 @@ function PropertiesPanel({
   directory: Directory;
   editable: boolean;
   canAssign: boolean;
+  canPriority: boolean;
+  canStatusTo: (next: string) => boolean;
   busy: boolean;
   onPatch: (body: Record<string, unknown>, message: string) => Promise<void>;
 }) {
@@ -609,11 +626,11 @@ function PropertiesPanel({
       <Field label="Status">
         <Select
           value={ticket.status}
-          disabled={!editable || busy}
+          disabled={!TICKET_STATUSES.some((status) => status !== ticket.status && canStatusTo(status)) || busy}
           onChange={(event) => onPatch({ status: event.target.value }, 'Status updated.')}
         >
           {TICKET_STATUSES.map((status) => (
-            <option key={status} value={status}>
+            <option key={status} value={status} disabled={status !== ticket.status && !canStatusTo(status)}>
               {STATUS_LABELS[status]}
             </option>
           ))}
@@ -623,7 +640,7 @@ function PropertiesPanel({
       <Field label="Priority">
         <Select
           value={ticket.priority}
-          disabled={!editable || busy}
+          disabled={!canPriority || busy}
           onChange={(event) => onPatch({ priority: event.target.value }, 'Priority updated.')}
         >
           {TICKET_PRIORITIES.map((priority) => (
@@ -651,7 +668,7 @@ function PropertiesPanel({
       <Field label="Team">
         <Select
           value={ticket.teamId ?? ''}
-          disabled={!canAssign || busy}
+          disabled={!(canAssign || editable) || busy}
           onChange={(event) => onPatch({ teamId: event.target.value || null }, 'Team updated.')}
         >
           <option value="">Unassigned</option>
