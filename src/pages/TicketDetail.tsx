@@ -534,6 +534,8 @@ function describeEvent(event: TicketDetailType['events'][number]): string {
       return `acknowledged the page via ${event.toValue}`;
     case 'alert_grouped':
       return `grouped another alert into this incident: ${event.toValue}`;
+    case 'routed':
+      return `routed this by the rule "${event.toValue}"`;
     case 'attached':
       return `attached ${event.toValue}`;
     case 'linked':
