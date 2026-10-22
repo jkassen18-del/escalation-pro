@@ -19,6 +19,29 @@ import { notifyUsers } from '../lib/notifications.ts';
 import type { PublicUser, Ticket, TicketPriority, TicketSource, TicketType } from '../../shared/types.ts';
 
 /**
+ * Who raised a ticket that no person raised: a monitor going down, an alert
+ * arriving from AWS. Its empty id is what createTicket checks for.
+ */
+export const SYSTEM_ACTOR: PublicUser = {
+  id: '',
+  email: '',
+  username: 'system',
+  name: 'InfraTicket',
+  role: 'admin',
+  status: 'active',
+  jobTitle: null,
+  phone: null,
+  avatarColor: '#6b7280',
+  mustChangePassword: false,
+  lastLoginAt: null,
+  createdAt: '',
+  updatedAt: '',
+  teamIds: [],
+  permissions: [],
+  extraPermissions: [],
+};
+
+/**
  * Raising a ticket, wherever it was raised from.
  *
  * This used to live inside the POST /api/tickets handler, reading straight
@@ -46,9 +69,11 @@ export interface CreateTicketInput {
   dueAt?: string | null;
   /** Answers to the department's form, keyed by field key. */
   customFields?: Record<string, unknown>;
+  severity?: Ticket['severity'];
 }
 
 export interface CreateTicketContext {
+  /** A person, or SYSTEM_ACTOR for tickets raised by monitors and alert sources. */
   actor: PublicUser;
   /** Where the audit entry says it came from. */
   ip?: string | null;
@@ -61,6 +86,8 @@ export async function createTicket(
   context: CreateTicketContext,
 ): Promise<Ticket> {
   const { actor } = context;
+  // The system actor has no user row, so nothing may reference it.
+  const actorId = actor.id || null;
   const settings = await getSettings();
 
   const isHtml = input.descriptionFormat === 'html';
@@ -100,7 +127,7 @@ export async function createTicket(
       description: storedDescription,
       descriptionFormat,
       teamId: team?.id ?? null,
-      requesterId: input.requesterId ?? actor.id,
+      requesterId: input.requesterId ?? actorId,
       assigneeId,
       status: 'open',
       priority,
@@ -108,13 +135,14 @@ export async function createTicket(
       source,
       tags: (input.tags ?? []).map((tag) => tag.toLowerCase()),
       dueAt,
-      createdBy: actor.id,
+      createdBy: actorId,
+      severity: input.severity ?? null,
     });
 
     if (descriptionFormat === 'html') {
       const rewritten = await extractInlineImages(storedDescription, {
         ticketId: created.id,
-        uploadedBy: actor.id,
+        uploadedBy: actorId,
       });
       if (rewritten !== storedDescription) {
         await db.run(`UPDATE tickets SET description = ? WHERE id = ?`, [rewritten, created.id]);
@@ -123,12 +151,12 @@ export async function createTicket(
 
     if (answers.length > 0) await saveAnswers(created.id, answers);
 
-    await recordEvent(created.id, actor.id, 'created', null, null, input.subject);
+    await recordEvent(created.id, actorId, 'created', null, null, input.subject);
     if (assigneeId) {
-      await recordEvent(created.id, actor.id, 'assigned', 'assignee', null, assigneeId);
+      await recordEvent(created.id, actorId, 'assigned', 'assignee', null, assigneeId);
       await addWatcher(created.id, assigneeId);
     }
-    await addWatcher(created.id, actor.id);
+    if (actorId) await addWatcher(created.id, actorId);
     return created;
   });
 
@@ -136,7 +164,7 @@ export async function createTicket(
   if (!ticket) throw new Error('Ticket creation failed.');
 
   await recordAudit({
-    actorId: actor.id,
+    actorId,
     actorName: actor.name,
     entityType: 'ticket',
     entityId: ticket.id,

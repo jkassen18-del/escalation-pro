@@ -32,3 +32,15 @@ cronRouter.all(
     res.json({ ok: true, breachesNotified: notified, ranAt: new Date().toISOString() });
   }),
 );
+
+/** Monitoring, paging and backups, for deployments with no long-running process. Call every minute. */
+cronRouter.all(
+  '/ops',
+  asyncRoute(async (req, res) => {
+    if (!authorised(req.header('authorization'))) {
+      return res.status(401).json({ error: 'Unauthorised' });
+    }
+    const { runOpsTick } = await import('../ops/runner.ts');
+    res.json({ ok: true, ...(await runOpsTick()), ranAt: new Date().toISOString() });
+  }),
+);

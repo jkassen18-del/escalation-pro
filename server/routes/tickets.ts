@@ -20,6 +20,8 @@ import {
 import { clientIp, recordAudit } from '../lib/audit.ts';
 import { can, requireAuth, requirePermission, visibleTeamIds, type AuthedRequest } from '../middleware/auth.ts';
 import { findTeamById } from '../repositories/teams.ts';
+import { findUserById } from '../repositories/users.ts';
+import { SEVERITIES } from '../../shared/ops.ts';
 import { getSettings } from '../repositories/settings.ts';
 import {
   addLink,
@@ -265,6 +267,23 @@ ticketsRouter.patch(
         push('assignee_id', assigneeId);
         changes.push({ field: 'assignee', from: before.assigneeName, to: assigneeId });
         if (assigneeId) await addWatcher(before.id, assigneeId);
+      }
+    }
+
+    if (req.body?.severity !== undefined) {
+      const severity = req.body.severity === null || req.body.severity === '' ? null : requireEnum(req.body.severity, SEVERITIES, 'Severity');
+      if (severity !== before.severity) {
+        push('severity', severity);
+        changes.push({ field: 'severity', from: before.severity, to: severity });
+      }
+    }
+
+    if (req.body?.commanderId !== undefined) {
+      const commanderId = optionalString(req.body.commanderId, 60);
+      if (commanderId !== before.commanderId) {
+        if (commanderId && !(await findUserById(commanderId))) throw badRequest('That person no longer exists.');
+        push('commander_id', commanderId);
+        changes.push({ field: 'commander', from: before.commanderName, to: commanderId });
       }
     }
 

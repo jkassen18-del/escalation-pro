@@ -18,6 +18,11 @@ export const ALL_PERMISSIONS: Permission[] = [
   'reports.view',
   'reports.export',
   'audit.view',
+  'monitors.manage',
+  'oncall.manage',
+  'statuspages.manage',
+  'backups.manage',
+  'backups.restore',
 ];
 
 export const PERMISSION_GROUPS: Array<{ label: string; permissions: Array<{ key: Permission; label: string; hint: string }> }> = [
@@ -53,6 +58,16 @@ export const PERMISSION_GROUPS: Array<{ label: string; permissions: Array<{ key:
       { key: 'audit.view', label: 'View audit log', hint: 'Inspect the full system activity trail' },
     ],
   },
+  {
+    label: 'Operations',
+    permissions: [
+      { key: 'monitors.manage', label: 'Manage monitoring', hint: 'Create monitors, alert sources and maintenance windows' },
+      { key: 'oncall.manage', label: 'Manage on-call', hint: 'Edit schedules, overrides, escalation policies and telephony' },
+      { key: 'statuspages.manage', label: 'Manage status pages', hint: 'Publish status pages and post updates to them' },
+      { key: 'backups.manage', label: 'Manage backups', hint: 'Configure database backup jobs and run them' },
+      { key: 'backups.restore', label: 'Download backups', hint: 'Download decrypted backups for a restore' },
+    ],
+  },
 ];
 
 /**
@@ -75,6 +90,9 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'reports.view',
     'reports.export',
     'audit.view',
+    'monitors.manage',
+    'oncall.manage',
+    'statuspages.manage',
   ],
   agent: ['tickets.create', 'tickets.update', 'tickets.assign', 'tickets.comment_internal', 'users.view', 'reports.view'],
   viewer: ['users.view'],

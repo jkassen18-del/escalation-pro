@@ -380,9 +380,13 @@ test('a submitted card raises a ticket against the right department', async () =
   assert.equal(answers.cost_centre, 'CC-4471');
   assert.equal(answers.category, 'Invoice');
 
-  // And the person is told, in the thread, with a link.
-  const card = lastCard();
-  assert.match(card.body[0].text, /Raised ESC-\d+/);
+  // And the person is told, in the thread, with a link. Looked for by what it
+  // says: the new-ticket announcement is dispatched asynchronously to the
+  // same conversation and can land either side of it.
+  const card = sent
+    .map((entry) => entry.body?.attachments?.[0]?.content)
+    .find((content) => /Raised ESC-\d+/.test(content?.body?.[0]?.text ?? ''));
+  assert.ok(card, 'the confirmation card was sent');
   assert.equal(card.actions[0].type, 'Action.OpenUrl');
 });
 

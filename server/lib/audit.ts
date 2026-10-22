@@ -6,7 +6,19 @@ import type { AuditEntry } from '../../shared/types.ts';
 export interface AuditInput {
   actorId?: string | null;
   actorName?: string;
-  entityType: 'ticket' | 'user' | 'team' | 'settings' | 'integration' | 'auth' | 'system';
+  entityType:
+    | 'ticket'
+    | 'user'
+    | 'team'
+    | 'settings'
+    | 'integration'
+    | 'auth'
+    | 'system'
+    | 'monitor'
+    | 'alert'
+    | 'oncall'
+    | 'status_page'
+    | 'backup';
   entityId?: string | null;
   action: string;
   summary: string;

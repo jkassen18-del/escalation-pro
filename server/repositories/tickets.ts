@@ -45,6 +45,9 @@ interface TicketRow {
   updated_at: string;
   comment_count: number | string;
   attachment_count: number | string;
+  severity: Ticket['severity'];
+  commander_id: string | null;
+  commander_name: string | null;
 }
 
 const SELECT_TICKET = `
@@ -53,6 +56,7 @@ const SELECT_TICKET = `
          req.name AS requester_name,
          asg.name AS assignee_name,
          crt.name AS created_by_name,
+         cmd.name AS commander_name,
          (SELECT COUNT(*) FROM ticket_comments c WHERE c.ticket_id = t.id) AS comment_count,
          (SELECT COUNT(*) FROM ticket_attachments a WHERE a.ticket_id = t.id) AS attachment_count
   FROM tickets t
@@ -60,6 +64,7 @@ const SELECT_TICKET = `
   LEFT JOIN users req ON req.id = t.requester_id
   LEFT JOIN users asg ON asg.id = t.assignee_id
   LEFT JOIN users crt ON crt.id = t.created_by
+  LEFT JOIN users cmd ON cmd.id = t.commander_id
 `;
 
 export function referenceOf(prefix: string, number: number): string {
@@ -100,6 +105,9 @@ function mapTicket(row: TicketRow, prefix: string, watcherIds: string[], links: 
     watcherIds,
     links,
     isOverdue: Boolean(row.due_at) && isOpen && new Date(row.due_at!).getTime() < Date.now(),
+    severity: row.severity ?? null,
+    commanderId: row.commander_id ?? null,
+    commanderName: row.commander_name ?? null,
   };
 }
 
@@ -375,6 +383,7 @@ export interface CreateTicketInput {
   tags: string[];
   dueAt: string | null;
   createdBy: string | null;
+  severity?: Ticket['severity'];
 }
 
 export async function insertTicket(input: CreateTicketInput): Promise<{ id: string; number: number }> {
@@ -385,8 +394,8 @@ export async function insertTicket(input: CreateTicketInput): Promise<{ id: stri
   await db.run(
     `INSERT INTO tickets (id, number, subject, description, description_format, team_id, requester_id,
        assignee_id, status, priority, type, source, tags, escalation_level, due_at, created_by,
-       created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
+       severity, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
     [
       id,
       number,
@@ -403,6 +412,7 @@ export async function insertTicket(input: CreateTicketInput): Promise<{ id: stri
       JSON.stringify(input.tags),
       input.dueAt,
       input.createdBy,
+      input.severity ?? null,
       now,
       now,
     ],

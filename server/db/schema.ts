@@ -325,6 +325,264 @@ const TABLES: string[] = [
     updated_at TEXT NOT NULL
   )`,
 
+  /* ---------------------------------------------------------------------
+   * Operations: monitoring, alerts, on-call, status pages, backups.
+   * ------------------------------------------------------------------- */
+
+  `CREATE TABLE IF NOT EXISTS monitors (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    target TEXT NOT NULL DEFAULT '',
+    config TEXT NOT NULL DEFAULT '{}',
+    interval_secs INTEGER NOT NULL DEFAULT 60,
+    grace_secs INTEGER NOT NULL DEFAULT 300,
+    failure_threshold INTEGER NOT NULL DEFAULT 2,
+    team_id TEXT REFERENCES teams(id) ON DELETE SET NULL,
+    severity TEXT NOT NULL DEFAULT 'sev2',
+    escalation_policy_id TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    state TEXT NOT NULL DEFAULT 'pending',
+    /* Heartbeat monitors only: the secret in the ping URL. */
+    heartbeat_token TEXT UNIQUE,
+    last_ping_at TEXT,
+    last_checked_at TEXT,
+    last_change_at TEXT,
+    last_latency_ms INTEGER,
+    last_message TEXT,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    next_check_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
+  /* Raw results, kept for a week. */
+  `CREATE TABLE IF NOT EXISTS monitor_checks (
+    id TEXT PRIMARY KEY,
+    monitor_id TEXT NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
+    ok INTEGER NOT NULL,
+    latency_ms INTEGER,
+    message TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+  )`,
+
+  /* One row per monitor per UTC day, kept for the status pages' 90-day bars. */
+  `CREATE TABLE IF NOT EXISTS monitor_daily (
+    monitor_id TEXT NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
+    day TEXT NOT NULL,
+    total INTEGER NOT NULL DEFAULT 0,
+    failures INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (monitor_id, day)
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS alert_sources (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+    team_id TEXT REFERENCES teams(id) ON DELETE SET NULL,
+    escalation_policy_id TEXT,
+    default_severity TEXT NOT NULL DEFAULT 'sev3',
+    mapping TEXT NOT NULL DEFAULT '{}',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_event_at TEXT,
+    event_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
+  /*
+   * Every signal, from a monitor or a webhook, normalised. A repeat of an
+   * alert that is still open increments `count` rather than adding a row.
+   */
+  `CREATE TABLE IF NOT EXISTS alerts (
+    id TEXT PRIMARY KEY,
+    source_type TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    source_name TEXT NOT NULL,
+    dedup_key TEXT NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    severity TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'firing',
+    count INTEGER NOT NULL DEFAULT 1,
+    ticket_id TEXT REFERENCES tickets(id) ON DELETE SET NULL,
+    suppressed INTEGER NOT NULL DEFAULT 0,
+    payload TEXT,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    resolved_at TEXT
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS maintenance_windows (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    starts_at TEXT NOT NULL,
+    ends_at TEXT NOT NULL,
+    monitor_ids TEXT NOT NULL DEFAULT '[]',
+    created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS oncall_schedules (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    team_id TEXT REFERENCES teams(id) ON DELETE SET NULL,
+    time_zone TEXT NOT NULL DEFAULT 'Africa/Johannesburg',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS oncall_layers (
+    id TEXT PRIMARY KEY,
+    schedule_id TEXT NOT NULL REFERENCES oncall_schedules(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    rotation TEXT NOT NULL DEFAULT 'weekly',
+    shift_hours INTEGER NOT NULL DEFAULT 168,
+    starts_at TEXT NOT NULL,
+    member_ids TEXT NOT NULL DEFAULT '[]'
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS oncall_overrides (
+    id TEXT PRIMARY KEY,
+    schedule_id TEXT NOT NULL REFERENCES oncall_schedules(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    starts_at TEXT NOT NULL,
+    ends_at TEXT NOT NULL,
+    note TEXT,
+    created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS escalation_policies (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    team_id TEXT REFERENCES teams(id) ON DELETE SET NULL,
+    repeat_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS escalation_levels (
+    id TEXT PRIMARY KEY,
+    policy_id TEXT NOT NULL REFERENCES escalation_policies(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 0,
+    delay_mins INTEGER NOT NULL DEFAULT 10,
+    targets TEXT NOT NULL DEFAULT '[]'
+  )`,
+
+  /* Each person's own "how to reach me" rules. No rows means the defaults. */
+  `CREATE TABLE IF NOT EXISTS notification_rules (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    urgency TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    delay_mins INTEGER NOT NULL DEFAULT 0
+  )`,
+
+  /*
+   * One escalation in flight, for one ticket. The pager walks it level by
+   * level until someone acknowledges, the ticket resolves, or the policy runs out.
+   */
+  `CREATE TABLE IF NOT EXISTS pages (
+    id TEXT PRIMARY KEY,
+    ticket_id TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+    policy_id TEXT,
+    severity TEXT NOT NULL,
+    urgency TEXT NOT NULL DEFAULT 'high',
+    status TEXT NOT NULL DEFAULT 'triggered',
+    current_level INTEGER NOT NULL DEFAULT 0,
+    cycle INTEGER NOT NULL DEFAULT 0,
+    level_started_at TEXT NOT NULL,
+    current_targets TEXT NOT NULL DEFAULT '[]',
+    acknowledged_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    acknowledged_at TEXT,
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
+  /* Every attempt to reach someone: sent, delivered, answered, acknowledged. */
+  `CREATE TABLE IF NOT EXISTS notification_attempts (
+    id TEXT PRIMARY KEY,
+    page_id TEXT REFERENCES pages(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    channel TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    status TEXT NOT NULL,
+    level INTEGER NOT NULL DEFAULT 0,
+    cycle INTEGER NOT NULL DEFAULT 0,
+    seq INTEGER NOT NULL DEFAULT 0,
+    external_id TEXT,
+    detail TEXT,
+    created_at TEXT NOT NULL
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS status_pages (
+    id TEXT PRIMARY KEY,
+    slug TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    description TEXT,
+    is_public INTEGER NOT NULL DEFAULT 0,
+    components TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
+  /* Written by people, for the public: never derived from internal comments. */
+  `CREATE TABLE IF NOT EXISTS status_updates (
+    id TEXT PRIMARY KEY,
+    status_page_id TEXT NOT NULL REFERENCES status_pages(id) ON DELETE CASCADE,
+    ticket_id TEXT REFERENCES tickets(id) ON DELETE SET NULL,
+    title TEXT NOT NULL,
+    state TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS backup_jobs (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    engine TEXT NOT NULL,
+    connection_encrypted TEXT NOT NULL,
+    connection_hint TEXT NOT NULL DEFAULT '',
+    schedule TEXT NOT NULL DEFAULT '0 1 * * *',
+    retention TEXT NOT NULL DEFAULT '{}',
+    destination TEXT NOT NULL DEFAULT '{}',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    team_id TEXT REFERENCES teams(id) ON DELETE SET NULL,
+    heartbeat_monitor_id TEXT,
+    next_run_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS backup_runs (
+    id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL REFERENCES backup_jobs(id) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    run_trigger TEXT NOT NULL DEFAULT 'schedule',
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    size_bytes INTEGER,
+    sha256 TEXT,
+    location TEXT,
+    /* The per-backup data key, wrapped with the instance key. */
+    wrapped_key TEXT,
+    error TEXT
+  )`,
+
+  /* Who holds the scheduler, so two instances never run the same job twice. */
+  `CREATE TABLE IF NOT EXISTS leases (
+    name TEXT PRIMARY KEY,
+    holder TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+  )`,
+
   `CREATE TABLE IF NOT EXISTS sessions (
     sid TEXT PRIMARY KEY,
     data TEXT NOT NULL,
@@ -350,6 +608,20 @@ const INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_form_fields_team ON team_form_fields(team_id, position)`,
   `CREATE INDEX IF NOT EXISTS idx_field_values_ticket ON ticket_field_values(ticket_id, position)`,
   `CREATE INDEX IF NOT EXISTS idx_login_attempts ON login_attempts(key, created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_monitor_checks ON monitor_checks(monitor_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_monitors_next ON monitors(next_check_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_alerts_dedup ON alerts(source_id, dedup_key, status)`,
+  `CREATE INDEX IF NOT EXISTS idx_alerts_ticket ON alerts(ticket_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_alerts_last_seen ON alerts(last_seen_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_layers_schedule ON oncall_layers(schedule_id, position)`,
+  `CREATE INDEX IF NOT EXISTS idx_overrides_schedule ON oncall_overrides(schedule_id, starts_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_levels_policy ON escalation_levels(policy_id, position)`,
+  `CREATE INDEX IF NOT EXISTS idx_rules_user ON notification_rules(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_pages_status ON pages(status)`,
+  `CREATE INDEX IF NOT EXISTS idx_pages_ticket ON pages(ticket_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_attempts_page ON notification_attempts(page_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_status_updates_page ON status_updates(status_page_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_backup_runs_job ON backup_runs(job_id, started_at)`,
 ];
 
 /**
@@ -389,6 +661,24 @@ const ADDITIVE_COLUMNS: AdditiveColumn[] = [
     column: 'body_format',
     definition: `TEXT NOT NULL DEFAULT 'text'`,
     why: 'same, for comment bodies',
+  },
+  {
+    table: 'tickets',
+    column: 'severity',
+    definition: 'TEXT',
+    why: 'incidents carry SEV1-SEV4 alongside the priority',
+  },
+  {
+    table: 'tickets',
+    column: 'commander_id',
+    definition: 'TEXT',
+    why: 'the incident commander, who may differ from the assignee',
+  },
+  {
+    table: 'teams',
+    column: 'escalation_policy_id',
+    definition: 'TEXT',
+    why: "the policy that pages for this team's alerts unless a monitor names its own",
   },
 ];
 

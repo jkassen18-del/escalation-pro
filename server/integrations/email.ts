@@ -131,9 +131,11 @@ export async function sendEmail(
   record: IntegrationRecord,
   ctx: NotificationContext,
   recipients: string[],
+  /** A page to one person: the always-copied list has no business in it. */
+  { direct = false }: { direct?: boolean } = {},
 ): Promise<DeliveryResult> {
   const config = record.config as EmailConfig;
-  const to = Array.from(new Set([...recipients, ...(config.alwaysNotify ?? [])].filter(Boolean)));
+  const to = Array.from(new Set([...recipients, ...(direct ? [] : (config.alwaysNotify ?? []))].filter(Boolean)));
 
   if (!config.host) return { ok: false, statusCode: null, error: 'SMTP host is not configured' };
   if (!to.length) return { ok: true, statusCode: null, error: null }; // nothing to do

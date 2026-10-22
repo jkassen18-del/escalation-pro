@@ -25,6 +25,9 @@ import { reportsRouter } from './routes/reports.ts';
 import { auditRouter } from './routes/audit.ts';
 import { webhooksRouter } from './routes/webhooks.ts';
 import { cronRouter } from './routes/cron.ts';
+import { opsRouter } from './routes/ops.ts';
+import { opsPublicRouter } from './routes/ops-public.ts';
+import { startOpsRunner } from './ops/runner.ts';
 import { startSlaMonitor } from './jobs/sla-monitor.ts';
 import { APP_VERSION } from '../shared/version.ts';
 import { pruneAttempts } from './lib/rate-limit.ts';
@@ -76,7 +79,9 @@ export async function createApp() {
   app.use(
     asyncRoute(async (req, _res, next) => {
       const needsDatabase =
-        req.path.startsWith('/api') || req.headers.cookie?.includes(`${SESSION_COOKIE_NAME}=`);
+        req.path.startsWith('/api') ||
+        req.path.startsWith('/status/') ||
+        req.headers.cookie?.includes(`${SESSION_COOKIE_NAME}=`);
       if (req.path === '/health' || !needsDatabase) return next();
 
       try {
@@ -130,6 +135,9 @@ export async function createApp() {
   app.use('/api/branding', brandingRouter);
   app.use('/api/webhooks', webhooksRouter);
   app.use('/api/cron', cronRouter);
+  // Alert intake, heartbeats, telephony callbacks and status pages: each
+  // authenticates itself, and status pages must render for the public.
+  app.use(opsPublicRouter);
 
   // Everything below needs a resolved session user.
   app.use('/api', attachUser);
@@ -143,6 +151,7 @@ export async function createApp() {
   app.use('/api/data-sources', dataSourcesRouter);
   app.use('/api/reports', reportsRouter);
   app.use('/api/audit', auditRouter);
+  app.use('/api/ops', opsRouter);
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API endpoint' }));
 
@@ -251,6 +260,7 @@ export async function startServer() {
   console.log('');
 
   const stopSla = startSlaMonitor();
+  const stopOps = startOpsRunner();
 
   // Failed-login rows are only needed for the length of the limiter window.
   const pruneTimer = setInterval(
@@ -262,6 +272,7 @@ export async function startServer() {
   const shutdown = (signal: string) => {
     console.log(`\n[server] ${signal} received, shutting down.`);
     stopSla();
+    stopOps();
     clearInterval(pruneTimer);
     sessionStore.stopSweeper();
     server.close(() => {

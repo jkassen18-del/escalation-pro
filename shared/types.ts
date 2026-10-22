@@ -12,7 +12,7 @@ export type TicketPriority = (typeof TICKET_PRIORITIES)[number];
 export const TICKET_TYPES = ['incident', 'request', 'question', 'problem', 'escalation'] as const;
 export type TicketType = (typeof TICKET_TYPES)[number];
 
-export const TICKET_SOURCES = ['web', 'email', 'slack', 'msteams', 'api', 'phone'] as const;
+export const TICKET_SOURCES = ['web', 'email', 'slack', 'msteams', 'api', 'phone', 'linear', 'monitor', 'webhook'] as const;
 export type TicketSource = (typeof TICKET_SOURCES)[number];
 
 export const USER_ROLES = ['admin', 'manager', 'agent', 'viewer'] as const;
@@ -160,6 +160,10 @@ export interface Ticket {
   links: TicketLink[];
   /** Derived, not stored: true when past dueAt and not yet resolved. */
   isOverdue: boolean;
+  /** Incidents only: SEV1 (critical) to SEV4. */
+  severity: 'sev1' | 'sev2' | 'sev3' | 'sev4' | null;
+  commanderId: string | null;
+  commanderName: string | null;
 }
 
 export interface TicketDetail extends Ticket {
@@ -349,7 +353,12 @@ export type Permission =
   | 'integrations.manage'
   | 'reports.view'
   | 'reports.export'
-  | 'audit.view';
+  | 'audit.view'
+  | 'monitors.manage'
+  | 'oncall.manage'
+  | 'statuspages.manage'
+  | 'backups.manage'
+  | 'backups.restore';
 
 export interface ApiError {
   error: string;
