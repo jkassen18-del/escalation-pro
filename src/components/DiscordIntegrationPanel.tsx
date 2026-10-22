@@ -42,7 +42,8 @@ export function DiscordIntegrationPanel({ onClose }: { onClose?: () => void } = 
   const [channelsError, setChannelsError] = useState<string | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [routes, setRoutes] = useState<Record<string, string>>({});
-  const [expanded, setExpanded] = useState(false);
+  // Open by default: it is usually shown inside the catalogue's setup drawer, where setup is the point.
+  const [expanded, setExpanded] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [savingRoutes, setSavingRoutes] = useState(false);
@@ -57,7 +58,6 @@ export function DiscordIntegrationPanel({ onClose }: { onClose?: () => void } = 
     if (found) {
       setConfig(found.config);
       setEvents({ ...found.events });
-      setExpanded((current) => current || !found.configured);
     }
   }, []);
 
