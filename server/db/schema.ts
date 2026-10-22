@@ -675,6 +675,12 @@ const ADDITIVE_COLUMNS: AdditiveColumn[] = [
     why: 'the incident commander, who may differ from the assignee',
   },
   {
+    table: 'ticket_comments',
+    column: 'is_system',
+    definition: 'INTEGER NOT NULL DEFAULT 0',
+    why: 'notes written by monitors and the pager, told apart from a deleted author',
+  },
+  {
     table: 'teams',
     column: 'escalation_policy_id',
     definition: 'TEXT',

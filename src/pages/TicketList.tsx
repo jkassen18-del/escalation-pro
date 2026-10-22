@@ -19,6 +19,7 @@ import {
   type Team,
   type Ticket,
 } from '@shared/types';
+import { SeverityBadge } from '@/components/ops/IncidentPanel';
 import { useDocumentTitle } from '@/state/branding';
 
 const PAGE_SIZE = 50;
@@ -325,6 +326,7 @@ function TicketCards({ tickets }: { tickets: Ticket[] }) {
                 <Reference value={ticket.reference} />
                 <StatusBadge status={ticket.status} />
                 <PriorityBadge priority={ticket.priority} />
+                {ticket.severity && <SeverityBadge severity={ticket.severity} />}
                 {ticket.escalationLevel > 0 && (
                   <span className="rounded-[3px] border border-[var(--priority-urgent)]/35 px-1 text-2xs font-semibold text-[var(--priority-urgent)]">
                     L{ticket.escalationLevel}
@@ -412,7 +414,10 @@ function TicketTable({ tickets }: { tickets: Ticket[] }) {
                   <StatusBadge status={ticket.status} />
                 </Td>
                 <Td>
-                  <PriorityBadge priority={ticket.priority} />
+                  <span className="inline-flex items-center gap-1">
+                    <PriorityBadge priority={ticket.priority} />
+                    {ticket.severity && <SeverityBadge severity={ticket.severity} />}
+                  </span>
                 </Td>
                 <Td>
                   <span className="truncate text-xs text-muted">{ticket.teamName ?? '—'}</span>

@@ -76,6 +76,7 @@ export function toQuery(params: Record<string, string | number | boolean | undef
 
 export const api = {
   auth: {
+    updatePhone: (phone: string | null) => patch<{ user: PublicUser }>('/auth/me/phone', { phone }),
     bootstrap: () =>
       get<{
         setupRequired: boolean;

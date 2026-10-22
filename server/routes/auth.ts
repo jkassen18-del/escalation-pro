@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { SESSION_COOKIE_NAME, config } from '../config.ts';
 import { db } from '../db/index.ts';
 import { timingSafeCompare, verifyAgainstDummy, verifyPassword } from '../lib/crypto.ts';
-import { HttpError, asyncRoute, badRequest, requireString, unauthorized } from '../lib/http.ts';
+import { HttpError, asyncRoute, badRequest, optionalString, requireString, unauthorized } from '../lib/http.ts';
 import { clientIp, recordAudit } from '../lib/audit.ts';
 import { LOGIN_LIMITS, accountKey, checkLimit, clearFailures, ipKey, recordFailure } from '../lib/rate-limit.ts';
 import { sessionStore } from '../lib/session-store.ts';
@@ -188,6 +188,35 @@ authRouter.get(
   requireAuth,
   asyncRoute(async (req, res) => {
     res.json({ user: (req as AuthedRequest).user });
+  }),
+);
+
+/**
+ * Self-service mobile number. On-call people must be able to keep their own
+ * number current without an administrator: it is where SMS and calls go.
+ */
+authRouter.patch(
+  '/me/phone',
+  attachUser,
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const user = (req as AuthedRequest).user;
+    const raw = optionalString(req.body?.phone, 40);
+    const phone = raw ? raw.trim() : null;
+    if (phone && !/^\+[1-9]\d{6,14}$/.test(phone.replace(/[\s\-().]/g, ''))) {
+      throw badRequest('Use international format with the country code, e.g. +27 82 123 4567.', { phone: 'Invalid' });
+    }
+    await db.run(`UPDATE users SET phone = ?, updated_at = ? WHERE id = ?`, [phone, new Date().toISOString(), user.id]);
+    await recordAudit({
+      actorId: user.id,
+      actorName: user.name,
+      entityType: 'user',
+      entityId: user.id,
+      action: 'phone_changed',
+      summary: `${user.name} updated their mobile number`,
+      ip: clientIp(req),
+    });
+    res.json({ user: await findUserById(user.id) });
   }),
 );
 

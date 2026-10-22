@@ -343,7 +343,9 @@ export async function loadTicketDetail(
     id: String(row.id),
     ticketId: String(row.ticket_id),
     authorId: row.author_id ? String(row.author_id) : null,
-    authorName: String(row.author_name ?? 'Unknown'),
+    // Written by the platform itself (an alert, the pager, a recovery), as
+    // opposed to by someone whose account has since been deleted.
+    authorName: Number(row.is_system) === 1 ? 'InfraTicket' : String(row.author_name ?? 'Unknown'),
     body: String(row.body),
     bodyFormat: (String(row.body_format ?? 'text') as RichTextFormat),
     isInternal: Number(row.is_internal) === 1,

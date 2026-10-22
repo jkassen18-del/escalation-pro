@@ -311,6 +311,8 @@ test('when the monitor recovers the incident resolves itself', async () => {
   assert.equal(ticket.status, 'resolved');
   const alerts = await call('GET', '/api/ops/alerts?status=open');
   assert.equal(alerts.payload.alerts.length, 0);
+  const comments = (await call('GET', `/api/tickets/${incidentId}`)).payload.ticket.comments;
+  assert.ok(comments.some((c: any) => c.authorName === 'InfraTicket' && /Auto-resolved/.test(c.body)), 'system notes are attributed to the platform');
 });
 
 /* ------------------------------ Webhook intake ---------------------------- */
@@ -408,6 +410,14 @@ test('a public status page renders for anyone; an internal one does not', async 
 });
 
 /* --------------------------- Notification rules --------------------------- */
+
+test('people keep their own mobile number current', async () => {
+  const bad = await call('PATCH', '/api/auth/me/phone', { phone: '082 123' });
+  assert.equal(bad.status, 400);
+  const ok = await call('PATCH', '/api/auth/me/phone', { phone: '+27 82 123 4567' });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.payload.user.phone, '+27 82 123 4567');
+});
 
 test('high urgency must be able to wake someone', async () => {
   const quiet = await call('PUT', '/api/ops/me/rules', { rules: [{ urgency: 'high', channel: 'email', delayMins: 0 }] });

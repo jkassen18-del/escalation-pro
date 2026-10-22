@@ -46,8 +46,8 @@ export function urgencyOf(severity: Severity): Urgency {
 async function addTimelineComment(ticketId: string, body: string): Promise<void> {
   const now = new Date().toISOString();
   await db.run(
-    `INSERT INTO ticket_comments (id, ticket_id, author_id, body, body_format, is_internal, created_at, updated_at)
-     VALUES (?, ?, NULL, ?, 'text', 1, ?, ?)`,
+    `INSERT INTO ticket_comments (id, ticket_id, author_id, body, body_format, is_internal, is_system, created_at, updated_at)
+     VALUES (?, ?, NULL, ?, 'text', 1, 1, ?, ?)`,
     [randomId(), ticketId, body, now, now],
   );
 }

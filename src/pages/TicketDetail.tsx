@@ -45,6 +45,7 @@ import {
   type TicketDetail as TicketDetailType,
 } from '@shared/types';
 import { useDocumentTitle } from '@/state/branding';
+import { IncidentPanel, SeverityBadge } from '@/components/ops/IncidentPanel';
 
 type Directory = Awaited<ReturnType<typeof api.users.directory>>['users'];
 
@@ -131,6 +132,7 @@ export function TicketDetailPage() {
               <Reference value={ticket.reference} className="text-xs" />
               <StatusBadge status={ticket.status} />
               <PriorityBadge priority={ticket.priority} />
+              {ticket.severity && <SeverityBadge severity={ticket.severity} />}
               {ticket.escalationLevel > 0 && (
                 <span className="rounded-[3px] border border-[var(--priority-urgent)]/35 bg-[var(--priority-urgent)]/8 px-1.5 py-0.5 text-2xs font-semibold text-[var(--priority-urgent)]">
                   Escalation level {ticket.escalationLevel}
@@ -145,7 +147,7 @@ export function TicketDetailPage() {
             </div>
             <h1 className="mt-1.5 text-lg leading-snug font-semibold tracking-tight">{ticket.subject}</h1>
             <p className="mt-1 text-xs text-subtle">
-              Opened by {ticket.requesterName ?? 'unknown'} · {relativeTime(ticket.createdAt)} · last activity{' '}
+              Opened by {requesterLabel(ticket)} · {relativeTime(ticket.createdAt)} · last activity{' '}
               {relativeTime(ticket.updatedAt)}
             </p>
           </div>
@@ -241,6 +243,14 @@ export function TicketDetailPage() {
         </div>
 
         <aside className="border-t surface lg:sticky lg:top-0 lg:border-t-0 lg:border-l">
+          <IncidentPanel
+            ticket={ticket}
+            directory={directory}
+            editable={editable}
+            busy={busy}
+            onPatch={patch}
+            onChanged={load}
+          />
           <PropertiesPanel
             ticket={ticket}
             teams={teams}
@@ -335,8 +345,8 @@ function Conversation({ ticket, onChanged }: { ticket: TicketDetailType; onChang
     <div className="px-4 py-4 sm:px-6">
       <article className="rounded-md border p-4 surface-2">
         <header className="mb-2 flex items-center gap-2">
-          <Avatar name={ticket.requesterName ?? 'Unknown'} size="sm" />
-          <span className="text-xs font-medium">{ticket.requesterName ?? 'Unknown'}</span>
+          <Avatar name={requesterLabel(ticket)} size="sm" />
+          <span className="text-xs font-medium">{requesterLabel(ticket)}</span>
           <time className="text-2xs text-subtle" dateTime={ticket.createdAt} title={fullDateTime(ticket.createdAt)}>
             {shortDateTime(ticket.createdAt)}
           </time>
@@ -489,12 +499,27 @@ function Conversation({ ticket, onChanged }: { ticket: TicketDetailType; onChang
   );
 }
 
+/** Tickets raised by a monitor or an alert source have no person behind them. */
+function requesterLabel(ticket: TicketDetailType): string {
+  if (ticket.requesterName) return ticket.requesterName;
+  if (ticket.source === 'monitor') return 'Monitoring';
+  if (ticket.source === 'webhook') return 'Alert source';
+  return 'Unknown';
+}
+
 function describeEvent(event: TicketDetailType['events'][number]): string {
   switch (event.action) {
     case 'assigned':
       return 'assigned this ticket';
     case 'escalated':
+      if (event.field === 'pageLevel') return `moved paging on to escalation level ${event.toValue}`;
       return `escalated this to level ${event.toValue}`;
+    case 'paged':
+      return `started paging with "${event.toValue}"`;
+    case 'acknowledged':
+      return `acknowledged the page via ${event.toValue}`;
+    case 'alert_grouped':
+      return `grouped another alert into this incident: ${event.toValue}`;
     case 'attached':
       return `attached ${event.toValue}`;
     case 'linked':
@@ -508,6 +533,8 @@ function describeEvent(event: TicketDetailType['events'][number]): string {
       if (event.field === 'team') return 'moved this to another team';
       if (event.field === 'dueAt') return 'changed the due date';
       if (event.field === 'tags') return 'updated the tags';
+      if (event.field === 'severity') return event.toValue ? `set the severity to ${event.toValue.toUpperCase()}` : 'cleared the severity';
+      if (event.field === 'commander') return event.toValue ? 'named an incident commander' : 'removed the incident commander';
       return `updated the ${event.field ?? 'ticket'}`;
     default:
       return event.action;

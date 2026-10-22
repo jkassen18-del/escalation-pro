@@ -10,6 +10,7 @@ import { Field, Input, SegmentedControl } from '@/components/ui/Field';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { useDocumentTitle } from '@/state/branding';
+import { RulesEditor } from '@/components/ops/RulesEditor';
 
 export function ProfilePage() {
   useDocumentTitle('Profile');
@@ -55,7 +56,7 @@ export function ProfilePage() {
 
   return (
     <div>
-      <PageHeader title="Your profile" description="Account details, appearance, and password." />
+      <PageHeader title="Your profile" description="Account details, paging preferences, appearance, and password." />
 
       <div className="max-w-2xl space-y-4 p-4 sm:p-6">
         <section className="rounded-md border p-4 surface">
@@ -93,6 +94,8 @@ export function ProfilePage() {
             Name, email, role, and team membership are managed by an administrator.
           </p>
         </section>
+
+        <RulesEditor />
 
         <section className="rounded-md border surface">
           <h2 className="border-b px-4 py-2.5 text-xs font-semibold">Appearance</h2>
