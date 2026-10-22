@@ -49,11 +49,15 @@ downloads rather than rendered inline.
 - Passwords hashed with scrypt (N=16384, r=8, p=1) and a per-user salt;
   comparison is constant-time.
 - **Login is rate limited** in the database: 5 failures per account and 30 per
-  IP address in a 15-minute window, returning `429` with `Retry-After`. The
+  client IP in a 15-minute window, returning `429` with `Retry-After`. The
   lockout applies before the password is checked, so a locked-out attacker gains
   nothing — including timing information — and the correct password does not
   bypass it. Counters live in the database, so the limit holds across restarts
-  and across instances.
+  and across instances. The client IP comes from `X-Forwarded-For`
+  with one proxy hop trusted (`TRUST_PROXY`, default 1), which is right behind
+  exactly one reverse proxy. Exposed directly, a client could set that header
+  itself and dodge the per-IP limit, so set `TRUST_PROXY=0` there; the portable
+  exe does this by default. The per-account limit applies either way.
 - **No username enumeration.** A miss runs scrypt against a dummy hash so an
   unknown account costs the same as a known one. Measured at 1.06× (it was 16×
   before this was fixed).
@@ -75,6 +79,17 @@ Verified by test:
   administrator.
 - A manager cannot promote themselves to administrator, create one, or read
   integration credentials.
+- Nobody can grant a permission they do not hold, and only an administrator
+  can grant the administrator-only ones (`settings.manage`,
+  `integrations.manage`, `backups.*`, `tickets.delete`, `users.delete`).
+- Only an administrator can edit, suspend, reset the password of, or delete an
+  administrator account.
+- An on-call page can only be acknowledged or escalated by someone it reached
+  or by a holder of `oncall.manage`.
+- Attachments follow the ticket's visibility for upload, download and delete,
+  and files on an internal note are hidden from anyone who cannot read
+  internal notes. The XLSX export covers only the tickets the exporter can see
+  and leaves out internal notes for people without `tickets.comment_internal`.
 - A viewer cannot see internal notes.
 - Unauthenticated requests are rejected on every API route.
 - `createdBy` cannot be spoofed through the request body.
@@ -88,13 +103,24 @@ URLs) are encrypted with AES-256-GCM before storage, using a random IV per
 value. They are never returned to the browser — the UI receives only a masked
 preview such as `xoxb••••alue` — and are never written to the audit log.
 
+Monitoring secrets are the exception: alert-source ingest URLs and heartbeat
+URLs carry their token, and HTTP monitors keep their request headers and body.
+Holders of `monitors.manage` see them in full so they can copy them into the
+sending tool; everyone else, in the API and over MCP, gets them masked
+(header names stay visible, credentials in a monitor's target URL are removed).
+
 ## Outbound requests (SSRF)
 
 Administrator-configurable webhook URLs are validated on save: HTTPS only, and
-rejected if they resolve to localhost, private ranges (10/8, 172.16/12,
+rejected if the host as written is localhost, a private range (10/8, 172.16/12,
 192.168/16, 127/8), link-local `169.254/16` (which covers cloud metadata
 endpoints), IPv6 loopback and unique-local, or multicast. Slack webhooks are
 additionally pinned to `hooks.slack.com`.
+
+The check looks at the hostname as typed; it does not resolve DNS. A public
+name that resolves to a private address, or that changes its answer between
+the check and the request (DNS rebinding), is not caught. Restrict egress at
+the network if administrators are not fully trusted.
 
 Inbound Linear webhooks are verified with an HMAC-SHA256 signature over the raw
 request body; unsigned or mismatched deliveries are rejected.
@@ -222,9 +248,12 @@ points that matter for review:
 
 These are deliberate scope decisions, not oversights.
 
-- **No CSRF tokens.** Protection relies on `SameSite=Lax` cookies plus the fact
-  that every state-changing route is POST/PATCH/DELETE and requires a JSON
-  content type. This is sound for current browsers. A defence-in-depth CSRF
+- **No CSRF tokens.** Protection relies on `SameSite=Lax` session cookies,
+  which browsers do not send on cross-site POST/PATCH/DELETE, plus the fact
+  that every state-changing route uses one of those methods. Routes do not
+  insist on a JSON content type (uploads are multipart, and some actions take
+  no body), so the cookie attribute is the whole defence. This is sound for
+  current browsers. A defence-in-depth CSRF
   token would be the next addition if the app is exposed to untrusted networks.
 - **No multi-factor authentication.** Front the deployment with an identity
   provider (Cloudflare Access, Entra ID, Okta) if you need it.

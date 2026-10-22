@@ -188,10 +188,11 @@ function buildWhere(query: TicketQuery): { clause: string; params: Array<string 
   if (query.search) {
     const needle = `%${query.search.toLowerCase()}%`;
     // Ticket references are typed as "ESC-1042" or just "1042"; match the number too.
+    // Compared as a number: CAST(... AS TEXT) is not valid MySQL.
     const numeric = query.search.replace(/\D/g, '');
-    if (numeric) {
-      conditions.push(`(LOWER(t.subject) LIKE ? OR LOWER(t.description) LIKE ? OR CAST(t.number AS TEXT) = ?)`);
-      params.push(needle, needle, numeric);
+    if (numeric && numeric.length <= 15) {
+      conditions.push(`(LOWER(t.subject) LIKE ? OR LOWER(t.description) LIKE ? OR t.number = ?)`);
+      params.push(needle, needle, Number(numeric));
     } else {
       conditions.push(`(LOWER(t.subject) LIKE ? OR LOWER(t.description) LIKE ?)`);
       params.push(needle, needle);
@@ -309,6 +310,9 @@ export async function findTicket(idOrNumber: string, prefix: string): Promise<Ti
   return mapTicket(row, prefix, watchers.get(row.id) ?? [], links.get(row.id) ?? []);
 }
 
+/** Hides files attached to internal notes from people who cannot read those notes. */
+export const INTERNAL_ATTACHMENT_FILTER = `AND (a.comment_id IS NULL OR a.comment_id NOT IN (SELECT ic.id FROM ticket_comments ic WHERE ic.is_internal = 1))`;
+
 export async function loadTicketDetail(
   ticket: Ticket,
   options: { includeInternal: boolean },
@@ -324,7 +328,7 @@ export async function loadTicketDetail(
   const attachmentRows = await db.all<Record<string, string | number>>(
     `SELECT a.*, u.name AS uploaded_by_name FROM ticket_attachments a
      LEFT JOIN users u ON u.id = a.uploaded_by
-     WHERE a.ticket_id = ? ORDER BY a.created_at ASC`,
+     WHERE a.ticket_id = ? ${options.includeInternal ? '' : INTERNAL_ATTACHMENT_FILTER} ORDER BY a.created_at ASC`,
     [ticket.id],
   );
 

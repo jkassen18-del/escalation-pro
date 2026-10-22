@@ -113,13 +113,15 @@ export const api = {
     update: (id: string, body: Record<string, unknown>) => patch<{ ticket: Ticket }>(`/tickets/${id}`, body),
     remove: (id: string) => del<{ ok: true }>(`/tickets/${id}`),
     comment: (id: string, body: { body: string; bodyFormat?: 'text' | 'html'; isInternal: boolean }) =>
-      post<{ ticket: TicketDetail }>(`/tickets/${id}/comments`, body),
+      post<{ ticket: TicketDetail; commentId: string | null }>(`/tickets/${id}/comments`, body),
     escalate: (id: string, body: { reason: string; teamId?: string; priority?: string }) =>
       post<{ ticket: Ticket }>(`/tickets/${id}/escalate`, body),
     watch: (id: string, watch: boolean) => post<{ ticket: Ticket }>(`/tickets/${id}/watch`, { watch }),
     pushToLinear: (id: string) => post<{ ticket: Ticket }>(`/tickets/${id}/push-to-linear`),
-    upload: (id: string, files: File[]) => {
+    upload: (id: string, files: File[], commentId?: string | null) => {
       const form = new FormData();
+      // Before the files: multer only sees fields that arrive ahead of them.
+      if (commentId) form.append('commentId', commentId);
       for (const file of files) form.append('files', file);
       return request<{ ok: true; count: number }>(`/tickets/${id}/attachments`, { method: 'POST', body: form });
     },

@@ -55,7 +55,7 @@ GRANT SELECT, SHOW VIEW, TRIGGER, LOCK TABLES, EVENT, PROCESS ON *.* TO 'infrati
 
 dump → gzip → AES-256-GCM encryption → local folder or S3 → SHA-256 recorded.
 
-- Each backup has its own random key, wrapped with the server's `SECRET_KEY`. The bucket on its own reveals nothing, and a tampered or truncated file is rejected on restore.
+- Each backup has its own random key, wrapped with `BACKUP_KEY` (or `SECRET_KEY` when `BACKUP_KEY` is not set) and stored in the file itself. The bucket on its own reveals nothing, the file plus the key is enough to restore it, and a tampered or truncated file is rejected on restore.
 - A dump running longer than `BACKUP_TIMEOUT_MINS` (120 by default) is stopped and reported as failed.
 - **Back up now** starts a backup immediately.
 
@@ -75,7 +75,21 @@ mongorestore --archive=billing.archive
 
 Treat a downloaded file like the production data it is.
 
-> **Warning** `SECRET_KEY` (or, without it, the `.session-secret` file in the data folder) is the key to every backup. Store a copy somewhere other than the backups themselves. Lose it and the backups cannot be decrypted.
+### Restoring without InfraTicket
+
+When the server that took the backups is gone, decrypt a backup file directly with the key:
+
+```bash
+# Portable exe (reads the key from the environment, a .env beside the exe, or InfraTicket-data/.session-secret)
+InfraTicket.exe decrypt-backup billing-2026-10-22T01-00-00-000Z.pgdump.gz.enc
+
+# From a source checkout
+BACKUP_KEY='…' npm run decrypt-backup -- billing-2026-10-22T01-00-00-000Z.pgdump.gz.enc billing.pgdump
+```
+
+The tool tries `BACKUP_KEY`, `SECRET_KEY`, `SESSION_SECRET`, a file given with `--key-file`, and the data folder's `.session-secret`, and writes the plain dump next to the backup (or to the output path you give). The wrong key, or a damaged file, fails without writing anything. Backups taken before version 2.0.0's key-in-file format can only be restored with **Download** on the server that took them.
+
+> **Warning** `BACKUP_KEY` (or, without it, `SECRET_KEY`, or the `.session-secret` file in the data folder) is the key to every backup. Store a copy somewhere other than the backups themselves, such as a password manager. Lose it and the backups cannot be decrypted. Setting a separate `BACKUP_KEY` lets you hand restore access to someone without giving them the key to every other stored secret.
 
 ## Health checks
 

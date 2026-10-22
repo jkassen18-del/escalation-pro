@@ -5,7 +5,7 @@ import path from 'node:path';
 import { PassThrough, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import zlib from 'node:zlib';
-import { paths } from '../config.ts';
+import { config, paths } from '../config.ts';
 import { db, parseJson, toBool } from '../db/index.ts';
 import { decryptSecret, encryptSecret, randomId } from '../lib/crypto.ts';
 import { badRequest } from '../lib/http.ts';
@@ -17,6 +17,7 @@ import {
   type BackupRetention,
   type BackupRun,
 } from '../../shared/ops.ts';
+import { decryptBackupStream, encodeHeaderV2, keyFromHeader, readBackupFile } from './backup-format.ts';
 import { cronPeriodSecs, nextCronTime, parseCron } from './cron.ts';
 import { maskConnection, runTool, sqlcmdArgs, toolPath } from './db-health.ts';
 import { recordHeartbeat, saveMonitor } from './monitors.ts';
@@ -27,15 +28,16 @@ import { deleteObject, getObject, putObject, type S3Target } from './s3.ts';
  *
  * dump -> gzip -> AES-256-GCM with a fresh key per backup -> local disk or
  * S3-compatible storage -> SHA-256 recorded. The per-backup key is wrapped
- * with the instance key, so a stolen bucket is useless without this server's
- * SECRET_KEY, and one leaked backup key opens one backup.
+ * with BACKUP_KEY (or SECRET_KEY when that is not set) and written into the
+ * file's header, so a stolen bucket is useless without that key, one leaked
+ * backup key opens one backup, and the file plus the key restores without
+ * this server (see backup-format.ts and `decrypt-backup`).
  *
  * Every job owns a heartbeat monitor. A successful run pings it; a run that
  * fails reports failure; and a job that silently stops running misses its
  * pings - all three page the job's team like any other monitor.
  */
 
-const MAGIC = Buffer.from('ITBK1');
 const DEFAULT_RETENTION: BackupRetention = { keepDaily: 7, keepWeekly: 4, keepMonthly: 12 };
 const DUMP_TIMEOUT_MS = Number(process.env.BACKUP_TIMEOUT_MINS || 120) * 60_000;
 
@@ -346,7 +348,12 @@ async function startDump(engine: BackupEngine, connection: string, scratch: stri
   }
 }
 
-/** Encrypted file layout: "ITBK1" | 12-byte IV | ciphertext of gzip(dump) | 16-byte GCM tag. */
+/** The key that wraps each backup's own key. */
+function backupMasterKey(): Buffer {
+  return config.backupKey ?? config.secretKey;
+}
+
+/** File layout: see backup-format.ts. */
 function encryptor(key: Buffer): { iv: Buffer; cipher: crypto.CipherGCM } {
   const iv = crypto.randomBytes(12);
   return { iv, cipher: crypto.createCipheriv('aes-256-gcm', key, iv) };
@@ -389,7 +396,7 @@ export async function runBackup(jobId: string, trigger: BackupRun['trigger'] = '
     const fileName = `${job.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${stamp}.${dump.extension}.gz.enc`;
     const encrypted = path.join(scratch, fileName);
     const out = fs.createWriteStream(encrypted);
-    out.write(Buffer.concat([MAGIC, iv]));
+    out.write(encodeHeaderV2(backupMasterKey(), key, iv));
     await Promise.all([pipeline(dump.stream, zlib.createGzip({ level: 6 }), cipher, out, { end: false }).then(() => new Promise<void>((resolve) => out.end(cipher.getAuthTag(), resolve))), dump.done]);
 
     const size = fs.statSync(encrypted).size;
@@ -509,26 +516,23 @@ export async function openDecryptedBackup(runId: string): Promise<{ stream: Read
   } else {
     fs.copyFileSync(run.location, encryptedFile);
   }
-  const size = fs.statSync(encryptedFile).size;
-  const fd = fs.openSync(encryptedFile, 'r');
-  const header = Buffer.alloc(MAGIC.length + 12);
-  const tag = Buffer.alloc(16);
-  fs.readSync(fd, header, 0, header.length, 0);
-  fs.readSync(fd, tag, 0, 16, size - 16);
-  fs.closeSync(fd);
-  if (!header.subarray(0, MAGIC.length).equals(MAGIC)) throw badRequest('That file is not an InfraTicket backup.');
-
-  const key = Buffer.from(decryptSecret(run.wrapped_key), 'base64');
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, header.subarray(MAGIC.length));
-  decipher.setAuthTag(tag);
-  const output = new PassThrough();
   const cleanup = () => fs.rm(path.dirname(encryptedFile), { recursive: true, force: true }, () => undefined);
-  pipeline(
-    fs.createReadStream(encryptedFile, { start: header.length, end: size - 17 }),
-    decipher,
-    zlib.createGunzip(),
-    output,
-  )
+  let info;
+  try {
+    info = readBackupFile(encryptedFile);
+  } catch (error) {
+    cleanup();
+    throw badRequest((error as Error).message);
+  }
+  // The header's copy follows BACKUP_KEY; the database's copy survives a
+  // BACKUP_KEY change. Either opens the file.
+  const key = keyFromHeader(info, [backupMasterKey(), config.secretKey]) ?? Buffer.from(decryptSecret(run.wrapped_key), 'base64');
+  if (key.length !== 32) {
+    cleanup();
+    throw badRequest('This backup cannot be decrypted with the current keys. Restore the BACKUP_KEY or SECRET_KEY it was taken with.');
+  }
+  const output = new PassThrough();
+  pipeline(decryptBackupStream(encryptedFile, info, key), output)
     .catch((error) => output.destroy(error))
     .finally(cleanup);
   const base = path.basename(run.location).replace(/\.gz\.enc$/, '');

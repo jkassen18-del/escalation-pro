@@ -318,8 +318,10 @@ comments, so nothing said internally becomes public.
 
 The pipeline is dump → gzip → AES-256-GCM → local folder or S3-compatible
 storage (AWS S3, Cloudflare R2, DigitalOcean Spaces, MinIO, Backblaze B2) →
-SHA-256 recorded. Every backup has its own key, wrapped with the server's
-`SECRET_KEY`, so the bucket on its own is useless to whoever takes it.
+SHA-256 recorded. Every backup has its own key, wrapped with `BACKUP_KEY` (or
+`SECRET_KEY` when that is unset) and written into the file's header, so the
+bucket on its own is useless to whoever takes it, and the file plus the key is
+enough to restore it even if this server and its database are gone.
 
 - **Schedules** are cron expressions in UTC. Presets are offered.
 - **Retention** keeps the newest backup of each of the last *N* days, weeks and
@@ -329,6 +331,23 @@ SHA-256 recorded. Every backup has its own key, wrapped with the server's
   ping. All three page the job's team.
 - **Download** (permission *Download backups*) returns the decrypted dump,
   ready for the restore tool, and is recorded in the audit log.
+- **Restore without the server.** `InfraTicket.exe decrypt-backup <file> [out]`
+  or `npm run decrypt-backup -- <file> [out] [--key-file path]` decrypts a
+  backup with `BACKUP_KEY`, `SECRET_KEY`, `SESSION_SECRET` or the data folder's
+  `.session-secret`. Keep a copy of that key away from the backups. Backups
+  from before the key-in-file format (`ITBK1`) restore only through
+  **Download** on the server that took them.
+
+### The encryption key
+
+`SECRET_KEY` (or `SESSION_SECRET`, or the generated `.session-secret` file)
+encrypts every stored credential. InfraTicket records a fingerprint of it in
+the database. If a server starts with a different key it logs an *ENCRYPTION
+KEY MISMATCH* error; a production server refuses to start until you restore
+the old key, or start once with `ALLOW_KEY_CHANGE=1` to accept the new one and
+re-enter the secrets. A production server that cannot save a generated key
+(read-only data folder, serverless) refuses to start rather than run with one
+that changes on every restart.
 
 Give the connector a least-privilege account:
 

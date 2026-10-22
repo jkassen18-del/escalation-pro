@@ -116,11 +116,42 @@ curl -X POST https://your-deployment.vercel.app/api/cron/sla \
 A free scheduler (cron-job.org, GitHub Actions on a schedule, an existing box's
 crontab) calling that every 15 minutes gives the same behaviour as a paid plan.
 
+### 5b. Monitoring, paging and backups need the ops endpoint every minute
+
+A serverless deployment has no process running between requests, so nothing
+checks monitors, escalates unacknowledged pages or takes scheduled backups
+unless something calls `/api/cron/ops`. **Without it, on-call paging never
+escalates on Vercel.** It is authorised the same way as the SLA sweep: the
+`CRON_SECRET` as a bearer token.
+
+```bash
+curl -X POST https://your-deployment.vercel.app/api/cron/ops \
+  -H "Authorization: Bearer $CRON_SECRET"
+# {"ok":true,"leader":true,"monitors":0,"pages":0,"backups":0,"ranAt":"..."}
+```
+
+It is deliberately **not** in `vercel.json`: the Hobby plan rejects any cron
+that runs more than once a day, and the deployment fails if one is listed.
+Use a free external scheduler instead:
+
+- **cron-job.org** (free, every minute): create a job for the URL above,
+  method POST, and add the header `Authorization: Bearer <your CRON_SECRET>`.
+- **GitHub Actions** (free, but at best every 5 minutes and often late):
+  acceptable for monitors and backups, too slow for paging.
+- **A machine you already run**: `* * * * * curl -fsS -X POST ... -H "Authorization: Bearer ..."`
+  in its crontab.
+
+Calls that overlap are safe: a database lease makes sure only one does the
+work. `/health` reports when the last tick ran (`ops.lastTickAt`), so the
+external scheduler going quiet is visible. If you ever move to Vercel Pro,
+adding `{ "path": "/api/cron/ops", "schedule": "* * * * *" }` to the `crons`
+list in `vercel.json` replaces the external scheduler.
+
 ### 6. Check it came up
 
 ```bash
 curl https://your-deployment.vercel.app/health
-# {"status":"ok","database":"postgres","uptime":1}
+# {"status":"ok","database":"postgres","uptime":1,"ops":{...}}
 ```
 
 `"status":"degraded"` means the database is unreachable — almost always the

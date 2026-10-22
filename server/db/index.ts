@@ -59,12 +59,23 @@ export function parseJson<T>(value: unknown, fallback: T): T {
 }
 
 /**
- * Reserves the next ticket number. Runs inside the caller's transaction so two
- * concurrent creates can never be handed the same number.
+ * Reserves the next ticket number in one atomic statement, so two concurrent
+ * creates can never be handed the same number whether or not the caller is
+ * inside a transaction.
  */
 export async function nextTicketNumber(): Promise<number> {
-  await db.run(`UPDATE counters SET value = value + 1 WHERE name = 'ticket_number'`);
-  const row = await db.get<{ value: number }>(`SELECT value FROM counters WHERE name = 'ticket_number'`);
+  if (db.dialect === 'mysql') {
+    // MySQL has no RETURNING; LAST_INSERT_ID(expr) remembers the value for
+    // this connection, so both statements must share one.
+    return db.transaction(async () => {
+      await db.run(`UPDATE counters SET value = LAST_INSERT_ID(value + 1) WHERE name = 'ticket_number'`);
+      const row = await db.get<{ value: number }>(`SELECT LAST_INSERT_ID() AS value`);
+      return Number(row?.value ?? 1001);
+    });
+  }
+  const row = await db.get<{ value: number }>(
+    `UPDATE counters SET value = value + 1 WHERE name = 'ticket_number' RETURNING value`,
+  );
   return Number(row?.value ?? 1001);
 }
 

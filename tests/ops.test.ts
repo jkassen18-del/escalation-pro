@@ -506,7 +506,7 @@ test('a SQLite database is backed up encrypted and downloads decrypted', async (
   const run = await call('POST', `/api/ops/databases/${job.id}/run`);
   assert.equal(run.payload.run.status, 'succeeded', run.payload.run.error);
   const stored = fs.readFileSync(run.payload.run.location);
-  assert.equal(stored.subarray(0, 5).toString(), 'ITBK1');
+  assert.equal(stored.subarray(0, 5).toString(), 'ITBK2', 'the file carries its own wrapped key');
   assert.ok(!stored.includes(Buffer.from('Grace')), 'the stored file is encrypted');
 
   const download = await fetch(`${base}/api/ops/backup-runs/${run.payload.run.id}/download`, { headers: { cookie } });

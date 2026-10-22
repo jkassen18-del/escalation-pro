@@ -75,6 +75,7 @@ const TABLES: string[] = [
     tags TEXT NOT NULL DEFAULT '[]',
     escalation_level INTEGER NOT NULL DEFAULT 0,
     due_at TEXT,
+    sla_notified_due TEXT,
     first_response_at TEXT,
     resolved_at TEXT,
     closed_at TEXT,
@@ -346,6 +347,7 @@ const TABLES: string[] = [
     /* Heartbeat monitors only: the secret in the ping URL. */
     heartbeat_token TEXT UNIQUE,
     last_ping_at TEXT,
+    last_fail_at TEXT,
     last_checked_at TEXT,
     last_change_at TEXT,
     last_latency_ms INTEGER,
@@ -878,6 +880,12 @@ interface AdditiveColumn {
  */
 export const ADDITIVE_COLUMNS: AdditiveColumn[] = [
   {
+    table: 'monitors',
+    column: 'last_fail_at',
+    definition: `TEXT`,
+    why: 'a heartbeat whose job reported a failure stays down until its next success ping',
+  },
+  {
     table: 'maintenance_windows',
     column: 'description',
     definition: `TEXT`,
@@ -1039,6 +1047,12 @@ export const ADDITIVE_COLUMNS: AdditiveColumn[] = [
     definition: 'TEXT',
     why: "the policy that pages for this team's alerts unless a monitor names its own",
   },
+  {
+    table: 'tickets',
+    column: 'sla_notified_due',
+    definition: 'TEXT',
+    why: 'the due date an SLA breach was announced for, so each breach is announced once across restarts and instances',
+  },
 ];
 
 /**
@@ -1075,6 +1089,7 @@ async function columnExists(driver: DbDriver, table: string, column: string): Pr
 }
 
 async function applyAdditiveColumns(driver: DbDriver): Promise<void> {
+  const failures: Array<{ table: string; column: string; ddl: string; why: string; message: string }> = [];
   for (const { table, column, definition, why } of ADDITIVE_COLUMNS) {
     if (await columnExists(driver, table, column)) continue;
 
@@ -1089,29 +1104,42 @@ async function applyAdditiveColumns(driver: DbDriver): Promise<void> {
 
       // Raced with another instance starting at the same time.
       if (/duplicate column|already exists/i.test(message)) continue;
-
-      /*
-       * Almost always ownership: the database user can read and write the
-       * table but did not create it, and only its owner may alter it. Nothing
-       * the app can do about that, so say exactly what to run instead of
-       * failing with a message that names neither the cause nor the cure.
-       */
-      const remedy =
-        driver.dialect === 'mysql'
-          ? `The application's database user lacks ALTER on this table. Run this once as a user ` +
-            `that has it:\n\n  ${ddl};\n\nTo stop this recurring:\n\n` +
-            `  GRANT ALTER ON <database>.* TO '<the user in DATABASE_URL>'@'<host>';`
-          : `The application's database user can read and write this table but does not own it, ` +
-            `and PostgreSQL only lets a table's owner alter it. Run this once as the owner ` +
-            `(or as a superuser):\n\n  ${ddl.replace(' ADD COLUMN ', ' ADD COLUMN IF NOT EXISTS ')};\n\n` +
-            `To stop this recurring, give the table to the application's user:\n\n` +
-            `  ALTER TABLE ${table} OWNER TO <the user in DATABASE_URL>;`;
-
-      throw new Error(
-        `Could not add the "${column}" column to "${table}" (${why}).\n` + `  ${message}\n\n` + remedy,
-      );
+      // Keep going: the operator should get every statement in one go, not
+      // one per restart.
+      failures.push({ table, column, ddl, why, message });
     }
   }
+  if (!failures.length) return;
+
+  /*
+   * Almost always ownership: the database user can read and write the
+   * tables but did not create them, and only an owner may alter them.
+   * Nothing the app can do about that, so say exactly what to run instead
+   * of failing with a message that names neither the cause nor the cure.
+   */
+  const tables = [...new Set(failures.map((failure) => failure.table))];
+  const script = failures
+    .map((failure) =>
+      driver.dialect === 'mysql' ? `${failure.ddl};` : `${failure.ddl.replace(' ADD COLUMN ', ' ADD COLUMN IF NOT EXISTS ')};`,
+    )
+    .join('\n  ');
+  const remedy =
+    driver.dialect === 'mysql'
+      ? `The application's database user lacks ALTER on ${tables.length > 1 ? 'these tables' : 'this table'}. ` +
+        `Run this once as a user that has it:\n\n  ${script}\n\nTo stop this recurring:\n\n` +
+        `  GRANT ALTER ON <database>.* TO '<the user in DATABASE_URL>'@'<host>';`
+      : `The application's database user can read and write ${tables.length > 1 ? 'these tables' : 'this table'} but does not own ` +
+        `${tables.length > 1 ? 'them' : 'it'}, and PostgreSQL only lets a table's owner alter it. Run this once as the owner ` +
+        `(or as a superuser):\n\n  ${script}\n\n` +
+        `To stop this recurring, give the tables to the application's user:\n\n  ` +
+        tables.map((table) => `ALTER TABLE ${table} OWNER TO <the user in DATABASE_URL>;`).join('\n  ');
+
+  const lines = failures.map((failure) => `  - "${failure.column}" on "${failure.table}" (${failure.why}): ${failure.message.split('\n')[0]}`);
+  throw new Error(
+    `Could not add ${failures.length === 1 ? 'a column' : `${failures.length} columns`} the app needs:\n` +
+      `${lines.join('\n')}\n\n` +
+      remedy,
+  );
 }
 
 /**
@@ -1130,6 +1158,11 @@ async function indexExists(driver: DbDriver, table: string, name: string): Promi
 }
 
 export async function migrate(driver: DbDriver): Promise<void> {
+  // Two instances starting together would otherwise race each other's DDL.
+  await driver.withLock('migrate', () => migrateUnlocked(driver));
+}
+
+async function migrateUnlocked(driver: DbDriver): Promise<void> {
   for (const statement of TABLES) {
     await driver.run(driver.dialect === 'mysql' ? tableToMysql(statement, INDEXES) : statement);
   }

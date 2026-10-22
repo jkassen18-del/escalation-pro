@@ -20,7 +20,8 @@
     "test": "tsx --test --test-force-exit tests/*.test.ts",
     "build:function": "esbuild server/serverless.ts --bundle --platform=node --format=esm --target=node22 --external:better-sqlite3 --external:pg --external:pg-native --external:pg-query-stream --external:mysql2 --external:nodemailer --banner:js=\"import{createRequire as __createRequire}from'node:module';const require=__createRequire(import.meta.url);\" --outfile=dist/function/index.mjs",
     "build:teams-app": "tsx scripts/build-teams-app.ts",
-    "build:portable": "tsx scripts/build-portable.ts"
+    "build:portable": "tsx scripts/build-portable.ts",
+    "decrypt-backup": "tsx scripts/decrypt-backup.ts"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",

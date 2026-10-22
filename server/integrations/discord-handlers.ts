@@ -15,7 +15,8 @@ import { asFormFields, canUseTemplate, findTemplate, listTemplates, renderSubjec
 import { addLink, addWatcher, findTicket, recordEvent } from '../repositories/tickets.ts';
 import { findUserById } from '../repositories/users.ts';
 import { createTicket, escalateTicketToTeam } from '../services/tickets.ts';
-import { acknowledgePage, escalateNow } from '../ops/pager.ts';
+import { acknowledgePage, escalateNow, getPage } from '../ops/pager.ts';
+import { canActOnPage } from '../ops/access.ts';
 import { TERMINAL_STATUSES, TICKET_PRIORITIES, type Permission, type PublicUser, type TeamFormField, type Ticket, type TicketPriority } from '../../shared/types.ts';
 import { buildTicketUrl, dispatch } from './dispatcher.ts';
 import {
@@ -470,6 +471,11 @@ async function handleEscalateReason(interaction: Interaction, ticketId: string, 
 async function handlePageButton(interaction: Interaction, action: 'ack' | 'escalate', pageId: string): Promise<void> {
   const actor = await actorFor(personOf(interaction).id);
   if (!actor.ok) return reply(interaction, actor.message);
+  const page = await getPage(pageId);
+  if (!page) return reply(interaction, 'This page is already closed.');
+  if (!(await canActOnPage(actor.user, page.id, page.currentTargetIds))) {
+    return reply(interaction, 'Only the people this page reached, or an on-call manager, can acknowledge or escalate it.');
+  }
   if (action === 'ack') {
     const outcome = await acknowledgePage(pageId, actor.user, 'discord');
     const content = outcome === 'closed' ? 'This page is already closed.' : outcome === 'already' ? 'Already acknowledged.' : `✅ Acknowledged by ${actor.user.name}. Escalation stopped.`;

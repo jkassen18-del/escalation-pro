@@ -328,11 +328,17 @@ function Conversation({ ticket, onChanged }: { ticket: TicketDetailType; onChang
     if (!hasBody && files.length === 0) return;
     setSending(true);
     try {
+      let commentId: string | null = null;
       if (hasBody) {
-        await api.tickets.comment(ticket.id, { body, bodyFormat: 'html', isInternal: internal });
+        ({ commentId } = await api.tickets.comment(ticket.id, { body, bodyFormat: 'html', isInternal: internal }));
       }
       if (files.length) {
-        await api.tickets.upload(ticket.id, files);
+        if (internal && !commentId) {
+          // Files on their own would be visible to everyone, so an internal
+          // note with only files still needs a note to hang them on.
+          ({ commentId } = await api.tickets.comment(ticket.id, { body: '<p>Attached files</p>', bodyFormat: 'html', isInternal: true }));
+        }
+        await api.tickets.upload(ticket.id, files, commentId);
       }
       setBody('');
       setFiles([]);

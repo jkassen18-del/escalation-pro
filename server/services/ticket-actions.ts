@@ -94,7 +94,13 @@ export async function updateTicket(before: Ticket, patch: TicketPatch, ctx: Acti
   }
 
   if (patch.description !== undefined) {
-    const description = optionalString(patch.description, 20_000) ?? '';
+    let description = optionalString(patch.description, 20_000) ?? '';
+    // An HTML description is rendered as markup, so an edit goes through the
+    // same sanitiser and inline-image extraction as a new ticket's.
+    if (before.descriptionFormat === 'html') {
+      description = sanitizeRichText(description);
+      description = await extractInlineImages(description, { ticketId: before.id, uploadedBy: user.id || null });
+    }
     if (description !== before.description) {
       push('description', description);
       changes.push({ field: 'description', from: null, to: null });

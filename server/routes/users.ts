@@ -16,7 +16,7 @@ import {
 import { clientIp, recordAudit } from '../lib/audit.ts';
 import { sessionStore } from '../lib/session-store.ts';
 import { can, requireAuth, requirePermission, type AuthedRequest } from '../middleware/auth.ts';
-import { ALL_PERMISSIONS, PERMISSION_GROUPS, ROLE_DESCRIPTIONS, ROLE_LABELS, isPermission } from '../permissions.ts';
+import { ALL_PERMISSIONS, PERMISSION_GROUPS, ROLE_DESCRIPTIONS, ROLE_LABELS, isPermission, ungrantablePermissions } from '../permissions.ts';
 import {
   countActiveAdmins,
   createUser,
@@ -28,7 +28,7 @@ import {
   updatePassword,
   usernameInUse,
 } from '../repositories/users.ts';
-import { USER_ROLES, USER_STATUSES, type Permission } from '../../shared/types.ts';
+import { USER_ROLES, USER_STATUSES, type Permission, type PublicUser } from '../../shared/types.ts';
 
 export const usersRouter: Router = Router();
 
@@ -87,6 +87,21 @@ function readPermissions(value: unknown): Permission[] {
   return toStringArray(value, ALL_PERMISSIONS.length).filter(isPermission);
 }
 
+/** Refuses grants the actor could not hold or hand out themselves. */
+function assertGrantable(actor: PublicUser, requested: Permission[]): void {
+  const refused = ungrantablePermissions(actor, requested);
+  if (refused.length) {
+    throw forbidden(`You cannot grant ${refused.map((permission) => `"${permission}"`).join(', ')}.`);
+  }
+}
+
+/** Administrator accounts are only managed by administrators. */
+function assertCanManage(actor: PublicUser, target: PublicUser): void {
+  if (target.role === 'admin' && actor.role !== 'admin') {
+    throw forbidden('Only an administrator can change an administrator account.');
+  }
+}
+
 /**
  * Accounts are created here by an administrator or manager. There is no public
  * sign-up route anywhere in the application - this is the only way in.
@@ -110,6 +125,9 @@ usersRouter.post(
       throw forbidden('Only an administrator can create another administrator.');
     }
 
+    const extraPermissions = readPermissions(req.body?.extraPermissions);
+    assertGrantable(actor, extraPermissions);
+
     if (await emailInUse(email)) throw conflict('An account with that email already exists.');
     if (await usernameInUse(username)) throw conflict('That username is already taken.');
 
@@ -127,7 +145,7 @@ usersRouter.post(
         jobTitle: optionalString(req.body?.jobTitle, 120),
         phone: optionalString(req.body?.phone, 40),
         teamIds: toStringArray(req.body?.teamIds),
-        extraPermissions: readPermissions(req.body?.extraPermissions),
+        extraPermissions,
         mustChangePassword: req.body?.mustChangePassword !== false,
         status: requireEnum(req.body?.status ?? 'active', USER_STATUSES, 'Status'),
       }),
@@ -156,6 +174,7 @@ usersRouter.patch(
     const actor = (req as AuthedRequest).user;
     const target = await findUserById(req.params.id);
     if (!target) throw notFound('That user does not exist.');
+    assertCanManage(actor, target);
 
     const updates: string[] = [];
     const params: Array<string | number | null> = [];
@@ -217,7 +236,11 @@ usersRouter.patch(
       if (!can(actor, 'users.update') || (actor.role !== 'admin' && actor.role !== 'manager')) {
         throw forbidden('You cannot change permission grants.');
       }
-      await setUserPermissions(target.id, readPermissions(req.body.extraPermissions));
+      const requested = readPermissions(req.body.extraPermissions);
+      // Only additions are checked: taking away a grant someone else made is
+      // fine, handing out one you could not hold yourself is not.
+      assertGrantable(actor, requested.filter((permission) => !target.extraPermissions.includes(permission)));
+      await setUserPermissions(target.id, requested);
     }
 
     // A suspended user must lose their live sessions immediately.
@@ -248,6 +271,7 @@ usersRouter.post(
     const actor = (req as AuthedRequest).user;
     const target = await findUserById(req.params.id);
     if (!target) throw notFound('That user does not exist.');
+    assertCanManage(actor, target);
 
     const generated = !req.body?.password;
     const password = generated
@@ -279,6 +303,7 @@ usersRouter.delete(
     const target = await findUserById(req.params.id);
     if (!target) throw notFound('That user does not exist.');
     if (target.id === actor.id) throw badRequest('You cannot delete your own account.');
+    assertCanManage(actor, target);
     if (target.role === 'admin' && (await countActiveAdmins(target.id)) === 0) {
       throw badRequest('This is the only active administrator and cannot be deleted.');
     }

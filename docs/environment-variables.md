@@ -14,6 +14,7 @@ Integration credentials (Slack, Teams, Linear, Discord, SMTP, Twilio) are **not*
 | `HOST` | `0.0.0.0` (portable: `127.0.0.1`) | Address to bind. `127.0.0.1` means this machine only |
 | `APP_URL` | empty | Public address, e.g. `https://tickets.example.com`. Used when *Settings → Public URL* is empty |
 | `NODE_ENV` | (portable: `production`) | `production` serves the built client; anything else runs the Vite dev server |
+| `TRUST_PROXY` | `1` (portable: `0`) | Reverse-proxy hops whose `X-Forwarded-For` is believed. `0` when clients reach the app directly, or the per-IP login limit can be dodged |
 | `CLIENT_DIST` | `dist/client` | Folder of the built web client |
 
 ## Database
@@ -45,6 +46,8 @@ DATABASE_URL=mysql://infraticket:secret@127.0.0.1:3306/infraticket
 | --- | --- | --- |
 | `SESSION_SECRET` | generated into `DATA_DIR/.session-secret` | Signs session cookies. Set explicitly when running several servers |
 | `SECRET_KEY` | the session secret | Encrypts stored credentials and backup keys. **Changing it makes them unreadable** |
+| `BACKUP_KEY` | the secret key | Wraps each backup's key, inside the backup file itself. Keep a copy somewhere safe: with it, `InfraTicket.exe decrypt-backup` or `npm run decrypt-backup` opens a backup without the database |
+| `ALLOW_KEY_CHANGE` | empty | `1` lets a production server start with an encryption key that differs from the one the database was set up with, and records the new one. Only after re-entering the secrets the old key protected |
 | `SESSION_COOKIE_SECURE` | `false` | `true` only when users reach the app over https; on plain http it breaks sign-in |
 | `SESSION_MAX_AGE_HOURS` | `12` | Idle session lifetime |
 | `SETUP_TOKEN` | empty (setup open) | Required on the first-run screen. Set before going public |
@@ -73,7 +76,8 @@ openssl rand -hex 32
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `SLA_CHECK_INTERVAL_MS` | `300000` (5 minutes) | How often SLA breaches are checked |
-| `OPS_TICK_MS` | `10000` (10 seconds) | How often due monitors, escalations, maintenance and backups are processed |
+| `OPS_TICK_MS` | `10000` (10 seconds) | How often due monitors, maintenance and backups are processed |
+| `OPS_PAGER_TICK_MS` | `5000` (5 seconds) | How often escalations and page notifications are processed, on their own loop so a slow monitor never delays a page |
 | `ALERT_GROUP_WINDOW_MINS` | `15` | Alerts from one source and department this close together join one incident |
 | `DISCORD_SUPERVISE_MS` | `20000` | How often the Discord connection is checked and the lease renewed |
 | `BACKUP_TOOLS_DIR` | empty (use `PATH`) | Folder holding `pg_dump`, `mysqldump`, `mongodump`, `sqlcmd` |

@@ -16,6 +16,9 @@
  *   InfraTicket.exe                 start, and open the browser
  *   InfraTicket.exe --no-browser    start without opening the browser
  *   InfraTicket.exe --port 9090     listen somewhere other than 8080
+ *   InfraTicket.exe decrypt-backup <file> [out]
+ *                                   decrypt a backup with BACKUP_KEY/SECRET_KEY
+ *                                   or this folder's key; no server needed
  *   InfraTicket.exe export [file]   pack the workspace into a .zip to move it
  *                                   into an on-prem or cloud install
  *   InfraTicket.exe --version
@@ -122,6 +125,18 @@ async function main() {
   const sea = loadSea();
   const home = sea ? path.dirname(process.execPath) : process.cwd();
   const dataDir = process.env.DATA_DIR || path.join(home, 'InfraTicket-data');
+
+  if (args[0] === 'decrypt-backup') {
+    // Needs only the file and a key: no database, no web UI, no server.
+    (await import('dotenv')).config({ path: path.join(home, '.env'), quiet: true });
+    const { decryptBackupCommand } = await import('./ops/backup-format.ts');
+    await decryptBackupCommand(args.slice(1), [dataDir]).catch((error: Error) => {
+      console.error(`decrypt-backup: ${error.message}`);
+      process.exitCode = 1;
+    });
+    return;
+  }
+
   fs.mkdirSync(dataDir, { recursive: true });
 
   // Defaults for a laptop: local-only, embedded database, production UI.

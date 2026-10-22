@@ -16,6 +16,7 @@ import { listMaintenanceWindows } from '../ops/maintenance.ts';
 import { getMonitor, listMonitors, monitorChecks } from '../ops/monitors.ts';
 import { listSchedules, scheduleShifts } from '../ops/oncall.ts';
 import { acknowledgePage, getPage, listPages } from '../ops/pager.ts';
+import { canActOnPage, redactMonitor } from '../ops/access.ts';
 import { getStatusPage, listStatusPages, renderStatusPage } from '../ops/status-pages.ts';
 import { APP_VERSION } from '../../shared/version.ts';
 import {
@@ -357,7 +358,7 @@ export function buildMcpServer(ctx: ServerContext): McpServer {
             id: m.id,
             name: m.name,
             kind: m.kind,
-            target: m.target || null,
+            target: m.target ? redactMonitor(m, user).target : null,
             state: m.state,
             team: m.teamName,
             severity: m.severity,
@@ -387,7 +388,7 @@ export function buildMcpServer(ctx: ServerContext): McpServer {
           id: monitor.id,
           name: monitor.name,
           kind: monitor.kind,
-          target: monitor.target || null,
+          target: monitor.target ? redactMonitor(monitor, user).target : null,
           state: monitor.state,
           team: monitor.teamName,
           severity: monitor.severity,
@@ -743,6 +744,9 @@ export function buildMcpServer(ctx: ServerContext): McpServer {
         if (!page) return refuse('No such page.');
         const ticket = await loadVisibleTicket(page.ticketId);
         if (!ticket) return refuse(`${user.name} cannot see the incident this page is for.`);
+        if (!(await canActOnPage(user, page.id, page.currentTargetIds))) {
+          return refuse('Only the people this page reached, or an on-call manager, can acknowledge it.');
+        }
         const outcome = await acknowledgePage(pageId, user, 'claude');
         if (outcome === 'closed') return refuse('That page has already been resolved.');
         await audit('acknowledge_page', `acknowledged the page for ${ticket.reference}`, 'oncall', pageId);

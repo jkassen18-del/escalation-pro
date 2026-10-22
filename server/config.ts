@@ -160,7 +160,16 @@ const SESSION_SECRET_FILE = path.join(paths.data, '.session-secret');
 function resolveSessionSecret(): string {
   if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
   // The portable build is one machine by definition; the persisted secret is the right answer there.
-  if (IS_PRODUCTION && !process.env.INFRATICKET_PORTABLE) {
+  const strict = IS_PRODUCTION && !process.env.INFRATICKET_PORTABLE;
+  if (strict && IS_SERVERLESS) {
+    // Each instance would invent its own key: sessions would fail across
+    // instances and every encrypted secret would be unreadable on the next one.
+    throw new Error(
+      '[config] SESSION_SECRET is not set. Serverless deployments have no disk to keep a generated key on; ' +
+        'set SESSION_SECRET (and preferably SECRET_KEY) to long random values in the platform settings.',
+    );
+  }
+  if (strict) {
     console.warn(
       '[config] SESSION_SECRET is not set. Generating a persisted local secret. ' +
         'Set SESSION_SECRET explicitly for multi-instance deployments.',
@@ -174,15 +183,27 @@ function resolveSessionSecret(): string {
     const generated = crypto.randomBytes(32).toString('hex');
     fs.writeFileSync(SESSION_SECRET_FILE, generated, { mode: 0o600 });
     return generated;
-  } catch {
+  } catch (error) {
+    // A key that only lives in memory changes on every restart, which logs
+    // everyone out and makes every stored secret and backup unreadable. A
+    // production server must not start like that.
+    if (strict) {
+      throw new Error(
+        `[config] SESSION_SECRET is not set and the generated key could not be saved to ${SESSION_SECRET_FILE} ` +
+          `(${(error as Error).message}). Set SESSION_SECRET and SECRET_KEY, or make the data directory writable.`,
+      );
+    }
+    console.warn('[config] Could not persist a session secret; using a temporary one until restart.');
     return crypto.randomBytes(32).toString('hex');
   }
 }
 
+const SESSION_SECRET = resolveSessionSecret();
+
 export const config = {
   port: Number(process.env.PORT || 3000),
   host: process.env.HOST || '0.0.0.0',
-  sessionSecret: resolveSessionSecret(),
+  sessionSecret: SESSION_SECRET,
   /** Secure cookies require HTTPS; enabling them on plain HTTP breaks login. */
   cookieSecure: (process.env.SESSION_COOKIE_SECURE || '').toLowerCase() === 'true',
   sessionMaxAgeMs: Number(process.env.SESSION_MAX_AGE_HOURS || 12) * 60 * 60 * 1000,
@@ -191,8 +212,15 @@ export const config = {
   /** Encrypts integration secrets at rest in the database. */
   secretKey: crypto
     .createHash('sha256')
-    .update(process.env.SECRET_KEY || resolveSessionSecret())
+    .update(process.env.SECRET_KEY || SESSION_SECRET)
     .digest(),
+  /**
+   * Wraps the per-backup keys. Defaults to the secret key; a separate
+   * BACKUP_KEY lets the backups be restored by someone who holds only that.
+   */
+  backupKey: process.env.BACKUP_KEY
+    ? crypto.createHash('sha256').update(process.env.BACKUP_KEY).digest()
+    : null as Buffer | null,
   /**
    * Optional shared secret required to complete first-run setup.
    *

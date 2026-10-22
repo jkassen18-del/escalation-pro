@@ -8,6 +8,7 @@ import { MulterError } from 'multer';
 import { config, dbConfig, IS_PRODUCTION, IS_SERVERLESS, SESSION_COOKIE_NAME, paths } from './config.ts';
 import { db, initDatabase } from './db/index.ts';
 import { bootstrapFromEnvironment } from './bootstrap.ts';
+import { checkEncryptionKey } from './lib/key-check.ts';
 import { asyncRoute, HttpError } from './lib/http.ts';
 import { sessionStore } from './lib/session-store.ts';
 import { attachUser } from './middleware/auth.ts';
@@ -30,7 +31,7 @@ import { webhooksRouter } from './routes/webhooks.ts';
 import { cronRouter } from './routes/cron.ts';
 import { opsRouter } from './routes/ops.ts';
 import { opsPublicRouter } from './routes/ops-public.ts';
-import { startOpsRunner } from './ops/runner.ts';
+import { opsHealth, startOpsRunner } from './ops/runner.ts';
 import { discordRouter } from './routes/discord.ts';
 import { connectorRouter, mcpPublicRouter } from './routes/mcp.ts';
 import { startDiscordGateway } from './integrations/discord-gateway.ts';
@@ -47,7 +48,10 @@ export async function createApp() {
   const app = express();
 
   // Required for correct req.ip and secure cookies behind a reverse proxy.
-  app.set('trust proxy', 1);
+  // The portable exe is reached directly, where trusting X-Forwarded-For
+  // would let a client pick its own IP and dodge the per-IP login limit.
+  const trustProxy = process.env.TRUST_PROXY ?? (process.env.INFRATICKET_PORTABLE ? '0' : '1');
+  app.set('trust proxy', /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy === 'true');
   app.disable('x-powered-by');
 
   app.use(
@@ -135,7 +139,10 @@ export async function createApp() {
     try {
       await ensureDatabaseReady();
       await db.get('SELECT 1 AS ok');
-      res.json({ status: 'ok', database: db.dialect, uptime: Math.round(process.uptime()) });
+      // When the background loops last ran: a stale lastPagerTickAt means
+      // escalations have stopped, which no other check here would show.
+      const ops = await opsHealth().catch(() => null);
+      res.json({ status: 'ok', database: db.dialect, uptime: Math.round(process.uptime()), ops });
     } catch (error) {
       // Deliberately still a JSON body: an unreachable database is the most
       // common deployment fault, and this is where its reason gets reported.
@@ -251,6 +258,7 @@ export function ensureDatabaseReady(): Promise<void> {
   if (!databaseReady) {
     databaseReady = (async () => {
       await initDatabase();
+      await checkEncryptionKey();
       await bootstrapFromEnvironment();
     })().catch((error) => {
       databaseReady = null;
@@ -281,6 +289,7 @@ export function getServerlessApp(): Promise<express.Express> {
 
 export async function startServer() {
   await initDatabase();
+  await checkEncryptionKey();
   await bootstrapFromEnvironment();
 
   const app = await createApp();

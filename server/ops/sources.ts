@@ -190,17 +190,36 @@ function generic(payload: Record<string, unknown>, source: AlertSource): Normali
   };
 }
 
-function awsMessage(payload: Record<string, unknown>, source: AlertSource): Normalised {
+function awsMessage(payload: Record<string, unknown>, source: AlertSource): Normalised | null {
   // SNS wraps the real event in a JSON string; EventBridge sends it bare.
   const inner = typeof payload.Message === 'string' ? parseJson<Record<string, unknown>>(payload.Message, { text: payload.Message }) : payload;
+  // INSUFFICIENT_DATA means CloudWatch cannot tell, not that anything broke:
+  // it neither raises an alert nor clears one.
+  const alarmStatus = (state: string): Normalised['status'] | null =>
+    state === 'OK' ? 'resolved' : state === 'ALARM' ? 'firing' : null;
   if (inner.AlarmName) {
-    const state = String(inner.NewStateValue ?? '');
+    const status = alarmStatus(String(inner.NewStateValue ?? ''));
+    if (!status) return null;
     return {
       title: `CloudWatch: ${inner.AlarmName}`,
       summary: [inner.NewStateReason, inner.AlarmDescription, inner.Region].filter(Boolean).map(String).join('\n'),
       severity: source.defaultSeverity,
-      status: state === 'OK' ? 'resolved' : 'firing',
+      status,
       dedupKey: `cloudwatch:${inner.AWSAccountId ?? ''}:${inner.AlarmName}`,
+      payload: inner,
+    };
+  }
+  if (inner['detail-type'] === 'CloudWatch Alarm State Change') {
+    const detail = (inner.detail ?? {}) as Record<string, unknown>;
+    const state = (detail.state ?? {}) as Record<string, unknown>;
+    const status = alarmStatus(String(state.value ?? ''));
+    if (!status) return null;
+    return {
+      title: `CloudWatch: ${detail.alarmName ?? 'alarm'}`,
+      summary: [state.reason, inner.region].filter(Boolean).map(String).join('\n'),
+      severity: source.defaultSeverity,
+      status,
+      dedupKey: `cloudwatch:${inner.account ?? ''}:${detail.alarmName ?? inner.id}`,
       payload: inner,
     };
   }
@@ -235,19 +254,27 @@ function azure(payload: Record<string, unknown>, source: AlertSource): Normalise
   };
 }
 
-function jenkins(payload: Record<string, unknown>, source: AlertSource): Normalised {
+function jenkins(payload: Record<string, unknown>, source: AlertSource): Normalised | null {
   const build = (payload.build ?? {}) as Record<string, unknown>;
   const job = String(payload.name ?? payload.job ?? payload.job_name ?? 'Jenkins job');
   const status = String(build.status ?? payload.status ?? payload.result ?? '').toUpperCase();
   const phase = String(build.phase ?? 'COMPLETED').toUpperCase();
+  // A build starting says nothing about health; only finished builds count.
+  if (phase === 'STARTED' || phase === 'QUEUED') return null;
   return {
     title: `Jenkins: ${job} ${status === 'SUCCESS' ? 'recovered' : status ? status.toLowerCase() : 'failed'}`,
     summary: [build.full_url ?? payload.url, build.number ? `Build #${build.number}` : '', build.log].filter(Boolean).map(String).join('\n'),
     severity: status === 'UNSTABLE' ? 'sev3' : source.defaultSeverity,
-    status: status === 'SUCCESS' || (phase === 'STARTED' && !status) ? 'resolved' : 'firing',
+    status: status === 'SUCCESS' ? 'resolved' : 'firing',
     dedupKey: `jenkins:${job}`,
     payload,
   };
+}
+
+/** "unhealthy" and "not recovered" contain the healthy words; they are not recoveries. */
+function cloudflareResolved(text: string): boolean {
+  if (/\b(unhealthy|not\s+(?:healthy|recovered|resolved))\b/i.test(text)) return false;
+  return /\b(resolved|recovered|healthy)\b/i.test(text);
 }
 
 function cloudflare(payload: Record<string, unknown>, source: AlertSource): Normalised {
@@ -256,7 +283,7 @@ function cloudflare(payload: Record<string, unknown>, source: AlertSource): Norm
     title: `Cloudflare: ${payload.name ?? payload.alert_type ?? 'notification'}`,
     summary: str(payload.text ?? data),
     severity: severityFrom(data.severity, source.defaultSeverity),
-    status: /resolved|recovered|healthy/i.test(String(payload.text ?? data.status ?? '')) ? 'resolved' : 'firing',
+    status: cloudflareResolved(String(payload.text ?? data.status ?? '')) ? 'resolved' : 'firing',
     dedupKey: `cloudflare:${payload.alert_type ?? ''}:${data.zone_name ?? data.pool_name ?? data.tunnel_name ?? payload.name ?? ''}`,
     payload,
   };
@@ -282,12 +309,16 @@ function alertmanager(payload: Record<string, unknown>, source: AlertSource): No
 
 export function normalise(source: AlertSource, payload: Record<string, unknown>): Normalised[] {
   switch (source.kind) {
-    case 'aws_sns':
-      return [awsMessage(payload, source)];
+    case 'aws_sns': {
+      const message = awsMessage(payload, source);
+      return message ? [message] : [];
+    }
     case 'azure_monitor':
       return [azure(payload, source)];
-    case 'jenkins':
-      return [jenkins(payload, source)];
+    case 'jenkins': {
+      const build = jenkins(payload, source);
+      return build ? [build] : [];
+    }
     case 'cloudflare':
       return [cloudflare(payload, source)];
     case 'grafana':

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import multer from 'multer';
 import { config } from '../config.ts';
 import { db } from '../db/index.ts';
@@ -15,7 +15,8 @@ import {
   uploadTempDir,
 } from '../lib/attachment-store.ts';
 import { can, requireAuth, type AuthedRequest } from '../middleware/auth.ts';
-import { findTicket, recordEvent } from '../repositories/tickets.ts';
+import { findTicket, INTERNAL_ATTACHMENT_FILTER, recordEvent } from '../repositories/tickets.ts';
+import { canSeeTicket } from '../services/ticket-actions.ts';
 import { getSettings } from '../repositories/settings.ts';
 
 export const attachmentsRouter: Router = Router({ mergeParams: true });
@@ -63,20 +64,53 @@ const upload = multer({
 
 attachmentsRouter.use(requireAuth);
 
+/** The ticket in the URL, provided the caller may see it. */
+async function visibleTicket(req: Request) {
+  const user = (req as AuthedRequest).user;
+  const settings = await getSettings();
+  const ticket = await findTicket(req.params.id, settings.ticketPrefix);
+  if (!ticket) throw notFound('That ticket does not exist.');
+  if (!canSeeTicket(user, ticket)) throw forbidden('You do not have access to this ticket.');
+  return ticket;
+}
+
+/** Files on an internal note are as private as the note. */
+const internalFilter = (req: Request) => (can((req as AuthedRequest).user, 'tickets.comment_internal') ? '' : INTERNAL_ATTACHMENT_FILTER);
+
+/** The ticket and comment an upload is for, once the caller may attach there. */
+async function checkUpload(req: Request) {
+  const user = (req as AuthedRequest).user;
+  const ticket = await visibleTicket(req);
+  const commentId = typeof req.body?.commentId === 'string' && req.body.commentId ? req.body.commentId : null;
+  if (commentId) {
+    const comment = await db.get<{ author_id: string | null }>(`SELECT author_id FROM ticket_comments WHERE id = ? AND ticket_id = ?`, [
+      commentId,
+      ticket.id,
+    ]);
+    if (!comment) throw badRequest('That comment is not on this ticket.');
+    if (comment.author_id !== user.id) throw forbidden('You can only attach files to your own comments.');
+  }
+  return { ticket, commentId };
+}
+
 attachmentsRouter.post(
   '/',
   upload.array('files', 5),
   asyncRoute(async (req, res) => {
     const user = (req as AuthedRequest).user;
-    const settings = await getSettings();
-    const ticket = await findTicket(req.params.id, settings.ticketPrefix);
-    if (!ticket) throw notFound('That ticket does not exist.');
-
     const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+    let checked: { ticket: Awaited<ReturnType<typeof visibleTicket>>; commentId: string | null };
+    try {
+      checked = await checkUpload(req);
+    } catch (error) {
+      // Multer has already written the files; a refused upload must not leave them behind.
+      for (const file of files) await fs.promises.rm(file.path, { force: true }).catch(() => undefined);
+      throw error;
+    }
+    const { ticket, commentId } = checked;
     if (!files.length) throw badRequest('No files were uploaded.');
 
     const now = new Date().toISOString();
-    const commentId = typeof req.body?.commentId === 'string' ? req.body.commentId : null;
 
     for (const file of files) {
       const attachmentId = randomId();
@@ -99,21 +133,10 @@ attachmentsRouter.post(
 attachmentsRouter.get(
   '/:attachmentId',
   asyncRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user;
-    const settings = await getSettings();
-    const ticket = await findTicket(req.params.id, settings.ticketPrefix);
-    if (!ticket) throw notFound('That ticket does not exist.');
-
-    const visible =
-      can(user, 'tickets.view_all') ||
-      ticket.assigneeId === user.id ||
-      ticket.requesterId === user.id ||
-      ticket.createdById === user.id ||
-      Boolean(ticket.teamId && user.teamIds.includes(ticket.teamId));
-    if (!visible) throw forbidden('You do not have access to this ticket.');
+    const ticket = await visibleTicket(req);
 
     const row = await db.get<{ stored_name: string; original_name: string; mime_type: string }>(
-      `SELECT stored_name, original_name, mime_type FROM ticket_attachments WHERE id = ? AND ticket_id = ?`,
+      `SELECT stored_name, original_name, mime_type FROM ticket_attachments a WHERE a.id = ? AND a.ticket_id = ? ${internalFilter(req)}`,
       [req.params.attachmentId, ticket.id],
     );
     if (!row) throw notFound('That attachment does not exist.');
@@ -138,9 +161,10 @@ attachmentsRouter.delete(
   '/:attachmentId',
   asyncRoute(async (req, res) => {
     const user = (req as AuthedRequest).user;
+    const ticket = await visibleTicket(req);
     const row = await db.get<{ stored_name: string; uploaded_by: string | null }>(
-      `SELECT stored_name, uploaded_by FROM ticket_attachments WHERE id = ? AND ticket_id = ?`,
-      [req.params.attachmentId, req.params.id],
+      `SELECT stored_name, uploaded_by FROM ticket_attachments a WHERE a.id = ? AND a.ticket_id = ? ${internalFilter(req)}`,
+      [req.params.attachmentId, ticket.id],
     );
     if (!row) throw notFound('That attachment does not exist.');
     if (row.uploaded_by !== user.id && !can(user, 'tickets.delete')) {

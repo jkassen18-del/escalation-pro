@@ -98,6 +98,29 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   viewer: ['users.view'],
 };
 
+/**
+ * Grants only an administrator may hand out: everything a manager does not
+ * hold by role. Keeps a manager from minting a de-facto administrator through
+ * extra permissions.
+ */
+export const ADMIN_ONLY_PERMISSIONS: Permission[] = ALL_PERMISSIONS.filter(
+  (permission) => !ROLE_PERMISSIONS.manager.includes(permission),
+);
+
+/**
+ * The grants in `requested` that `actor` may not hand out: ones the actor does
+ * not hold, and, for anyone but an administrator, the admin-only ones.
+ */
+export function ungrantablePermissions(
+  actor: { role: UserRole; permissions: Permission[] },
+  requested: Permission[],
+): Permission[] {
+  return requested.filter(
+    (permission) =>
+      !actor.permissions.includes(permission) || (actor.role !== 'admin' && ADMIN_ONLY_PERMISSIONS.includes(permission)),
+  );
+}
+
 export const ROLE_LABELS: Record<UserRole, string> = {
   admin: 'Administrator',
   manager: 'Manager',

@@ -35,6 +35,7 @@ interface MonitorRow {
   state: MonitorState;
   heartbeat_token: string | null;
   last_ping_at: string | null;
+  last_fail_at: string | null;
   last_checked_at: string | null;
   last_change_at: string | null;
   last_latency_ms: number | string | null;
@@ -250,6 +251,10 @@ export async function deleteMonitor(id: string): Promise<void> {
 async function runCheck(row: MonitorRow): Promise<ProbeResult> {
   const config = parseJson<MonitorConfig>(row.config, {});
   if (row.kind === 'heartbeat') {
+    // A job that reported its own failure stays failed until it next succeeds.
+    if (row.last_fail_at && (!row.last_ping_at || row.last_fail_at > row.last_ping_at)) {
+      return { ok: false, latencyMs: null, message: `The job reported a failure at ${row.last_fail_at}` };
+    }
     const last = new Date(row.last_ping_at ?? row.created_at).getTime();
     const deadline = last + (Number(row.interval_secs) + Number(row.grace_secs)) * 1000;
     if (Date.now() <= deadline) return { ok: true, latencyMs: null, message: row.last_ping_at ? `Last ping ${row.last_ping_at}` : 'Waiting for the first ping' };
@@ -370,10 +375,10 @@ export async function recordHeartbeat(token: string, { fail = false, message }: 
   const row = await db.get<MonitorRow>(`SELECT * FROM monitors WHERE heartbeat_token = ? AND kind = 'heartbeat'`, [token]);
   if (!row) return false;
   const now = new Date().toISOString();
-  if (!fail) await db.run(`UPDATE monitors SET last_ping_at = ? WHERE id = ?`, [now, row.id]);
+  await db.run(`UPDATE monitors SET ${fail ? 'last_fail_at' : 'last_ping_at'} = ? WHERE id = ?`, [now, row.id]);
   if (!toBool(row.enabled)) return true;
   await recordResult(
-    { ...row, last_ping_at: fail ? row.last_ping_at : now, failure_threshold: fail ? 1 : row.failure_threshold },
+    { ...row, last_ping_at: fail ? row.last_ping_at : now, last_fail_at: fail ? now : row.last_fail_at, failure_threshold: fail ? 1 : row.failure_threshold },
     fail ? { ok: false, latencyMs: null, message: message?.slice(0, 300) || 'The job reported a failure' } : { ok: true, latencyMs: null, message: 'Ping received' },
   );
   return true;

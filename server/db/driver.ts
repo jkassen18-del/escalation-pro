@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { assertDatabaseConfigured, dbConfig, IS_SERVERLESS } from '../config.ts';
 import { toMysql } from './mysql-dialect.ts';
 
@@ -10,6 +11,12 @@ export interface DbDriver {
   run(sql: string, params?: SqlParam[]): Promise<void>;
   /** Runs `fn` inside a transaction, rolling back if it throws. */
   transaction<T>(fn: () => Promise<T>): Promise<T>;
+  /**
+   * Runs `fn` while holding a database-wide named lock, so two instances
+   * starting together do not both migrate at once. `fn` uses the driver as
+   * normal; the lock lives on a connection of its own.
+   */
+  withLock<T>(name: string, fn: () => Promise<T>): Promise<T>;
   close(): Promise<void>;
   describe(): string;
 }
@@ -97,35 +104,60 @@ async function openSqlite(file: string): Promise<{ handle: SqliteHandle; engine:
 async function createSqliteDriver(): Promise<DbDriver> {
   const { handle: database, engine } = await openSqlite(dbConfig.sqlitePath);
 
-  let depth = 0;
+  /*
+   * SQLite has one connection, so an open transaction sees every statement
+   * sent while it is open. Transactions therefore take turns, and a write
+   * from outside the current transaction waits for it to finish instead of
+   * being swept into (and rolled back with) somebody else's work. Reads go
+   * straight through; the async context tells a transaction's own
+   * statements apart from everyone else's.
+   */
+  const inTransaction = new AsyncLocalStorage<true>();
+  let queue: Promise<unknown> = Promise.resolve();
+  const exclusive = <T>(work: () => Promise<T>): Promise<T> => {
+    const result = queue.then(work, work);
+    queue = result.catch(() => undefined);
+    return result;
+  };
+  // Plain reads skip the queue; anything that writes (an UPDATE ... RETURNING
+  // through get(), say) waits its turn unless it belongs to the transaction.
+  const guarded = <T>(sql: string, work: () => T): T | Promise<T> => {
+    if (inTransaction.getStore() || /^\s*(select|with|pragma)\b/i.test(sql)) return work();
+    return exclusive(async () => work());
+  };
 
   return {
     dialect: 'sqlite',
     async all<T>(sql: string, params: SqlParam[] = []) {
-      return database.prepare(sql).all(...params) as T[];
+      return guarded(sql, () => database.prepare(sql).all(...params) as T[]);
     },
     async get<T>(sql: string, params: SqlParam[] = []) {
-      return database.prepare(sql).get(...params) as T | undefined;
+      return guarded(sql, () => database.prepare(sql).get(...params) as T | undefined);
     },
     async run(sql: string, params: SqlParam[] = []) {
-      database.prepare(sql).run(...params);
+      await guarded('', () => database.prepare(sql).run(...params));
     },
     async transaction<T>(fn: () => Promise<T>) {
       // better-sqlite3's own `transaction()` helper is synchronous-only, so we
       // drive the statements manually to support async work inside the block.
-      if (depth > 0) return fn();
-      depth += 1;
-      database.exec('BEGIN IMMEDIATE');
-      try {
-        const result = await fn();
-        database.exec('COMMIT');
-        return result;
-      } catch (error) {
-        database.exec('ROLLBACK');
-        throw error;
-      } finally {
-        depth -= 1;
-      }
+      if (inTransaction.getStore()) return fn();
+      return exclusive(() =>
+        inTransaction.run(true, async () => {
+          database.exec('BEGIN IMMEDIATE');
+          try {
+            const result = await fn();
+            database.exec('COMMIT');
+            return result;
+          } catch (error) {
+            database.exec('ROLLBACK');
+            throw error;
+          }
+        }),
+      );
+    },
+    async withLock<T>(_name: string, fn: () => Promise<T>) {
+      // One process owns the file; SQLite's own locking covers the rest.
+      return fn();
     },
     async close() {
       database.close();
@@ -147,7 +179,7 @@ async function createPostgresDriver(): Promise<DbDriver> {
    */
   const poolTuning = IS_SERVERLESS
     ? { max: 1, idleTimeoutMillis: 10_000, connectionTimeoutMillis: 10_000 }
-    : { max: 10 };
+    : { max: 10, connectionTimeoutMillis: 15_000 };
 
   /**
    * DB_SCHEMA keeps this app's tables in their own Postgres schema, so it can
@@ -193,12 +225,14 @@ async function createPostgresDriver(): Promise<DbDriver> {
     }
   }
 
-  // Postgres has no ambient connection, so a transaction has to pin one client
-  // and route every nested query through it for the duration of the block.
-  let txClient: import('pg').PoolClient | null = null;
+  // Postgres has no ambient connection, so a transaction pins one client and
+  // every query made from inside the block (its async context, not merely
+  // while it is open) goes through that client.
+  const txClient = new AsyncLocalStorage<import('pg').PoolClient>();
   const exec = async (sql: string, params: SqlParam[]) => {
     const text = toPositional(sql);
-    return txClient ? txClient.query(text, params) : pool.query(text, params);
+    const client = txClient.getStore();
+    return client ? client.query(text, params) : pool.query(text, params);
   };
 
   return {
@@ -215,19 +249,31 @@ async function createPostgresDriver(): Promise<DbDriver> {
       await exec(sql, params);
     },
     async transaction<T>(fn: () => Promise<T>) {
-      if (txClient) return fn();
+      if (txClient.getStore()) return fn();
       const client = await pool.connect();
-      txClient = client;
       try {
         await client.query('BEGIN');
-        const result = await fn();
+        const result = await txClient.run(client, fn);
         await client.query('COMMIT');
         return result;
       } catch (error) {
-        await client.query('ROLLBACK');
+        await client.query('ROLLBACK').catch(() => undefined);
         throw error;
       } finally {
-        txClient = null;
+        client.release();
+      }
+    },
+    async withLock<T>(name: string, fn: () => Promise<T>) {
+      const client = await pool.connect();
+      const key = `infraticket:${schema || 'public'}:${name}`;
+      try {
+        await client.query('SELECT pg_advisory_lock(hashtext($1))', [key]);
+        try {
+          return await fn();
+        } finally {
+          await client.query('SELECT pg_advisory_unlock(hashtext($1))', [key]).catch(() => undefined);
+        }
+      } finally {
         client.release();
       }
     },
@@ -315,6 +361,7 @@ async function createMysqlDriver(): Promise<DbDriver> {
         }),
     ...(dbConfig.ssl ? { ssl: dbConfig.ssl as object } : {}),
     connectionLimit: IS_SERVERLESS ? 1 : 10,
+    connectTimeout: 15_000,
     // Dates and numbers come back as strings otherwise, and every repository
     // here already expects the ISO strings it wrote.
     dateStrings: true,
@@ -323,21 +370,23 @@ async function createMysqlDriver(): Promise<DbDriver> {
     enableKeepAlive: true,
   });
 
+  /*
+   * Strict mode on every connection the pool opens, regardless of how the
+   * server is configured. A lax MySQL truncates an over-long value and
+   * carries on, which would silently corrupt a ticket rather than refusing it.
+   */
+  pool.on('connection', (connection) => {
+    connection.query(`SET SESSION sql_mode = 'STRICT_ALL_TABLES,NO_ENGINE_SUBSTITUTION'`);
+  });
+
   const [versionRows] = await pool.query('SELECT VERSION() AS version');
   const version = String((versionRows as Array<{ version: string }>)[0]?.version ?? '');
   assertMysqlVersion(version);
 
-  /*
-   * Strict mode for this connection pool regardless of how the server is
-   * configured. A lax MySQL truncates an over-long value and carries on,
-   * which would silently corrupt a ticket rather than refusing it.
-   */
-  await pool.query(`SET SESSION sql_mode = 'STRICT_ALL_TABLES,NO_ENGINE_SUBSTITUTION'`);
-
-  let txConnection: Awaited<ReturnType<typeof pool.getConnection>> | null = null;
+  const txConnection = new AsyncLocalStorage<Awaited<ReturnType<typeof pool.getConnection>>>();
   const exec = async (sql: string, params: SqlParam[]) => {
     const text = toMysql(sql);
-    const target = txConnection ?? pool;
+    const target = txConnection.getStore() ?? pool;
     // `query` rather than `execute`: the prepared-statement cache keys on the
     // SQL text, and DDL cannot be prepared at all.
     const [rows] = await target.query(text, params);
@@ -357,19 +406,36 @@ async function createMysqlDriver(): Promise<DbDriver> {
       await exec(sql, params);
     },
     async transaction<T>(fn: () => Promise<T>) {
-      if (txConnection) return fn();
+      if (txConnection.getStore()) return fn();
       const connection = await pool.getConnection();
-      txConnection = connection;
       try {
         await connection.beginTransaction();
-        const result = await fn();
+        const result = await txConnection.run(connection, fn);
         await connection.commit();
         return result;
       } catch (error) {
-        await connection.rollback();
+        await connection.rollback().catch(() => undefined);
         throw error;
       } finally {
-        txConnection = null;
+        connection.release();
+      }
+    },
+    async withLock<T>(name: string, fn: () => Promise<T>) {
+      const connection = await pool.getConnection();
+      // Lock names are server-wide, so the database name keeps two
+      // workspaces on one server from waiting on each other.
+      const key = `infraticket:${name}`;
+      try {
+        const [rows] = await connection.query('SELECT GET_LOCK(CONCAT(?, DATABASE()), 120) AS got', [key]);
+        if (Number((rows as Array<{ got: number | null }>)[0]?.got) !== 1) {
+          throw new Error(`Timed out waiting for the "${name}" lock; another instance may be stuck migrating.`);
+        }
+        try {
+          return await fn();
+        } finally {
+          await connection.query('SELECT RELEASE_LOCK(CONCAT(?, DATABASE()))', [key]).catch(() => undefined);
+        }
+      } finally {
         connection.release();
       }
     },

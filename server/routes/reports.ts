@@ -2,7 +2,7 @@ import { Router } from 'express';
 import * as XLSX from 'xlsx';
 import { db } from '../db/index.ts';
 import { asyncRoute, optionalString } from '../lib/http.ts';
-import { requireAuth, requirePermission, visibleTeamIds, type AuthedRequest } from '../middleware/auth.ts';
+import { can, requireAuth, requirePermission, visibleTeamIds, type AuthedRequest } from '../middleware/auth.ts';
 import { getSettings } from '../repositories/settings.ts';
 import { listTickets, referenceOf, type TicketQuery } from '../repositories/tickets.ts';
 import { TICKET_PRIORITIES, type PublicUser, type ReportSummary, type TicketPriority } from '../../shared/types.ts';
@@ -219,25 +219,30 @@ reportsRouter.get(
       Attachments: ticket.attachmentCount,
     }));
 
-    const commentRows = await db.all<Record<string, string>>(
-      `SELECT t.number, c.created_at, u.name AS author, c.is_internal, c.body
+    // The Comments and History sheets cover the same tickets as the Tickets
+    // sheet (the ones this person can see), and internal notes only for people
+    // who can read them.
+    const visibleIds = new Set(all.map((ticket) => ticket.id));
+    const includeInternal = can(user, 'tickets.comment_internal');
+    const commentRows = (await db.all<Record<string, string>>(
+      `SELECT t.id AS ticket_id, t.number, c.created_at, u.name AS author, c.is_internal, c.body
        FROM ticket_comments c
        JOIN tickets t ON t.id = c.ticket_id
        LEFT JOIN users u ON u.id = c.author_id
        WHERE t.created_at >= ? AND t.created_at <= ?
        ORDER BY t.number, c.created_at`,
       [from, to],
-    );
+    )).filter((row) => visibleIds.has(row.ticket_id) && (includeInternal || Number(row.is_internal) !== 1));
 
-    const eventRows = await db.all<Record<string, string>>(
-      `SELECT t.number, e.created_at, u.name AS actor, e.action, e.field, e.from_value, e.to_value
+    const eventRows = (await db.all<Record<string, string>>(
+      `SELECT t.id AS ticket_id, t.number, e.created_at, u.name AS actor, e.action, e.field, e.from_value, e.to_value
        FROM ticket_events e
        JOIN tickets t ON t.id = e.ticket_id
        LEFT JOIN users u ON u.id = e.actor_id
        WHERE t.created_at >= ? AND t.created_at <= ?
        ORDER BY t.number, e.created_at`,
       [from, to],
-    );
+    )).filter((row) => visibleIds.has(row.ticket_id));
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(ticketSheet), 'Tickets');

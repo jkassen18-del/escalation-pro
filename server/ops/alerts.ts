@@ -167,10 +167,21 @@ export async function ingestSignal(signal: AlertSignal): Promise<IngestResult> {
   const now = new Date().toISOString();
   const payload = signal.payload === undefined ? null : JSON.stringify(signal.payload).slice(0, 64_000);
 
-  const open = await db.get<AlertRow>(
+  let open = await db.get<AlertRow>(
     `SELECT * FROM alerts WHERE source_id = ? AND dedup_key = ? AND status <> 'resolved' ORDER BY first_seen_at DESC LIMIT 1`,
     [signal.sourceId, signal.dedupKey],
   );
+
+  // Someone closed the ticket while the alert was still firing. A fresh
+  // failure must not vanish into that closed ticket as a dedup count: the
+  // old alert ends with its ticket and this signal starts a new one.
+  if (open?.ticket_id && signal.status !== 'resolved') {
+    const ticket = await db.get<{ status: string }>(`SELECT status FROM tickets WHERE id = ?`, [open.ticket_id]);
+    if (!ticket || TERMINAL_STATUSES.includes(ticket.status as (typeof TERMINAL_STATUSES)[number])) {
+      await db.run(`UPDATE alerts SET status = 'resolved', resolved_at = ? WHERE id = ?`, [now, open.id]);
+      open = undefined;
+    }
+  }
 
   if (signal.status === 'resolved') {
     if (!open) return { action: 'ignored', alertId: null, ticketId: null, suppressed: false, paged: false };

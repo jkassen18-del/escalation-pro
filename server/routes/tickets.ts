@@ -391,7 +391,10 @@ ticketsRouter.post(
     );
 
     const detail = await loadTicketDetail(after, { includeInternal: can(user, 'tickets.comment_internal') });
-    res.status(201).json({ ticket: detail });
+    // Files sent with the comment are uploaded against this id, so files on an
+    // internal note stay as private as the note.
+    const comment = detail.comments.filter((c) => c.authorId === user.id).at(-1);
+    res.status(201).json({ ticket: detail, commentId: comment?.id ?? null });
   }),
 );
 

@@ -1,7 +1,7 @@
 import express, { Router, type Request } from 'express';
 import { db } from '../db/index.ts';
 import { clientIp, recordAudit, type AuditInput } from '../lib/audit.ts';
-import { asyncRoute, badRequest, notFound, optionalString, requireString } from '../lib/http.ts';
+import { asyncRoute, badRequest, forbidden, notFound, optionalString, requireString } from '../lib/http.ts';
 import { randomId } from '../lib/crypto.ts';
 import { requireAuth, requirePermission, type AuthedRequest } from '../middleware/auth.ts';
 import { getSettings } from '../repositories/settings.ts';
@@ -23,6 +23,7 @@ import {
   validateMaintenance,
 } from '../ops/maintenance.ts';
 import { deleteJob, getJob, jobConnection, listJobs, listRuns, openDecryptedBackup, runBackup, saveJob, validateJob } from '../ops/backups.ts';
+import { canActOnPage, redactMonitor, redactSource } from '../ops/access.ts';
 import { checkDatabaseHealth } from '../ops/db-health.ts';
 import { checkMonitorNow, deleteMonitor, getMonitor, listMonitors, monitorChecks, monitorDays, saveMonitor, validateMonitor } from '../ops/monitors.ts';
 import {
@@ -92,14 +93,14 @@ opsRouter.get(
 
 /* -------------------------------- Monitors -------------------------------- */
 
-opsRouter.get('/monitors', asyncRoute(async (_req, res) => res.json({ monitors: await listMonitors() })));
+opsRouter.get('/monitors', asyncRoute(async (req, res) => res.json({ monitors: (await listMonitors()).map((m) => redactMonitor(m, userOf(req))) })));
 
 opsRouter.get(
   '/monitors/:id',
   asyncRoute(async (req, res) => {
     const monitor = await getMonitor(req.params.id);
     if (!monitor) throw notFound('That monitor does not exist.');
-    res.json({ monitor, checks: await monitorChecks(monitor.id), days: await monitorDays(monitor.id) });
+    res.json({ monitor: redactMonitor(monitor, userOf(req)), checks: await monitorChecks(monitor.id), days: await monitorDays(monitor.id) });
   }),
 );
 
@@ -155,7 +156,7 @@ opsRouter.get(
   }),
 );
 
-opsRouter.get('/alert-sources', asyncRoute(async (_req, res) => res.json({ sources: await listSources() })));
+opsRouter.get('/alert-sources', asyncRoute(async (req, res) => res.json({ sources: (await listSources()).map((s) => redactSource(s, userOf(req))) })));
 
 opsRouter.post(
   '/alert-sources',
@@ -577,7 +578,22 @@ opsRouter.delete(
     const policy = await getPolicy(req.params.id);
     if (!policy) throw notFound('That policy does not exist.');
     await db.run(`DELETE FROM escalation_policies WHERE id = ?`, [policy.id]);
+    // Nothing may keep pointing at a deleted policy, or its alerts would page nobody.
     await db.run(`UPDATE teams SET escalation_policy_id = NULL WHERE escalation_policy_id = ?`, [policy.id]);
+    await db.run(`UPDATE monitors SET escalation_policy_id = NULL WHERE escalation_policy_id = ?`, [policy.id]);
+    await db.run(`UPDATE alert_sources SET escalation_policy_id = NULL WHERE escalation_policy_id = ?`, [policy.id]);
+    const rules = await db.all<{ id: string; actions: string }>(`SELECT id, actions FROM alert_rules`);
+    for (const rule of rules) {
+      let actions: Record<string, unknown>;
+      try {
+        actions = JSON.parse(rule.actions || '{}');
+      } catch {
+        continue;
+      }
+      if (actions.escalationPolicyId !== policy.id) continue;
+      delete actions.escalationPolicyId;
+      await db.run(`UPDATE alert_rules SET actions = ?, updated_at = ? WHERE id = ?`, [JSON.stringify(actions), new Date().toISOString(), rule.id]);
+    }
     await audit(req, { entityType: 'oncall', entityId: policy.id, action: 'policy_deleted', summary: `Deleted escalation policy "${policy.name}"` });
     res.status(204).end();
   }),
@@ -608,6 +624,15 @@ opsRouter.put(
 
 /* ---------------------------------- Pages --------------------------------- */
 
+/** Only someone the page reached, or an on-call manager, may ack or escalate it. */
+async function assertCanActOnPage(req: Request): Promise<void> {
+  const page = await getPage(req.params.id);
+  if (!page) throw notFound('That page does not exist.');
+  if (!(await canActOnPage(userOf(req), page.id, page.currentTargetIds))) {
+    throw forbidden('Only the people this page reached, or an on-call manager, can acknowledge or escalate it.');
+  }
+}
+
 opsRouter.get(
   '/pages',
   asyncRoute(async (req, res) => {
@@ -633,6 +658,7 @@ opsRouter.get(
 opsRouter.post(
   '/pages/:id/ack',
   asyncRoute(async (req, res) => {
+    await assertCanActOnPage(req);
     const outcome = await acknowledgePage(req.params.id, userOf(req), 'web');
     if (outcome === 'closed') throw badRequest('That page has already been resolved.');
     res.json({ outcome, page: await getPage(req.params.id) });
@@ -642,6 +668,7 @@ opsRouter.post(
 opsRouter.post(
   '/pages/:id/escalate',
   asyncRoute(async (req, res) => {
+    await assertCanActOnPage(req);
     if (!(await escalateNow(req.params.id, userOf(req).name))) throw badRequest('That page is not escalating any more.');
     res.json({ page: await getPage(req.params.id) });
   }),
