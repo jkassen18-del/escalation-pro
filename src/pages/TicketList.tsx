@@ -322,7 +322,7 @@ function TicketCards({ tickets }: { tickets: Ticket[] }) {
         return (
           <li key={ticket.id} className="border-b">
             <Link to={`/tickets/${ticket.id}`} className="block px-4 py-3 hover:bg-[var(--surface-2)]">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Reference value={ticket.reference} />
                 <StatusBadge status={ticket.status} />
                 <PriorityBadge priority={ticket.priority} />
@@ -365,13 +365,13 @@ function TicketCards({ tickets }: { tickets: Ticket[] }) {
 function TicketTable({ tickets }: { tickets: Ticket[] }) {
   return (
     <div className="hidden overflow-x-auto lg:block">
-      <table className="w-full min-w-[56rem] border-collapse text-sm">
+      <table className="w-full min-w-[60rem] border-collapse text-sm">
         <thead>
           <tr className="border-b surface-2">
             <Th className="w-24">Ref</Th>
             <Th>Subject</Th>
             <Th className="w-28">Status</Th>
-            <Th className="w-24">Priority</Th>
+            <Th className="w-36">Priority</Th>
             <Th className="w-32">Team</Th>
             <Th className="w-40">Assignee</Th>
             <Th className="w-28">SLA</Th>
@@ -414,7 +414,8 @@ function TicketTable({ tickets }: { tickets: Ticket[] }) {
                   <StatusBadge status={ticket.status} />
                 </Td>
                 <Td>
-                  <span className="inline-flex items-center gap-1">
+                  {/* Wraps rather than spilling into Team when a severity sits beside the priority. */}
+                  <span className="flex flex-wrap items-center gap-1">
                     <PriorityBadge priority={ticket.priority} />
                     {ticket.severity && <SeverityBadge severity={ticket.severity} />}
                   </span>
