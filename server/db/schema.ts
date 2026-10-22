@@ -875,7 +875,7 @@ interface AdditiveColumn {
  * Columns added after the first release, so an existing database upgrades in
  * place without a migration tool.
  */
-const ADDITIVE_COLUMNS: AdditiveColumn[] = [
+export const ADDITIVE_COLUMNS: AdditiveColumn[] = [
   {
     table: 'maintenance_windows',
     column: 'description',

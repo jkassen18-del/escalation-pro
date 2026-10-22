@@ -56,3 +56,11 @@ export interface ConnectorInfo {
   /** Whether claude.ai can reach it: an https address that isn't localhost. */
   publicHttps: boolean;
 }
+
+/** An OAuth client an admin registered by hand (e.g. for Copilot Studio). */
+export interface ConfidentialClient {
+  clientId: string;
+  name: string;
+  redirectUris: string[];
+  createdAt: string;
+}

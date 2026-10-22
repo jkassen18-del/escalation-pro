@@ -6,6 +6,10 @@ import { can, requireAuth, requirePermission, type AuthedRequest } from '../midd
 import {
   approveRequest,
   createApiToken,
+  createConfidentialClient,
+  deleteConfidentialClient,
+  listConfidentialClients,
+  updateConfidentialClient,
   denyRequest,
   describeRequest,
   exchangeToken,
@@ -22,6 +26,7 @@ import {
   startAuthorization,
 } from '../mcp/auth.ts';
 import { buildMcpServer } from '../mcp/server.ts';
+import { getSettings } from '../repositories/settings.ts';
 import { connectorBaseUrl, loadConnectorSettings, resourceUri, saveConnectorSettings } from '../mcp/settings.ts';
 import type { ConnectorInfo, ConnectorScope } from '../../shared/connector.ts';
 
@@ -143,7 +148,9 @@ mcpPublicRouter.get(
       response_types_supported: ['code'],
       grant_types_supported: ['authorization_code', 'refresh_token'],
       code_challenge_methods_supported: ['S256'],
-      token_endpoint_auth_methods_supported: ['none'],
+      // Public clients (claude.ai, Claude Code) use PKCE and no secret; clients
+      // an admin created for tools like Copilot Studio authenticate with one.
+      token_endpoint_auth_methods_supported: ['none', 'client_secret_post', 'client_secret_basic'],
       revocation_endpoint_auth_methods_supported: ['none'],
       scopes_supported: [OAUTH_SCOPES.read, OAUTH_SCOPES.write],
       client_id_metadata_document_supported: true,
@@ -187,9 +194,14 @@ mcpPublicRouter.get(
         await resourceUri(req),
       );
       if ('redirect' in outcome) return res.redirect(302, outcome.redirect);
-      // Same host the browser is already on, so its session cookie applies; the
-      // app shows sign-in first if needed, then the consent screen.
-      res.redirect(302, `/connect/authorize?request=${encodeURIComponent(outcome.requestId)}`);
+      // Consent happens in the app itself, at the App URL when one is set: a
+      // tunnel may expose only /mcp, /oauth and discovery to the internet, and
+      // the person approving signs in on the internal address (office or VPN).
+      // Without one, the same host the browser is on. The app shows sign-in
+      // first if needed, then the consent screen.
+      const settings = await getSettings();
+      const appUrl = (settings.appUrl || process.env.APP_URL || '').replace(/\/+$/, '');
+      res.redirect(302, `${appUrl}/connect/authorize?request=${encodeURIComponent(outcome.requestId)}`);
     } catch (error) {
       if (error instanceof OAuthError) return htmlError(res, 400, 'Cannot connect this application', error.message);
       throw error;
@@ -203,7 +215,7 @@ mcpPublicRouter.post(
     try {
       if (!(await loadConnectorSettings()).enabled) throw new OAuthError('access_denied', 'The Claude connector is turned off.', 403);
       const body = typeof req.body === 'object' && req.body ? (req.body as Record<string, unknown>) : {};
-      const tokens = await exchangeToken(body, await resourceUri(req));
+      const tokens = await exchangeToken(body, await resourceUri(req), req.get('authorization'));
       res.set({ 'Cache-Control': 'no-store', Pragma: 'no-cache' }).json(tokens);
     } catch (error) {
       oauthFailure(res, error);
@@ -245,7 +257,14 @@ mcpPublicRouter.all(
     const metadataUrl = `${base}/.well-known/oauth-protected-resource`;
     const scopes = `${OAUTH_SCOPES.read} ${OAUTH_SCOPES.write}`;
     const header = req.get('authorization') ?? '';
-    const token = /^Bearer\s+(.+)$/i.exec(header)?.[1]?.trim() ?? '';
+    // A raw header for clients that send an API key as-is rather than as a
+    // Bearer token (Copilot Studio's "API key" option). Personal access tokens
+    // only, and never from the query string, where keys end up in logs.
+    const rawKey = req.get('x-infraticket-token')?.trim() ?? '';
+    if (rawKey && !rawKey.startsWith('itk_')) {
+      return jsonRpcError(res, 401, -32001, 'X-InfraTicket-Token only accepts a personal access token (itk_...).');
+    }
+    const token = /^Bearer\s+(.+)$/i.exec(header)?.[1]?.trim() || rawKey;
     if (!token) {
       res.setHeader('WWW-Authenticate', `Bearer resource_metadata="${metadataUrl}", scope="${scopes}"`);
       return jsonRpcError(res, 401, -32001, 'Authentication required: connect with an InfraTicket access token.');
@@ -327,7 +346,7 @@ connectorRouter.put(
       actorId: user.id,
       actorName: user.name,
       entityType: 'settings',
-      action: 'claude_connector_updated',
+      action: 'connector_settings_updated',
       summary: `${user.name} updated the Claude connector (${next.enabled ? next.mode.replace('_', '-') : 'off'})`,
       meta: { ...next },
       ip: req.ip,
@@ -468,5 +487,80 @@ connectorRouter.post(
   '/requests/:id/deny',
   asyncRoute(async (req, res) => {
     res.json({ redirectTo: await denyRequest(String(req.params.id)) });
+  }),
+);
+
+/* Confidential OAuth clients (admin) */
+
+connectorRouter.get(
+  '/clients',
+  requirePermission('settings.manage'),
+  asyncRoute(async (_req, res) => {
+    res.json(await listConfidentialClients());
+  }),
+);
+
+connectorRouter.post(
+  '/clients',
+  requirePermission('settings.manage'),
+  asyncRoute(async (req, res) => {
+    const user = (req as AuthedRequest).user;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const { client, clientSecret } = await createConfidentialClient({ name: String(body.name ?? ''), redirectUris: body.redirectUris }, user.id);
+    await recordAudit({
+      actorId: user.id,
+      actorName: user.name,
+      entityType: 'settings',
+      entityId: client.clientId,
+      action: 'oauth_client_created',
+      summary: `${user.name} created the OAuth client "${client.name}"`,
+      meta: { redirectUris: client.redirectUris },
+      ip: req.ip,
+    });
+    res.status(201).json({ client, clientSecret });
+  }),
+);
+
+connectorRouter.patch(
+  '/clients/:id',
+  requirePermission('settings.manage'),
+  asyncRoute(async (req, res) => {
+    const user = (req as AuthedRequest).user;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const client = await updateConfidentialClient(String(req.params.id), {
+      name: typeof body.name === 'string' ? body.name : undefined,
+      redirectUris: body.redirectUris,
+    });
+    if (!client) throw notFound('Client not found');
+    await recordAudit({
+      actorId: user.id,
+      actorName: user.name,
+      entityType: 'settings',
+      entityId: client.clientId,
+      action: 'oauth_client_updated',
+      summary: `${user.name} updated the OAuth client "${client.name}"`,
+      meta: { redirectUris: client.redirectUris },
+      ip: req.ip,
+    });
+    res.json(client);
+  }),
+);
+
+connectorRouter.delete(
+  '/clients/:id',
+  requirePermission('settings.manage'),
+  asyncRoute(async (req, res) => {
+    const user = (req as AuthedRequest).user;
+    if (!(await deleteConfidentialClient(String(req.params.id)))) throw notFound('Client not found');
+    await recordAudit({
+      actorId: user.id,
+      actorName: user.name,
+      entityType: 'settings',
+      entityId: String(req.params.id),
+      action: 'oauth_client_deleted',
+      summary: `${user.name} deleted an OAuth client and disconnected everyone using it`,
+      ip: req.ip,
+    });
+    res.status(204).end();
   }),
 );

@@ -153,8 +153,13 @@ test('once the columns exist, not owning the tables is no obstacle', async (t) =
   const Client = pg.default?.Client ?? pg.Client;
   const admin = new Client({ connectionString: ADMIN.replace('/postgres?', '/ownertest_b?') });
   await admin.connect();
-  await admin.query(`ALTER TABLE app_schema.tickets ADD COLUMN IF NOT EXISTS description_format TEXT NOT NULL DEFAULT 'text'`);
-  await admin.query(`ALTER TABLE app_schema.ticket_comments ADD COLUMN IF NOT EXISTS body_format TEXT NOT NULL DEFAULT 'text'`);
+  // Every column added since the first release, as the error message for each
+  // would have told them. Tables the app has not created yet are skipped: it
+  // creates those itself, with every column, so it owns them.
+  const { ADDITIVE_COLUMNS } = await import('../server/db/schema.ts');
+  for (const { table, column, definition } of ADDITIVE_COLUMNS) {
+    await admin.query(`ALTER TABLE IF EXISTS app_schema.${table} ADD COLUMN IF NOT EXISTS ${column} ${definition}`);
+  }
   await admin.end();
 
   const result = await migrateAs(connectionString);

@@ -32,6 +32,7 @@ import { opsRouter } from './routes/ops.ts';
 import { opsPublicRouter } from './routes/ops-public.ts';
 import { startOpsRunner } from './ops/runner.ts';
 import { discordRouter } from './routes/discord.ts';
+import { connectorRouter, mcpPublicRouter } from './routes/mcp.ts';
 import { startDiscordGateway } from './integrations/discord-gateway.ts';
 import { handleDiscordEvent } from './integrations/discord-handlers.ts';
 import { startSlaMonitor } from './jobs/sla-monitor.ts';
@@ -94,6 +95,9 @@ export async function createApp() {
       const needsDatabase =
         req.path.startsWith('/api') ||
         req.path.startsWith('/status/') ||
+        req.path === '/mcp' ||
+        req.path.startsWith('/oauth/') ||
+        req.path.startsWith('/.well-known/oauth-') ||
         req.headers.cookie?.includes(`${SESSION_COOKIE_NAME}=`);
       if (req.path === '/health' || !needsDatabase) return next();
 
@@ -153,6 +157,8 @@ export async function createApp() {
   // Alert intake, heartbeats, telephony callbacks and status pages: each
   // authenticates itself, and status pages must render for the public.
   app.use(opsPublicRouter);
+  // The MCP endpoint and its OAuth: bearer tokens, never the session cookie.
+  app.use(mcpPublicRouter);
 
   // Everything below needs a resolved session user.
   app.use('/api', attachUser);
@@ -177,6 +183,7 @@ export async function createApp() {
   app.use('/api/team-links', teamLinksRouter);
   app.use('/api/ops', opsRouter);
   app.use('/api/discord', discordRouter);
+  app.use('/api/connector', connectorRouter);
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API endpoint' }));
 

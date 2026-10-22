@@ -1,0 +1,83 @@
+{
+  "sections": [
+    {
+      "title": "Getting started",
+      "pages": [
+        { "slug": "getting-started", "title": "Welcome to InfraTicket", "app": "/tickets" },
+        { "slug": "roles-and-permissions", "title": "Roles and permissions", "app": "/people" },
+        { "slug": "navigation", "title": "Finding your way around", "app": "/operations" }
+      ]
+    },
+    {
+      "title": "Tickets",
+      "pages": [
+        { "slug": "tickets", "title": "Working with tickets", "app": "/tickets" },
+        { "slug": "raising-tickets", "title": "Ways to raise a ticket", "app": "/tickets/new" },
+        { "slug": "sla-and-assignment", "title": "SLAs, routing and escalation", "app": "/teams" },
+        { "slug": "quick-tickets", "title": "Quick tickets", "app": "/quick-tickets" },
+        { "slug": "reports-and-audit", "title": "Reports, exports and the audit log", "app": "/reports" }
+      ]
+    },
+    {
+      "title": "Teams and people",
+      "pages": [
+        { "slug": "teams-and-people", "title": "Departments, people and forms", "app": "/teams" },
+        { "slug": "quick-links", "title": "Team links and Quick links", "app": "/links" },
+        { "slug": "single-sign-on", "title": "Single sign-on (Microsoft Entra ID)", "app": "/settings" }
+      ]
+    },
+    {
+      "title": "Operations",
+      "pages": [
+        { "slug": "command-centre", "title": "Command centre", "app": "/operations" },
+        { "slug": "monitoring", "title": "Monitors and heartbeats", "app": "/monitors" },
+        { "slug": "alert-sources", "title": "Alert sources (webhooks)", "app": "/monitors" },
+        { "slug": "alert-pipeline", "title": "The alert pipeline and routing rules", "app": "/monitors" },
+        { "slug": "maintenance", "title": "Maintenance windows", "app": "/maintenance" },
+        { "slug": "on-call", "title": "On-call schedules and escalation", "app": "/oncall" },
+        { "slug": "paging-channels", "title": "Paging channels and acknowledging", "app": "/profile" },
+        { "slug": "status-pages", "title": "Status pages", "app": "/status-pages" },
+        { "slug": "databases-and-backups", "title": "Databases and backups", "app": "/databases" }
+      ]
+    },
+    {
+      "title": "Integrations",
+      "pages": [
+        { "slug": "integrations", "title": "The integrations catalogue", "app": "/integrations" },
+        { "slug": "slack", "title": "Slack", "app": "/integrations" },
+        { "slug": "microsoft-teams", "title": "Microsoft Teams", "app": "/integrations" },
+        { "slug": "linear", "title": "Linear", "app": "/integrations" },
+        { "slug": "discord", "title": "Discord", "app": "/integrations" },
+        { "slug": "email", "title": "Email (SMTP)", "app": "/integrations" },
+        { "slug": "custom-http", "title": "Custom HTTP", "app": "/integrations" },
+        { "slug": "database-lookups", "title": "Database lookups on forms", "app": "/integrations" },
+        { "slug": "ai-connector", "title": "AI assistants (MCP connector)", "app": "/profile" }
+      ]
+    },
+    {
+      "title": "Administration",
+      "pages": [
+        { "slug": "settings", "title": "Settings and branding", "app": "/settings" },
+        { "slug": "security", "title": "Security model", "app": "/audit" },
+        { "slug": "environment-variables", "title": "Environment variables" },
+        { "slug": "backing-up-infraticket", "title": "Backing up InfraTicket itself" }
+      ]
+    },
+    {
+      "title": "Deployment",
+      "pages": [
+        { "slug": "portable", "title": "Portable exe" },
+        { "slug": "lab-server", "title": "Lab server and staging" },
+        { "slug": "servers-and-docker", "title": "Servers, Docker and databases" },
+        { "slug": "production", "title": "Moving to production and upgrading" }
+      ]
+    },
+    {
+      "title": "Reference",
+      "pages": [
+        { "slug": "api-reference", "title": "API and webhooks" },
+        { "slug": "troubleshooting", "title": "Troubleshooting and FAQ" }
+      ]
+    }
+  ]
+}

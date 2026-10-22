@@ -182,6 +182,42 @@ compares it in constant time, records rejected attempts in the audit log, and
 creates nothing without it. Setup closes permanently once any user exists and
 cannot be replayed, with or without a valid token.
 
+## AI connectors (MCP)
+
+`/mcp` lets Claude and other MCP clients act as a signed-in person. The full
+design is in [CLAUDE_CONNECTOR.md](CLAUDE_CONNECTOR.md#security-notes); the
+points that matter for review:
+
+- **Same authority as the person, never more.** Each request reloads the user
+  (suspended users are refused at once) and every tool checks the same
+  permissions and ticket visibility as the web routes. Writes additionally need
+  a read-and-write token or grant *and* the organisation not set to read-only.
+  Writes go through the same services as the web app and are audited as
+  "*name* via Claude" with `meta.via = "mcp"` and the client's name.
+- **Credentials are hashed.** Personal access tokens (`itk_`), OAuth access
+  (`ita_`) and refresh (`itr_`) tokens, authorization codes and confidential
+  client secrets (`its_`) are stored as SHA-256 hashes of 32 random bytes.
+  Tokens are accepted only in the `Authorization: Bearer` header or (personal
+  tokens only) `X-InfraTicket-Token`, never in a query string.
+- **OAuth 2.1.** Authorization code with PKCE S256 (required for public
+  clients), 60-second single-use codes (replay revokes the grant), one-hour
+  access tokens, rotating refresh tokens with reuse detection, and RFC 8707
+  audience binding to this server's `/mcp` URL. Unknown clients and
+  unregistered redirect URIs get an error page, never a redirect. Dynamic
+  registration is public-clients-only and rate-limited; metadata-document
+  client IDs are fetched through the SSRF guard. Confidential clients are
+  created only by administrators.
+- **Browser isolation.** `/mcp` sends no CORS headers and rejects foreign
+  `Origin`s (DNS rebinding). The OAuth and discovery endpoints allow any origin
+  but never with credentials, since none of them read cookies. The consent
+  screen is a same-origin page behind the normal session.
+- **Rate limit.** 120 MCP requests a minute per credential, in memory per
+  instance (`MCP_RATE_LIMIT_PER_MIN`).
+- **Prompt injection** is the residual risk: ticket text is attacker-writable
+  and an assistant reads it. Write tools are annotated so clients confirm
+  them, nothing deletes, and administrators can make every connection
+  read-only.
+
 ## Known limitations
 
 These are deliberate scope decisions, not oversights.
@@ -194,8 +230,8 @@ These are deliberate scope decisions, not oversights.
   provider (Cloudflare Access, Entra ID, Okta) if you need it.
 - **No Content-Security-Policy header.** Worth adding behind a reverse proxy.
 - **Audit log is append-only by convention**, not enforced at the database level.
-- **Rate limiting covers login only.** Other endpoints are unthrottled and
-  assume authenticated, semi-trusted users.
+- **Rate limiting covers login, OAuth client registration and `/mcp` only.**
+  Other endpoints are unthrottled and assume authenticated, semi-trusted users.
 - **Administrators are trusted.** An administrator can configure outbound
   webhooks and read all data by design; the SSRF guard limits the blast radius
   of a mistake or a stolen session, but does not make the role safe to hand out.

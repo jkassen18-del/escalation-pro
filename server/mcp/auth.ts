@@ -5,7 +5,7 @@ import { badRequest } from '../lib/http.ts';
 import { assertOutboundUrl } from '../integrations/url-guard.ts';
 import { findUserById } from '../repositories/users.ts';
 import type { PublicUser } from '../../shared/types.ts';
-import type { ApiToken, ConnectedApp, ConnectorScope, OAuthConsentRequest } from '../../shared/connector.ts';
+import type { ApiToken, ConfidentialClient, ConnectedApp, ConnectorScope, OAuthConsentRequest } from '../../shared/connector.ts';
 
 /**
  * Credentials for the Claude connector.
@@ -37,11 +37,23 @@ function iso(offsetSecs = 0): string {
   return new Date(Date.now() + offsetSecs * 1000).toISOString();
 }
 
+/**
+ * Scope names a client may ask for. The short `read` / `read_write` forms are
+ * for clients configured by hand (Copilot Studio's "Manual" OAuth), and
+ * `offline_access` is accepted and ignored: refresh tokens are always issued.
+ */
+const WRITE_SCOPES = new Set<string>([OAUTH_SCOPES.write, 'read_write']);
+const KNOWN_SCOPES = new Set<string>([OAUTH_SCOPES.read, OAUTH_SCOPES.write, 'read', 'read_write', 'offline_access']);
+
+function scopeParts(scope: string | null | undefined): string[] {
+  return String(scope ?? '').split(/\s+/).filter((part) => part && part !== 'offline_access');
+}
+
 /** OAuth scope strings to the connector's two levels. Write includes read. */
 export function scopeFromOAuth(scope: string | null | undefined): ConnectorScope {
-  const parts = String(scope ?? '').split(/\s+/).filter(Boolean);
+  const parts = scopeParts(scope);
   if (!parts.length) return 'read_write';
-  return parts.includes(OAUTH_SCOPES.write) ? 'read_write' : 'read';
+  return parts.some((part) => WRITE_SCOPES.has(part)) ? 'read_write' : 'read';
 }
 
 export function oauthScopeString(scope: ConnectorScope): string {
@@ -125,7 +137,28 @@ export interface OAuthClient {
   id: string;
   name: string;
   redirectUris: string[];
-  kind: 'dcr' | 'cimd';
+  /** dcr/cimd are public (PKCE, no secret); confidential ones an admin created, with a secret. */
+  kind: 'dcr' | 'cimd' | 'confidential';
+}
+
+interface ClientRow {
+  id: string;
+  client_name: string;
+  redirect_uris: string;
+  kind: string;
+  secret_hash: string | null;
+  created_by: string | null;
+  fetched_at: string | null;
+  created_at: string;
+}
+
+function mapClient(row: ClientRow): OAuthClient {
+  return {
+    id: row.id,
+    name: row.client_name,
+    redirectUris: parseJson<string[]>(row.redirect_uris, []),
+    kind: row.kind === 'cimd' ? 'cimd' : row.kind === 'confidential' ? 'confidential' : 'dcr',
+  };
 }
 
 /** https anywhere, or http only back to this machine - the rule OAuth 2.1 and MCP set. */
@@ -191,14 +224,9 @@ const CIMD_TTL_MS = 60 * 60 * 1000;
  */
 export async function getClient(clientId: string): Promise<OAuthClient | null> {
   if (!clientId || clientId.length > 2000) return null;
-  const row = await db.get<{ id: string; client_name: string; redirect_uris: string; kind: string; fetched_at: string | null }>(
-    `SELECT * FROM oauth_clients WHERE id = ?`,
-    [clientId],
-  );
+  const row = await db.get<ClientRow>(`SELECT * FROM oauth_clients WHERE id = ?`, [clientId]);
   const fresh = row && (row.kind !== 'cimd' || (row.fetched_at && Date.now() - new Date(row.fetched_at).getTime() < CIMD_TTL_MS));
-  if (row && fresh) {
-    return { id: row.id, name: row.client_name, redirectUris: parseJson<string[]>(row.redirect_uris, []), kind: row.kind === 'cimd' ? 'cimd' : 'dcr' };
-  }
+  if (row && fresh) return mapClient(row);
   if (!/^https:\/\//i.test(clientId)) return null;
   return fetchClientMetadata(clientId);
 }
@@ -230,6 +258,110 @@ async function fetchClientMetadata(clientId: string): Promise<OAuthClient | null
   }
 }
 
+/* -------------------------- Confidential clients -------------------------- */
+
+/**
+ * Clients an administrator registers by hand, for tools that cannot register
+ * themselves and expect a client id and secret - Microsoft Copilot Studio's
+ * "Manual" OAuth, for one. The secret is shown once and stored hashed.
+ */
+function toConfidential(row: ClientRow): ConfidentialClient {
+  return { clientId: row.id, name: row.client_name, redirectUris: parseJson<string[]>(row.redirect_uris, []), createdAt: row.created_at };
+}
+
+function checkRedirects(uris: unknown): string[] {
+  const list = (Array.isArray(uris) ? uris : String(uris ?? '').split(/[\s,]+/))
+    .map((uri) => String(uri).trim())
+    .filter(Boolean)
+    .slice(0, 10);
+  for (const uri of list) {
+    if (!validRedirectUri(uri)) throw badRequest(`Redirect URLs must be https (or http to localhost): ${uri}`, { redirectUris: 'Invalid URL' });
+  }
+  return list;
+}
+
+export async function listConfidentialClients(): Promise<ConfidentialClient[]> {
+  const rows = await db.all<ClientRow>(`SELECT * FROM oauth_clients WHERE kind = 'confidential' ORDER BY created_at DESC`);
+  return rows.map(toConfidential);
+}
+
+export async function createConfidentialClient(
+  input: { name: string; redirectUris: unknown },
+  createdBy: string,
+): Promise<{ client: ConfidentialClient; clientSecret: string }> {
+  const name = input.name.trim().slice(0, 120);
+  if (!name) throw badRequest('Give the client a name, such as "Copilot Studio - IT helpdesk agent"', { name: 'Required' });
+  // Copilot Studio shows its callback URL only after the client exists, so an
+  // empty list is allowed now and filled in afterwards.
+  const redirectUris = checkRedirects(input.redirectUris);
+  const id = `itc_${crypto.randomBytes(16).toString('base64url')}`;
+  const secret = newSecret('its');
+  await db.run(
+    `INSERT INTO oauth_clients (id, client_name, redirect_uris, kind, secret_hash, created_by, created_at) VALUES (?, ?, ?, 'confidential', ?, ?, ?)`,
+    [id, name, JSON.stringify(redirectUris), hashSecret(secret), createdBy, iso()],
+  );
+  const row = await db.get<ClientRow>(`SELECT * FROM oauth_clients WHERE id = ?`, [id]);
+  return { client: toConfidential(row!), clientSecret: secret };
+}
+
+export async function updateConfidentialClient(id: string, input: { name?: string; redirectUris?: unknown }): Promise<ConfidentialClient | null> {
+  const row = await db.get<ClientRow>(`SELECT * FROM oauth_clients WHERE id = ? AND kind = 'confidential'`, [id]);
+  if (!row) return null;
+  const name = input.name !== undefined ? input.name.trim().slice(0, 120) || row.client_name : row.client_name;
+  const redirectUris = input.redirectUris !== undefined ? checkRedirects(input.redirectUris) : parseJson<string[]>(row.redirect_uris, []);
+  await db.run(`UPDATE oauth_clients SET client_name = ?, redirect_uris = ? WHERE id = ?`, [name, JSON.stringify(redirectUris), id]);
+  return toConfidential({ ...row, client_name: name, redirect_uris: JSON.stringify(redirectUris) });
+}
+
+/** Deleting a client disconnects everyone who used it. */
+export async function deleteConfidentialClient(id: string): Promise<boolean> {
+  const row = await db.get<ClientRow>(`SELECT * FROM oauth_clients WHERE id = ? AND kind = 'confidential'`, [id]);
+  if (!row) return false;
+  const grants = await db.all<{ id: string }>(`SELECT id FROM oauth_grants WHERE client_id = ?`, [id]);
+  for (const grant of grants) await revokeGrant(grant.id);
+  await db.run(`DELETE FROM oauth_clients WHERE id = ?`, [id]);
+  return true;
+}
+
+/** client_secret_basic (RFC 6749 2.3.1: both parts form-encoded) or client_secret_post. */
+function clientCredentials(body: Record<string, unknown>, authorization: string | undefined): { id: string; secret: string | null } {
+  const basic = /^Basic\s+(.+)$/i.exec(authorization ?? '')?.[1];
+  if (basic) {
+    const decoded = Buffer.from(basic, 'base64').toString('utf8');
+    const colon = decoded.indexOf(':');
+    if (colon < 0) throw new OAuthError('invalid_client', 'Malformed Basic credentials.', 401);
+    const decode = (value: string) => {
+      try {
+        return decodeURIComponent(value.replace(/\+/g, ' '));
+      } catch {
+        return value;
+      }
+    };
+    const id = decode(decoded.slice(0, colon));
+    if (body.client_id && String(body.client_id) !== id) throw new OAuthError('invalid_request', 'client_id does not match the Basic credentials.');
+    return { id, secret: decode(decoded.slice(colon + 1)) };
+  }
+  return { id: String(body.client_id ?? ''), secret: body.client_secret ? String(body.client_secret) : null };
+}
+
+async function authenticateClient(body: Record<string, unknown>, authorization: string | undefined): Promise<OAuthClient> {
+  const { id, secret } = clientCredentials(body, authorization);
+  if (!id) throw new OAuthError('invalid_client', 'client_id is required.', 401);
+  const client = await getClient(id);
+  if (!client) throw new OAuthError('invalid_client', 'Unknown client.', 401);
+  if (client.kind === 'confidential') {
+    const row = await db.get<ClientRow>(`SELECT * FROM oauth_clients WHERE id = ?`, [id]);
+    const expected = Buffer.from(row?.secret_hash ?? '', 'hex');
+    const given = Buffer.from(hashSecret(secret ?? ''), 'hex');
+    if (!secret || expected.length !== given.length || !crypto.timingSafeEqual(expected, given)) {
+      throw new OAuthError('invalid_client', 'Client authentication failed.', 401);
+    }
+  } else if (secret) {
+    throw new OAuthError('invalid_client', 'This client is public and has no secret.', 401);
+  }
+  return client;
+}
+
 /* --------------------------- Authorization flow --------------------------- */
 
 export class OAuthError extends Error {
@@ -246,8 +378,8 @@ export interface AuthorizeParams {
   responseType: string;
   clientId: string;
   redirectUri: string;
-  codeChallenge: string;
-  codeChallengeMethod: string;
+  codeChallenge: string | null;
+  codeChallengeMethod: string | null;
   state: string | null;
   scope: string | null;
   resource: string | null;
@@ -277,21 +409,26 @@ export async function startAuthorization(
     return { redirect: url.toString() };
   };
   if (params.responseType !== 'code') return back('unsupported_response_type', 'Only the authorization code flow is supported.');
-  if (params.codeChallengeMethod !== 'S256' || !/^[A-Za-z0-9_-]{43}$/.test(params.codeChallenge)) {
-    return back('invalid_request', 'PKCE with S256 is required.');
+  // PKCE is required of every public client. A confidential client proves
+  // itself with its secret at the token endpoint, so PKCE is optional for it -
+  // but if it sends a challenge, the challenge is checked like anyone's.
+  if (params.codeChallenge || client.kind !== 'confidential') {
+    if (params.codeChallengeMethod !== 'S256' || !/^[A-Za-z0-9_-]{43}$/.test(params.codeChallenge ?? '')) {
+      return back('invalid_request', 'PKCE with S256 is required.');
+    }
   }
   const resource = params.resource ?? expectedResource;
   if (normaliseResource(resource) !== normaliseResource(expectedResource)) {
     return back('invalid_target', `This server only issues tokens for ${expectedResource}.`);
   }
   const requested = String(params.scope ?? '').split(/\s+/).filter(Boolean);
-  if (requested.some((scope) => scope !== OAUTH_SCOPES.read && scope !== OAUTH_SCOPES.write)) {
-    return back('invalid_scope', `Supported scopes: ${OAUTH_SCOPES.read} ${OAUTH_SCOPES.write}.`);
+  if (requested.some((scope) => !KNOWN_SCOPES.has(scope))) {
+    return back('invalid_scope', `Supported scopes: ${OAUTH_SCOPES.read} ${OAUTH_SCOPES.write} (or read / read_write).`);
   }
   const id = crypto.randomBytes(18).toString('base64url');
   await db.run(
     `INSERT INTO oauth_requests (id, client_id, redirect_uri, scope, state, code_challenge, resource, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, client.id, params.redirectUri, scopeFromOAuth(params.scope), params.state, params.codeChallenge, normaliseResource(resource), iso(REQUEST_TTL_SECS), iso()],
+    [id, client.id, params.redirectUri, scopeFromOAuth(params.scope), params.state, params.codeChallenge || null, normaliseResource(resource), iso(REQUEST_TTL_SECS), iso()],
   );
   return { requestId: id };
 }
@@ -312,7 +449,7 @@ interface RequestRow {
   redirect_uri: string;
   scope: ConnectorScope;
   state: string | null;
-  code_challenge: string;
+  code_challenge: string | null;
   resource: string;
   expires_at: string;
 }
@@ -439,12 +576,13 @@ async function revokeGrant(grantId: string): Promise<void> {
 }
 
 /** The token endpoint: authorization_code and refresh_token grants. */
-export async function exchangeToken(body: Record<string, unknown>, expectedResource: string): Promise<Record<string, unknown>> {
+export async function exchangeToken(
+  body: Record<string, unknown>,
+  expectedResource: string,
+  authorization?: string,
+): Promise<Record<string, unknown>> {
   const grantType = String(body.grant_type ?? '');
-  const clientId = String(body.client_id ?? '');
-  if (!clientId) throw new OAuthError('invalid_client', 'client_id is required.', 401);
-  const client = await getClient(clientId);
-  if (!client) throw new OAuthError('invalid_client', 'Unknown client.', 401);
+  const client = await authenticateClient(body, authorization);
 
   const checkResource = (grant: GrantRow) => {
     const asked = body.resource ? normaliseResource(String(body.resource)) : grant.resource;
@@ -467,7 +605,8 @@ export async function exchangeToken(body: Record<string, unknown>, expectedResou
     await db.run(`UPDATE oauth_tokens SET used_at = ? WHERE id = ?`, [iso(), row.id]);
     if (row.revoked_at || row.expires_at < iso() || grant.revoked_at) throw new OAuthError('invalid_grant', 'The authorization code has expired.');
     if (String(body.redirect_uri ?? '') !== row.redirect_uri) throw new OAuthError('invalid_grant', 'redirect_uri does not match the authorization request.');
-    if (!row.code_challenge || !pkceMatches(String(body.code_verifier ?? ''), row.code_challenge)) {
+    // No challenge is only possible for a confidential client, authenticated above.
+    if (row.code_challenge ? !pkceMatches(String(body.code_verifier ?? ''), row.code_challenge) : client.kind !== 'confidential') {
       throw new OAuthError('invalid_grant', 'The PKCE code_verifier does not match.');
     }
     checkResource(grant);

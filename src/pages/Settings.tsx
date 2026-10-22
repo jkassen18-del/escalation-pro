@@ -9,6 +9,7 @@ import { Field, Input, Select } from '@/components/ui/Field';
 import { LoadingPane } from '@/components/ui/Feedback';
 import { LogoUploader } from '@/components/LogoUploader';
 import { SsoSettings } from '@/components/SsoSettings';
+import { ConnectorSettingsPanel } from '@/components/connector/ConnectorSettingsPanel';
 import { useBranding, useDocumentTitle } from '@/state/branding';
 import { TICKET_PRIORITIES, type AppSettings, type Team } from '@shared/types';
 
@@ -171,6 +172,8 @@ export function SettingsPage() {
         </Section>
 
         <SsoSettings teams={teams} />
+
+        <ConnectorSettingsPanel />
       </div>
     </div>
   );

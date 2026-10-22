@@ -295,7 +295,10 @@ export async function listTickets(
 }
 
 export async function findTicket(idOrNumber: string, prefix: string): Promise<Ticket | null> {
-  const numeric = Number.parseInt(idOrNumber.replace(/^\D+-?/, ''), 10);
+  // Only a reference ("ESC-1042", "1042") is a number. A UUID that happens to
+  // start with digits ("1042ab3c-...") must not match ticket #1042.
+  const reference = /^(?:[A-Za-z#]+[-\s]?)?(\d+)$/.exec(idOrNumber.trim());
+  const numeric = reference ? Number.parseInt(reference[1], 10) : Number.NaN;
   const row = await db.get<TicketRow>(
     `${SELECT_TICKET} WHERE t.id = ? ${Number.isNaN(numeric) ? '' : 'OR t.number = ?'} LIMIT 1`,
     Number.isNaN(numeric) ? [idOrNumber] : [idOrNumber, numeric],

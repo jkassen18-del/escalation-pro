@@ -275,6 +275,16 @@ convenience, not the security boundary.
 
 ---
 
+## Connecting Claude and other AI assistants
+
+InfraTicket is an MCP server at `<App URL>/mcp`: Claude Code, Claude Desktop,
+claude.ai, Microsoft Copilot Studio (Teams / Microsoft 365 Copilot) and GitHub
+Copilot in VS Code can search tickets, check on-call, summarise incidents and,
+if allowed, comment, update and raise tickets, always as the person who
+connected them. Each person sets it up under **Profile → Connect Claude**;
+administrators control it under **Settings → AI connectors (MCP)**. See
+[CLAUDE_CONNECTOR.md](CLAUDE_CONNECTOR.md).
+
 ## Integrations
 
 **Integrations** is a catalogue: every tool is a tile showing whether it is
@@ -601,6 +611,9 @@ known limitations. In short:
   actor, a summary, and the source IP.
 - Login is rate limited (5 failures per account, 30 per IP, per 15 minutes) and
   does not leak which accounts exist through response timing.
+- AI assistants connect through MCP with hashed personal tokens or OAuth 2.1
+  (PKCE, rotating refresh tokens, audience-bound), and act only with the
+  connecting person's permissions; see [CLAUDE_CONNECTOR.md](CLAUDE_CONNECTOR.md).
 - All SQL is parameterised; admin-configurable webhook URLs are checked against
   private and link-local address ranges before they are saved.
 

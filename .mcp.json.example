@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "infraticket": {
+      "type": "http",
+      "url": "${INFRATICKET_URL:-http://localhost:3000}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${INFRATICKET_TOKEN}"
+      }
+    }
+  }
+}

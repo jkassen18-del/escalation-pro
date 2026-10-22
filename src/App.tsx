@@ -23,6 +23,7 @@ import { MaintenancePage } from '@/pages/Maintenance';
 import { OnCallPage } from '@/pages/OnCall';
 import { StatusPagesPage } from '@/pages/StatusPages';
 import { DatabasesPage } from '@/pages/Databases';
+import { ConnectAuthorizePage } from '@/pages/ConnectAuthorize';
 import type { Permission } from '@shared/types';
 
 export function App() {
@@ -38,6 +39,8 @@ export function App() {
 
   if (setupRequired) return <SetupPage />;
   if (!user) return <LoginPage />;
+  // The OAuth consent screen stands alone, outside the app shell.
+  if (window.location.pathname === '/connect/authorize') return <ConnectAuthorizePage />;
 
   return (
     <AppShell>
