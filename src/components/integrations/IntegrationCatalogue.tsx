@@ -1,23 +1,8 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import {
-  Cloud,
-  CloudCog,
-  Code2,
-  Database,
-  Droplet,
-  Hammer,
-  HeartPulse,
-  KeyRound,
-  ChartLine,
-  MessagesSquare,
-  Search,
-  Server,
-  Shield,
-  TextSearch,
-  Webhook,
-} from 'lucide-react';
-import { EmailIcon, LinearIcon, MicrosoftIcon, SlackIcon, TeamsIcon } from '@/components/BrandIcons';
+import { Code2, Database, HeartPulse, Search, Server, TextSearch, Webhook } from 'lucide-react';
+import { DiscordIcon, EmailIcon, LinearIcon, MicrosoftIcon, SlackIcon, TeamsIcon } from '@/components/BrandIcons';
+import { hasSourceLogo, LogoTile, SourceKindLogo } from '@/components/BrandLogo';
 import { DiscordIntegrationPanel } from '@/components/DiscordIntegrationPanel';
 import { Input } from '@/components/ui/Field';
 import { cn } from '@/lib/utils';
@@ -26,11 +11,14 @@ import { GROUPS, TILES, type CatalogueTile } from './catalogue';
 import { SetupDrawer, StatusLine } from './SetupDrawer';
 import { DeveloperSetup, SlackSetup, SourceSetup, TeamsSetup } from './Setups';
 
-const neutral = 'size-4 text-[var(--fg-subtle)]';
+const neutral = 'size-full text-slate-500';
 
-/** Simple marks: brand icons where the app already has them, neutral symbols otherwise. */
+/** Each tile's mark: the service's own logo, or a neutral symbol for our built-in features. */
 function TileIcon({ tile, className }: { tile: CatalogueTile; className?: string }): ReactNode {
   const cls = cn(neutral, className);
+  if (tile.kind === 'source' && tile.sourceKind && hasSourceLogo(tile.sourceKind)) {
+    return <SourceKindLogo kind={tile.sourceKind} className={cn('size-full', className)} />;
+  }
   switch (tile.id) {
     case 'slack':
       return <SlackIcon className={cls} />;
@@ -41,21 +29,7 @@ function TileIcon({ tile, className }: { tile: CatalogueTile; className?: string
     case 'email':
       return <EmailIcon className={cls} />;
     case 'discord':
-      return <MessagesSquare className={cls} />;
-    case 'source:aws_sns':
-      return <Cloud className={cls} />;
-    case 'source:azure_monitor':
-      return <CloudCog className={cls} />;
-    case 'source:grafana':
-      return <ChartLine className={cls} />;
-    case 'source:jenkins':
-      return <Hammer className={cls} />;
-    case 'source:cloudflare':
-      return <Shield className={cls} />;
-    case 'source:digitalocean':
-      return <Droplet className={cls} />;
-    case 'source:entra_id':
-      return <KeyRound className={cls} />;
+      return <DiscordIcon className={cls} />;
     case 'source:stratigix':
       return <Server className={cls} />;
     case 'source:generic':
@@ -141,9 +115,9 @@ export function IntegrationCatalogue({
                     status[tile.id]?.state === 'attention' && 'border-[var(--priority-high)]/40',
                   )}
                 >
-                  <span className="flex size-9 shrink-0 items-center justify-center rounded-md border surface-2">
+                  <LogoTile>
                     <TileIcon tile={tile} />
-                  </span>
+                  </LogoTile>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{tile.name}</span>
                     <span className="mt-0.5 line-clamp-2 block text-xs leading-relaxed text-muted">{tile.blurb}</span>
@@ -158,7 +132,7 @@ export function IntegrationCatalogue({
       {!filtered.length && <p className="py-10 text-center text-xs text-subtle">Nothing matches “{query}”.</p>}
 
       {open && (
-        <SetupDrawer title={open.name} icon={<TileIcon tile={open} className="size-4" />} status={status[open.id]} onClose={close}>
+        <SetupDrawer title={open.name} icon={<TileIcon tile={open} />} status={status[open.id]} onClose={close}>
           {open.id === 'slack' ? (
             <SlackSetup result={params} card={renderCard('slack')} onChanged={onChanged} />
           ) : open.id === 'msteams' ? (

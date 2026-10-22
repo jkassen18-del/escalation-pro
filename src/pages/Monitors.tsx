@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Activity, BellRing, MoreHorizontal, Pause, Play, Plus, RefreshCw, Send, Trash2, Webhook } from 'lucide-react';
+import { hasSourceLogo, LogoTile, SourceKindLogo } from '@/components/BrandLogo';
 import { api, ApiError } from '@/lib/api';
 import { opsApi, type AlertSourceInput, type MonitorInput } from '@/lib/ops-api';
 import { fullDateTime, relativeTime, shortDateTime } from '@/lib/format';
@@ -810,12 +811,17 @@ function SourcesTab({ canManage, teams, policies }: { canManage: boolean; teams:
           {sources.map((source) => (
             <article key={source.id} className="min-w-0 rounded-md border p-4 surface">
               <header className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <h2 className="flex items-center gap-2 truncate text-sm font-semibold">
-                    {source.name}
-                    {!source.enabled && <Badge dot={false}>Disabled</Badge>}
-                  </h2>
-                  <p className="text-2xs text-subtle">{ALERT_SOURCE_LABELS[source.kind]}</p>
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <LogoTile size="sm">
+                    {hasSourceLogo(source.kind) ? <SourceKindLogo kind={source.kind} className="size-full" /> : <Webhook className="size-full" />}
+                  </LogoTile>
+                  <div className="min-w-0">
+                    <h2 className="flex items-center gap-2 truncate text-sm font-semibold">
+                      {source.name}
+                      {!source.enabled && <Badge dot={false}>Disabled</Badge>}
+                    </h2>
+                    <p className="text-2xs text-subtle">{ALERT_SOURCE_LABELS[source.kind]}</p>
+                  </div>
                 </div>
                 {canManage && (
                   <Menu

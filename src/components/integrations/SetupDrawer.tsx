@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckCircle2, CircleAlert, CircleDashed, X } from 'lucide-react';
+import { LogoTile } from '@/components/BrandLogo';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/utils';
 import type { CatalogueStatus } from '@shared/types';
@@ -35,7 +36,7 @@ export function SetupDrawer({
       <div className="absolute inset-0 bg-[var(--color-ink-950)]/35 backdrop-blur-[1px]" onClick={onClose} />
       <aside className="animate-in relative flex h-full w-full max-w-2xl flex-col border-l surface overlay-shadow">
         <header className="flex items-center gap-3 border-b px-5 py-3.5">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-md border surface-2">{icon}</div>
+          <LogoTile>{icon}</LogoTile>
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-sm font-semibold">{title}</h2>
             <StatusLine status={status} />
