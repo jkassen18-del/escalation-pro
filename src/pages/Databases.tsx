@@ -71,7 +71,7 @@ export function DatabasesPage() {
 
   return (
     <div>
-      <PageHeader
+      <PageHeader docs="databases-and-backups"
         title="Databases"
         description="Connect the databases you run to check their health and back them up on a schedule: compressed, encrypted with a key per backup, and verified."
         actions={

@@ -72,7 +72,7 @@ export async function saveSubscription(userId: string, input: PushSubscriptionIn
   const hash = hashOf(input.endpoint);
   const existing = await db.get<{ id: string }>(`SELECT id FROM push_subscriptions WHERE endpoint_hash = ?`, [hash]);
   if (existing) {
-    await db.run(`UPDATE push_subscriptions SET user_id = ?, keys = ?, user_agent = ?, last_used_at = ? WHERE id = ?`, [
+    await db.run(`UPDATE push_subscriptions SET user_id = ?, key_material = ?, user_agent = ?, last_used_at = ? WHERE id = ?`, [
       userId,
       JSON.stringify(input.keys),
       userAgent?.slice(0, 300) ?? null,
@@ -82,7 +82,7 @@ export async function saveSubscription(userId: string, input: PushSubscriptionIn
     return;
   }
   await db.run(
-    `INSERT INTO push_subscriptions (id, user_id, endpoint_hash, endpoint, keys, user_agent, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO push_subscriptions (id, user_id, endpoint_hash, endpoint, key_material, user_agent, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [randomId(), userId, hash, input.endpoint, JSON.stringify(input.keys), userAgent?.slice(0, 300) ?? null, now],
   );
 }
@@ -121,7 +121,7 @@ export interface PushResult {
  * devices the push service reports as gone (404/410) are forgotten.
  */
 export async function sendPush(userId: string, payload: PushPayload): Promise<PushResult> {
-  const rows = await db.all<{ id: string; endpoint: string; keys: string }>(`SELECT id, endpoint, keys FROM push_subscriptions WHERE user_id = ?`, [userId]);
+  const rows = await db.all<{ id: string; endpoint: string; key_material: string }>(`SELECT id, endpoint, key_material FROM push_subscriptions WHERE user_id = ?`, [userId]);
   if (!rows.length) return { status: 'skipped', provider: 'web-push', detail: 'No phone or browser has push turned on (Profile → Phone notifications)' };
 
   const { publicKey, privateKey } = await vapidKeys();
@@ -134,7 +134,7 @@ export async function sendPush(userId: string, payload: PushPayload): Promise<Pu
 
   for (const row of rows) {
     try {
-      await webpush.sendNotification({ endpoint: row.endpoint, keys: parseJson<{ p256dh: string; auth: string }>(row.keys, { p256dh: '', auth: '' }) }, body, {
+      await webpush.sendNotification({ endpoint: row.endpoint, keys: parseJson<{ p256dh: string; auth: string }>(row.key_material, { p256dh: '', auth: '' }) }, body, {
         vapidDetails: { subject, publicKey, privateKey },
         // A page that is minutes old is still worth delivering; an hour, not.
         TTL: 3600,

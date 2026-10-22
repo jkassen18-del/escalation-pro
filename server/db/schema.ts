@@ -707,7 +707,8 @@ const TABLES: string[] = [
        than MySQL will index. */
     endpoint_hash TEXT NOT NULL UNIQUE,
     endpoint TEXT NOT NULL,
-    keys TEXT NOT NULL,
+    /* \"keys\" is reserved in MySQL. */
+    key_material TEXT NOT NULL,
     user_agent TEXT,
     created_at TEXT NOT NULL,
     last_used_at TEXT

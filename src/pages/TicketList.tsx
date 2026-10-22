@@ -119,7 +119,7 @@ export function TicketListPage() {
 
   return (
     <div>
-      <PageHeader
+      <PageHeader docs="tickets"
         title={title}
         description={loading ? 'Loading…' : `${total} ticket${total === 1 ? '' : 's'}`}
         actions={

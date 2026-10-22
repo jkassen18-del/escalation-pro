@@ -38,7 +38,7 @@ export function OnCallPage() {
 
   return (
     <div>
-      <PageHeader title="On-call" description="Who is on call, what is paging them, and how alerts escalate until someone acknowledges.">
+      <PageHeader docs="on-call" title="On-call" description="Who is on call, what is paging them, and how alerts escalate until someone acknowledges.">
         <OnCallTabs value={tab} onChange={setTab} tabs={tabs} />
       </PageHeader>
       {tab === 'now' && <OnCallNow people={people} />}

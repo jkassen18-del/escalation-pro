@@ -56,7 +56,7 @@ export function SettingsPage() {
 
   return (
     <div>
-      <PageHeader
+      <PageHeader docs="settings"
         title="Settings"
         description="Organisation profile and the defaults applied to new tickets."
         actions={

@@ -123,7 +123,7 @@ export function MaintenancePage() {
 
   return (
     <div>
-      <PageHeader
+      <PageHeader docs="maintenance"
         title="Maintenance"
         description="Planned work pauses paging or alerting for what it touches, so expected disruption does not wake anyone. Published windows appear on status pages."
         actions={

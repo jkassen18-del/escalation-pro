@@ -23,6 +23,7 @@ import { MaintenancePage } from '@/pages/Maintenance';
 import { OnCallPage } from '@/pages/OnCall';
 import { StatusPagesPage } from '@/pages/StatusPages';
 import { DatabasesPage } from '@/pages/Databases';
+import { DocsPage } from '@/pages/Docs';
 import { ConnectAuthorizePage } from '@/pages/ConnectAuthorize';
 import type { Permission } from '@shared/types';
 
@@ -68,6 +69,8 @@ export function App() {
         <Route path="/oncall" element={<OnCallPage />} />
         <Route path="/status-pages" element={<StatusPagesPage />} />
         <Route path="/databases" element={<Guard permission="backups.manage"><DatabasesPage /></Guard>} />
+        <Route path="/docs" element={<DocsPage />} />
+        <Route path="/docs/:slug" element={<DocsPage />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </AppShell>

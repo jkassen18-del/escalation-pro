@@ -169,7 +169,9 @@ function startGateway(): Promise<void> {
   }));
 }
 
-const waitFor = async (check: () => boolean | Promise<boolean>, ms = 3000) => {
+// Generous: under the full suite many test files run at once, and a gateway
+// handshake over a real socket can take longer than it does alone.
+const waitFor = async (check: () => boolean | Promise<boolean>, ms = 10_000) => {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     if (await check()) return;

@@ -74,7 +74,7 @@ export function StatusPagesPage() {
 
   return (
     <div>
-      <PageHeader
+      <PageHeader docs="status-pages"
         title="Status pages"
         description="Public pages for customers and internal pages for staff, fed by your monitors. As many as you need."
         actions={

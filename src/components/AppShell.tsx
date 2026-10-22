@@ -4,6 +4,7 @@ import {
   Activity,
   Link2,
   Bell,
+  BookOpen,
   Database,
   Globe,
   PhoneCall,
@@ -186,6 +187,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </nav>
 
       <div className="border-t p-2">
+        <ul className="mb-1">
+          <NavRow item={{ to: '/docs', label: 'Docs', icon: BookOpen }} />
+        </ul>
         <Menu
           align="start"
           trigger={({ toggle }) => (

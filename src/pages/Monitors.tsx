@@ -65,7 +65,7 @@ export function MonitorsPage() {
 
   return (
     <div>
-      <PageHeader
+      <PageHeader docs="monitoring"
         title="Monitoring"
         description="Built-in checks and alert sources. A failing check or an incoming alert opens an incident and pages whoever is on call."
       >

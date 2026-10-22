@@ -99,7 +99,7 @@ export function IntegrationsPage() {
 
   return (
     <div>
-      <PageHeader
+      <PageHeader docs="integrations"
         className="pb-0"
         title="Integrations"
         description="Pick a tool and follow the steps. Each one is tested against the real service before you rely on it, and none needs a paid plan."
