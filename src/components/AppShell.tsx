@@ -30,6 +30,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { BrandMark } from '@/components/BrandMark';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { QuickTicketMenu } from '@/components/quick/QuickTicketMenu';
 import { MaintenanceBanner } from '@/components/ops/MaintenanceShared';
 import { api } from '@/lib/api';
@@ -327,7 +328,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </header>
         <MaintenanceBanner />
 
-        <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
+        <main className="min-h-0 flex-1 overflow-y-auto">
+          <ErrorBoundary resetKey={location.pathname}>{children}</ErrorBoundary>
+        </main>
       </div>
     </div>
   );

@@ -196,8 +196,15 @@ export async function createApp() {
         `Client bundle not found at ${paths.clientDist}. Run "npm run build" before starting in production.`,
       );
     }
+    // Hashed bundles never change, so they cache for good. index.html names the
+    // current bundles and must be revalidated every load, or a browser that
+    // remembers an older one asks for files an upgrade has removed.
+    app.use('/assets', express.static(path.join(paths.clientDist, 'assets'), { index: false, immutable: true, maxAge: '1y', fallthrough: false }));
     app.use(express.static(paths.clientDist, { index: false, maxAge: '1h' }));
-    app.get('*', (_req, res) => res.sendFile(path.join(paths.clientDist, 'index.html')));
+    app.get('*', (_req, res) => {
+      res.setHeader('Cache-Control', 'no-cache');
+      res.sendFile(path.join(paths.clientDist, 'index.html'));
+    });
   } else {
     // Vite in middleware mode gives HMR without a second port or a proxy.
     const { createServer: createViteServer } = await import('vite');

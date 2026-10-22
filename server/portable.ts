@@ -10,7 +10,7 @@
  *     infraticket.db      the workspace (SQLite)
  *     uploads/            attachments
  *     backups/            database backups taken by the backup jobs
- *     web/<version>/      the web UI, unpacked from the executable on first run
+ *     web/<version>-<build>/  the web UI, unpacked from the executable on first run
  *
  * Commands:
  *   InfraTicket.exe                 start, and open the browser
@@ -48,18 +48,29 @@ function argValue(args: string[], name: string): string | undefined {
 
 /**
  * The web UI travels inside the executable as one asset per file. Express
- * serves from disk, so they are written out once per version and reused.
+ * serves from disk, so they are written out once per build and reused. The
+ * folder name carries a hash of the UI, because rebuilt executables share a
+ * version number and must not pick up an older build's files.
  */
-function unpackWebAssets(sea: SeaModule, target: string): void {
+function unpackWebAssets(sea: SeaModule, root: string): string {
+  const raw = JSON.parse(Buffer.from(sea.getAsset('web-manifest.json')).toString('utf8')) as string[] | { build: string; files: string[] };
+  const { build, files } = Array.isArray(raw) ? { build: 'legacy', files: raw } : raw;
+  const name = `${APP_VERSION}-${build}`;
+  const target = path.join(root, name);
   const marker = path.join(target, '.complete');
-  if (fs.existsSync(marker)) return;
-  const manifest = JSON.parse(Buffer.from(sea.getAsset('web-manifest.json')).toString('utf8')) as string[];
-  for (const file of manifest) {
-    const destination = path.join(target, file);
-    fs.mkdirSync(path.dirname(destination), { recursive: true });
-    fs.writeFileSync(destination, Buffer.from(sea.getAsset(`web/${file}`)));
+  if (!fs.existsSync(marker)) {
+    for (const file of files) {
+      const destination = path.join(target, file);
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.writeFileSync(destination, Buffer.from(sea.getAsset(`web/${file}`)));
+    }
+    fs.writeFileSync(marker, name);
   }
-  fs.writeFileSync(marker, APP_VERSION);
+  // Older builds' copies are dead weight; a failed delete is harmless.
+  for (const entry of fs.readdirSync(root)) {
+    if (entry !== name) fs.rmSync(path.join(root, entry), { recursive: true, force: true });
+  }
+  return target;
 }
 
 function openBrowser(url: string): void {
@@ -125,9 +136,7 @@ async function main() {
   process.env.HOST ||= '127.0.0.1';
   process.env.INFRATICKET_PORTABLE = '1';
   if (sea) {
-    const web = path.join(dataDir, 'web', APP_VERSION);
-    unpackWebAssets(sea, web);
-    process.env.CLIENT_DIST = web;
+    process.env.CLIENT_DIST = unpackWebAssets(sea, path.join(dataDir, 'web'));
   }
   process.chdir(home);
 

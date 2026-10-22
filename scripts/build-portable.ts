@@ -116,8 +116,12 @@ async function main() {
   });
 
   const webFiles = listFiles(clientDir);
+  // Every build of one version shares a version number, so the unpacked UI is
+  // keyed by a hash of its contents: a newer exe never reuses an older UI.
+  const hash = crypto.createHash('sha256');
+  for (const file of webFiles) hash.update(file).update(fs.readFileSync(path.join(clientDir, file)));
   const manifestPath = path.join(OUT, 'web-manifest.json');
-  fs.writeFileSync(manifestPath, JSON.stringify(webFiles));
+  fs.writeFileSync(manifestPath, JSON.stringify({ build: hash.digest('hex').slice(0, 12), files: webFiles }));
   const assets: Record<string, string> = { 'web-manifest.json': manifestPath };
   for (const file of webFiles) assets[`web/${file}`] = path.join(clientDir, file);
 
