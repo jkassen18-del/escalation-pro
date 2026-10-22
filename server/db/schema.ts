@@ -618,6 +618,83 @@ const TABLES: string[] = [
     updated_at TEXT NOT NULL
   )`,
 
+  /*
+   * Alert routing rules, evaluated in `position` order before the default
+   * routing (the source's own policy, then its team's).
+   */
+  `CREATE TABLE IF NOT EXISTS alert_rules (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    match_spec TEXT NOT NULL DEFAULT '{}',
+    actions TEXT NOT NULL DEFAULT '{}',
+    continue_evaluating INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
+  /*
+   * SAML single sign-on. Request ids are kept in the database rather than in
+   * memory, so a login started on one instance can finish on another; and
+   * every assertion id that has been accepted is remembered until it would
+   * have expired anyway, so a captured response cannot be replayed.
+   */
+  `CREATE TABLE IF NOT EXISTS saml_requests (
+    id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS saml_assertions (
+    id TEXT PRIMARY KEY,
+    expires_at TEXT NOT NULL
+  )`,
+
+  /* Links from a team to the other systems it works in: AWS, Azure, Entra ID... */
+  `CREATE TABLE IF NOT EXISTS team_links (
+    id TEXT PRIMARY KEY,
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    icon TEXT NOT NULL DEFAULT 'generic',
+    description TEXT,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
+  /*
+   * Quick tickets: a templated kind of ticket ("Site issue", "New laptop")
+   * that goes straight to one department with the right type, priority and
+   * questions already decided, so the person raising it only adds details.
+   */
+  `CREATE TABLE IF NOT EXISTS ticket_templates (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    icon TEXT NOT NULL DEFAULT 'ticket',
+    color TEXT NOT NULL DEFAULT '#6b7280',
+    team_id TEXT REFERENCES teams(id) ON DELETE SET NULL,
+    ticket_type TEXT NOT NULL DEFAULT 'request',
+    priority TEXT NOT NULL DEFAULT 'normal',
+    severity TEXT,
+    subject_template TEXT NOT NULL DEFAULT '{{name}}: {{summary}}',
+    guidance TEXT,
+    /* The template's own questions, as a JSON list of form fields. */
+    fields TEXT NOT NULL DEFAULT '[]',
+    /* 'off', 'encouraged' or 'required'. */
+    screenshot TEXT NOT NULL DEFAULT 'encouraged',
+    tags TEXT NOT NULL DEFAULT '[]',
+    /* Teams whose members may use it; empty means everyone. */
+    audience_team_ids TEXT NOT NULL DEFAULT '[]',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
   `CREATE TABLE IF NOT EXISTS sessions (
     sid TEXT PRIMARY KEY,
     data TEXT NOT NULL,
@@ -657,6 +734,7 @@ const INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_attempts_page ON notification_attempts(page_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_status_updates_page ON status_updates(status_page_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_backup_runs_job ON backup_runs(job_id, started_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_team_links_team ON team_links(team_id, position)`,
 ];
 
 /**
@@ -679,6 +757,18 @@ interface AdditiveColumn {
  * place without a migration tool.
  */
 const ADDITIVE_COLUMNS: AdditiveColumn[] = [
+  {
+    table: 'oncall_layers',
+    column: 'entries',
+    definition: `TEXT NOT NULL DEFAULT '[]'`,
+    why: 'roster layers list who covers which dates explicitly instead of rotating',
+  },
+  {
+    table: 'alerts',
+    column: 'rule_name',
+    definition: 'TEXT',
+    why: 'which routing rule decided where an alert went',
+  },
   {
     table: 'ticket_attachments',
     column: 'content',
@@ -714,6 +804,12 @@ const ADDITIVE_COLUMNS: AdditiveColumn[] = [
     column: 'appearance',
     definition: `TEXT NOT NULL DEFAULT '{}'`,
     why: 'theme, brand colour, logo and custom CSS for each status page',
+  },
+  {
+    table: 'tickets',
+    column: 'template_id',
+    definition: 'TEXT',
+    why: 'which quick-ticket template a ticket was raised from',
   },
   {
     table: 'ticket_comments',

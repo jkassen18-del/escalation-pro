@@ -132,6 +132,45 @@ own network is the point. Only holders of `monitors.manage` can create them.
 - `SECRET_KEY` (or, without it, `data/.session-secret`) is now also the key to
   every backup. Back it up separately from the backups themselves.
 
+## Single sign-on
+
+SAML 2.0 sign-in (Microsoft Entra ID or any SAML provider) is set up under
+*Settings → Single sign-on*; see [SSO.md](SSO.md). The signature checks,
+audience, conditions and clock-skew handling come from
+`@node-saml/node-saml`. On top of that, this app requires the following:
+
+- **Signed assertions.** The assertion itself must carry a valid signature from
+  the configured certificate. An unsigned assertion, one inside a signed
+  response, or one signed by any other key is refused.
+- **Audience.** The assertion must be addressed to this app's entity ID.
+- **A request of ours.** Every response must answer a sign-in request this app
+  issued (`InResponseTo`), within 10 minutes. The request ids are stored in the
+  database, so this holds across instances.
+  - IdP-initiated sign-in (starting from *My Apps*) is therefore not
+    supported. It is the usual route for a login-CSRF attack. Users start from
+    the app's own sign-in button, or from the *Sign on URL*, which forwards
+    them through a fresh request.
+- **No replays.** Each assertion id is accepted once, and assertions older than
+  10 minutes are refused. Clock skew of up to 2 minutes is tolerated.
+- **Only same-site paths in RelayState.** The return path survives the round
+  trip only when it is a path on this site, so it cannot become an open
+  redirect.
+- **Sessions.** A successful sign-in rotates the session id exactly as a
+  password sign-in does. Every sign-in, refusal, account creation and
+  role change is written to the audit log.
+- **Provisioning is off by default.** Only existing accounts (matched by email)
+  can sign in until an administrator enables just-in-time creation. Accounts it
+  creates get an unusable random password.
+- **Group-to-role mappings never change an administrator**, and *require SSO*
+  never applies to administrators. A broken identity provider or a bad mapping
+  therefore cannot lock everyone out.
+- **The metadata import** fetches only public https addresses (the same guard
+  as outbound webhooks). SSO configuration is stored outside the general
+  settings, so it is never returned by `GET /api/settings`.
+
+Team links (*Teams → Links to other systems*) accept https URLs only, so a
+`javascript:` or `data:` link cannot run in this app's origin.
+
 ## First-run setup
 
 Setup is open by default, which suits a laptop or an internal network. On a

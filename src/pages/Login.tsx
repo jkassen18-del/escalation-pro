@@ -1,11 +1,13 @@
-import { useState, type FormEvent } from 'react';
-import { ShieldCheck } from 'lucide-react';
+import { useEffect, useState, type FormEvent } from 'react';
+import { KeyRound, ShieldCheck } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/state/auth';
 import { Button } from '@/components/ui/Button';
 import { Field, Input } from '@/components/ui/Field';
 import { BrandMark } from '@/components/BrandMark';
 import { useBranding, useDocumentTitle } from '@/state/branding';
+import { ssoApi, type SsoBootstrap } from '@/lib/sso-api';
+import { MicrosoftIcon } from '@/components/BrandIcons';
 
 export function LoginPage() {
   const { login } = useAuth();
@@ -13,8 +15,19 @@ export function LoginPage() {
   useDocumentTitle('Sign in');
   const [loginValue, setLoginValue] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  // A failed single sign-on comes back as ?sso_error=..., set by the server.
+  const [error, setError] = useState<string | null>(() => new URLSearchParams(window.location.search).get('sso_error'));
   const [submitting, setSubmitting] = useState(false);
+  const [sso, setSso] = useState<SsoBootstrap | null>(null);
+
+  useEffect(() => {
+    void ssoApi.bootstrap().then(setSso).catch(() => undefined);
+    if (new URLSearchParams(window.location.search).has('sso_error')) {
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }, []);
+
+  const returnTo = window.location.pathname === '/' ? '/' : `${window.location.pathname}${window.location.search}`;
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -34,13 +47,30 @@ export function LoginPage() {
       <h1 className="text-lg font-semibold">Sign in</h1>
       <p className="mt-1 text-xs text-muted">Continue to {organizationName}.</p>
 
-      <form onSubmit={onSubmit} className="mt-6 space-y-3.5">
+      {sso?.enabled && (
+        <div className="mt-6">
+          <a
+            href={ssoApi.loginUrl(returnTo)}
+            className="flex h-9 w-full items-center justify-center gap-2 rounded-sm border text-sm font-medium transition-colors surface hover:bg-[var(--surface-3)]"
+          >
+            {sso.provider === 'entra' ? <MicrosoftIcon className="size-4" /> : <KeyRound className="size-4 text-[var(--fg-subtle)]" />}
+            {sso.label}
+          </a>
+          <div className="mt-5 flex items-center gap-3 text-2xs text-subtle">
+            <span className="h-px flex-1 bg-[var(--border)]" />
+            {sso.required ? 'administrators can also use a password' : 'or use a password'}
+            <span className="h-px flex-1 bg-[var(--border)]" />
+          </div>
+        </div>
+      )}
+
+      <form onSubmit={onSubmit} className={sso?.enabled ? 'mt-4 space-y-3.5' : 'mt-6 space-y-3.5'}>
         <Field label="Email or username" htmlFor="login">
           <Input
             id="login"
             name="username"
             autoComplete="username"
-            autoFocus
+            autoFocus={!sso?.enabled}
             value={loginValue}
             onChange={(event) => setLoginValue(event.target.value)}
             placeholder="you@company.com"

@@ -1,6 +1,10 @@
 import { ApiError, toQuery } from '@/lib/api';
 import type {
   Alert,
+  AlertRule,
+  AlertRuleActions,
+  AlertRuleMatch,
+  RoutingOutcome,
   AlertSource,
   BackupJob,
   BackupRun,
@@ -66,6 +70,26 @@ export type PolicyInput = Pick<EscalationPolicy, 'name' | 'description' | 'teamI
 export type StatusPageInput = Pick<StatusPage, 'title' | 'slug' | 'description' | 'isPublic' | 'components' | 'appearance'>;
 export type DatabaseInput = Pick<BackupJob, 'name' | 'engine' | 'schedule' | 'retention' | 'destination' | 'enabled' | 'teamId'> & { connection?: string };
 
+export interface AlertRuleInput {
+  name: string;
+  enabled: boolean;
+  match: AlertRuleMatch;
+  actions: AlertRuleActions;
+  continueEvaluating: boolean;
+}
+
+/** A made-up alert for the rule tester. `rule` tries an unsaved rule on its own. */
+export interface AlertRuleSample {
+  title: string;
+  summary?: string;
+  severity: string;
+  sourceId?: string;
+  sourceKind?: string;
+  payload?: string;
+  at?: string;
+  rule?: AlertRuleInput;
+}
+
 export const opsApi = {
   overview: () => get<OpsOverview>('/overview'),
 
@@ -91,6 +115,15 @@ export const opsApi = {
     test: (id: string) => post<{ result: { action: string; ticketId: string | null; paged: boolean } }>(`/alert-sources/${id}/test`),
   },
 
+  alertRules: {
+    list: () => get<{ rules: AlertRule[] }>('/alert-rules'),
+    create: (input: AlertRuleInput) => post<{ rule: AlertRule }>('/alert-rules', input),
+    update: (id: string, input: AlertRuleInput) => put<{ rule: AlertRule }>(`/alert-rules/${id}`, input),
+    remove: (id: string) => del(`/alert-rules/${id}`),
+    reorder: (ids: string[]) => put<{ rules: AlertRule[] }>('/alert-rules/order', { ids }),
+    test: (sample: AlertRuleSample) => post<{ outcome: RoutingOutcome }>('/alert-rules/test', sample),
+  },
+
   maintenance: {
     list: () => get<{ windows: MaintenanceWindow[] }>('/maintenance'),
     create: (input: { title: string; startsAt: string; endsAt: string; monitorIds: string[] }) => post<{ windows: MaintenanceWindow[] }>('/maintenance', input),
@@ -106,6 +139,7 @@ export const opsApi = {
     addOverride: (id: string, input: { userId: string; startsAt: string; endsAt: string; note?: string }) =>
       post<{ schedule: Schedule }>(`/schedules/${id}/overrides`, input),
     removeOverride: (id: string, overrideId: string) => del(`/schedules/${id}/overrides/${overrideId}`),
+    calendarUrl: (id: string) => `/api/ops/schedules/${id}/calendar.ics`,
   },
 
   policies: {

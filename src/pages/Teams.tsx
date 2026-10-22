@@ -11,6 +11,7 @@ import { EmptyState, ErrorPane, LoadingPane } from '@/components/ui/Feedback';
 import { ConfirmDialog, Modal } from '@/components/ui/Modal';
 import { FormBuilder } from '@/components/FormBuilder';
 import { TeamRouting } from '@/components/TeamRouting';
+import { TeamLinks } from '@/components/TeamLinks';
 import { Menu } from '@/components/ui/Menu';
 import { AUTO_ASSIGN_MODES, TICKET_PRIORITIES, type Team } from '@shared/types';
 import { useDocumentTitle } from '@/state/branding';
@@ -395,6 +396,13 @@ function TeamDialog({
           <div>
             <p className="mb-2 text-xs font-medium">Where these tickets are announced</p>
             <TeamRouting teamId={team.id} teamName={team.name} />
+          </div>
+        )}
+
+        {team && (
+          <div>
+            <p className="mb-2 text-xs font-medium">Links to other systems</p>
+            <TeamLinks teamId={team.id} />
           </div>
         )}
 

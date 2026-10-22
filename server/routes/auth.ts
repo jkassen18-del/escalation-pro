@@ -10,6 +10,7 @@ import { attachUser, requireAuth, type AuthedRequest } from '../middleware/auth.
 import { countUsers, findUserById, findUserRowByLogin, updatePassword } from '../repositories/users.ts';
 import { getSettings } from '../repositories/settings.ts';
 import { bootstrapFirstAdmin } from '../bootstrap.ts';
+import { passwordLoginBlocked, ssoBootstrap } from './sso.ts';
 
 export const authRouter: Router = Router();
 
@@ -29,6 +30,8 @@ authRouter.get(
       registrationOpen: false,
       /** Tells the setup screen whether to ask for the token. */
       setupTokenRequired: users === 0 && Boolean(config.setupToken),
+      /** Whether to offer "Sign in with Microsoft", and with what label. */
+      sso: await ssoBootstrap(),
     });
   }),
 );
@@ -132,6 +135,21 @@ authRouter.post(
     if (row.status !== 'active') {
       await recordFailure(keys);
       throw unauthorized('This account has been suspended. Contact an administrator.');
+    }
+
+    // Checked only after the password is proven, so it cannot be used to
+    // learn which accounts are administrators.
+    if (await passwordLoginBlocked(row.role)) {
+      await recordAudit({
+        actorId: row.id,
+        actorName: row.name,
+        entityType: 'auth',
+        entityId: row.id,
+        action: 'login_refused_sso_required',
+        summary: `${row.name} tried a password sign-in while single sign-on is required`,
+        ip,
+      });
+      throw new HttpError(403, 'Your organisation signs in with single sign-on. Use the button above.');
     }
 
     await clearFailures(keys);

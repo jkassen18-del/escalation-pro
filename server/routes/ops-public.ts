@@ -62,6 +62,7 @@ opsPublicRouter.post(
         await ingestSignal({
           ...signal,
           sourceType: 'webhook',
+          sourceKind: source.kind,
           sourceId: source.id,
           sourceName: source.name,
           teamId: source.teamId,

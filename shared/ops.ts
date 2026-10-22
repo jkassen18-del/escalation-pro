@@ -171,6 +171,8 @@ export interface Alert {
   ticketId: string | null;
   ticketReference: string | null;
   suppressed: boolean;
+  /** The routing rule that decided where this alert went, if one matched. */
+  ruleName: string | null;
   payload: unknown;
   firstSeenAt: string;
   lastSeenAt: string;
@@ -188,9 +190,72 @@ export interface MaintenanceWindow {
   createdAt: string;
 }
 
+/* ----------------------------- Alert routing ----------------------------- */
+
+/**
+ * What a rule looks at. Every condition that is set must hold; an empty match
+ * matches every alert.
+ */
+export interface AlertRuleMatch {
+  /** Specific monitors or alert sources, by id. */
+  sourceIds?: string[];
+  /** Monitor kinds (http, tcp, database...) or alert source kinds (aws_sns, jenkins...). */
+  sourceKinds?: string[];
+  /** Searched in the title and summary, case-insensitively. */
+  text?: string;
+  textMode?: 'contains' | 'regex';
+  severities?: Severity[];
+  /** A payload field, e.g. "labels.service" equals "checkout". */
+  field?: { path: string; op: 'equals' | 'contains'; value: string };
+  /** Only inside or only outside working hours in a time zone. */
+  timeWindow?: { mode: 'business_hours' | 'after_hours'; timeZone: string; days: number[]; startHour: number; endHour: number };
+}
+
+export interface AlertRuleActions {
+  /** Route the incident to this department. */
+  teamId?: string | null;
+  escalationPolicyId?: string | null;
+  severity?: Severity | null;
+  tags?: string[];
+  /** Open the ticket, page nobody. */
+  suppressPaging?: boolean;
+  /** Ignore the alert entirely. It still counts as received on its source. */
+  drop?: boolean;
+}
+
+export interface AlertRule {
+  id: string;
+  name: string;
+  position: number;
+  enabled: boolean;
+  match: AlertRuleMatch;
+  actions: AlertRuleActions;
+  /** Keep evaluating later rules after this one matches; later actions add to or override earlier ones. */
+  continueEvaluating: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** What routing decided for one alert. Returned by the rule tester. */
+export interface RoutingOutcome {
+  matchedRules: Array<{ id: string; name: string }>;
+  teamId: string | null;
+  escalationPolicyId: string | null;
+  severity: Severity;
+  tags: string[];
+  suppressPaging: boolean;
+  drop: boolean;
+  /** Plain-English summary, as written on the ticket. */
+  explanation: string;
+}
+
 /* -------------------------------- On-call -------------------------------- */
 
-export const ROTATION_KINDS = ['daily', 'weekly', 'custom'] as const;
+/**
+ * `roster` is not a rotation at all: a fixed list of who covers which dates
+ * ("week 1 Jamal, week 2 Kopano"), set by hand.
+ */
+export const ROTATION_KINDS = ['daily', 'weekly', 'custom', 'roster'] as const;
 export type RotationKind = (typeof ROTATION_KINDS)[number];
 
 export interface ScheduleLayer {
@@ -204,6 +269,14 @@ export interface ScheduleLayer {
   /** When the first shift starts; every handoff is a whole number of shifts later. */
   startsAt: string;
   memberIds: string[];
+  /** Roster layers only: explicit cover, each [startsAt, endsAt). Gaps mean nobody from this layer. */
+  entries: RosterEntry[];
+}
+
+export interface RosterEntry {
+  userId: string;
+  startsAt: string;
+  endsAt: string;
 }
 
 export interface ScheduleOverride {

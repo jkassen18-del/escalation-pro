@@ -218,6 +218,41 @@ Escalating a ticket raises its level, bumps its priority, records the reason as
 an internal note, and notifies every connected channel. Above the configured
 priority floor it can also open a tracked issue in Linear.
 
+Escalating can also **send the ticket to another department** ("this is a
+network problem, not a desktop one"). The ticket moves to that team, its level
+goes up, the reason is kept as an internal note, and the new team is told in
+the app and in its own Slack, Teams or Linear destination. The assignee stays
+only if they belong to the new team; otherwise that team's auto-assignment
+picks someone, or the ticket waits in its queue. The ticket type is kept, so an
+incident stays an incident. The priority can be changed at the same time.
+
+### Quick tickets
+
+Quick tickets are templates for the requests people raise most: *Site issue*,
+*Password reset*, *New laptop*. Each template fixes the department, type,
+priority (and severity for incidents) and asks only its own few questions.
+The person picks a tile on *New ticket*, or uses *Quick ticket* in the header,
+adds a summary, the details and a screenshot, and the ticket goes straight to
+that department. SLAs, auto-assignment and the Slack/Teams/Linear fan-out all
+apply as for any other ticket.
+
+Team managers set them up under *Manage → Quick tickets*:
+
+- **Ticket title** is built from the answers, e.g. `Site issue: {{site}} - {{summary}}`.
+  The fill-ins are each question's key, `{{summary}}` and `{{requester}}`.
+  An unanswered fill-in is dropped along with its separator.
+- **Screenshots** can be not asked, optional, or required. People paste them
+  straight into the details (Win+Shift+S, then Ctrl+V) or add them with the
+  picker. The server enforces "required" for a pasted screenshot; one added
+  with the picker is uploaded right after the ticket is created, so for that
+  case the requirement is a prompt in the form rather than a server check.
+- **Who can use it**: everyone who can raise tickets, or only members of
+  selected teams.
+- The department's own intake questions are still asked, except where the
+  template asks the same thing.
+
+Deleting a template hides it; tickets raised from it keep their history.
+
 ---
 
 ## Roles and permissions

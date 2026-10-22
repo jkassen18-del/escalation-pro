@@ -16,6 +16,7 @@ import { brandingRouter } from './routes/branding.ts';
 import { usersRouter } from './routes/users.ts';
 import { teamsRouter } from './routes/teams.ts';
 import { ticketsRouter } from './routes/tickets.ts';
+import { ticketTemplatesRouter } from './routes/ticket-templates.ts';
 import { attachmentsRouter } from './routes/attachments.ts';
 import { notificationsRouter } from './routes/notifications.ts';
 import { settingsRouter } from './routes/settings.ts';
@@ -23,6 +24,8 @@ import { integrationsRouter } from './routes/integrations.ts';
 import { dataSourcesRouter } from './routes/data-sources.ts';
 import { reportsRouter } from './routes/reports.ts';
 import { auditRouter } from './routes/audit.ts';
+import { samlRouter, ssoAdminRouter } from './routes/sso.ts';
+import { teamLinksRouter } from './routes/team-links.ts';
 import { webhooksRouter } from './routes/webhooks.ts';
 import { cronRouter } from './routes/cron.ts';
 import { opsRouter } from './routes/ops.ts';
@@ -31,6 +34,10 @@ import { startOpsRunner } from './ops/runner.ts';
 import { startSlaMonitor } from './jobs/sla-monitor.ts';
 import { APP_VERSION } from '../shared/version.ts';
 import { pruneAttempts } from './lib/rate-limit.ts';
+
+/** Routes whose JSON bodies may carry pasted screenshots. */
+const SCREENSHOT_ROUTES = ['/api/tickets', '/api/ticket-templates'];
+const carriesScreenshots = (url: string) => SCREENSHOT_ROUTES.some((route) => url === route || url.startsWith(`${route}/`) || url.startsWith(`${route}?`));
 
 export async function createApp() {
   const app = express();
@@ -42,6 +49,9 @@ export async function createApp() {
   app.use(
     express.json({
       limit: '2mb',
+      // Ticket bodies carry pasted screenshots and are parsed further down,
+      // with a larger limit, once the request is known to be signed in.
+      type: (req) => /^application\/json\b/i.test(String(req.headers['content-type'] ?? '')) && !carriesScreenshots(req.url ?? ''),
       // Keep the raw bytes so webhook HMAC signatures can be verified.
       verify: (req, _res, buf) => {
         (req as Request & { rawBody?: Buffer }).rawBody = buf;
@@ -130,6 +140,8 @@ export async function createApp() {
     }
   });
 
+  // SAML first: the identity provider posts here, before any session exists.
+  app.use('/api/auth/saml', samlRouter);
   app.use('/api/auth', authRouter);
   // Before attachUser: the sign-in screen needs the company name and logo.
   app.use('/api/branding', brandingRouter);
@@ -141,16 +153,25 @@ export async function createApp() {
 
   // Everything below needs a resolved session user.
   app.use('/api', attachUser);
+  // Screenshots pasted into a description or comment arrive as base64 in the
+  // JSON body. 2MB cut a full-screen capture off; this is sized for the
+  // inline-image caps (5MB each, 20MB per submission), and only parsed for
+  // someone signed in - anyone else gets the route's 401 without it.
+  const screenshotJson = express.json({ limit: '30mb' });
+  app.use(SCREENSHOT_ROUTES, (req, res, next) => ((req as Request & { user?: unknown }).user ? screenshotJson(req, res, next) : next()));
   app.use('/api/users', usersRouter);
   app.use('/api/teams', teamsRouter);
   app.use('/api/tickets/:id/attachments', attachmentsRouter);
   app.use('/api/tickets', ticketsRouter);
+  app.use('/api/ticket-templates', ticketTemplatesRouter);
   app.use('/api/notifications', notificationsRouter);
   app.use('/api/settings', settingsRouter);
   app.use('/api/integrations', integrationsRouter);
   app.use('/api/data-sources', dataSourcesRouter);
   app.use('/api/reports', reportsRouter);
   app.use('/api/audit', auditRouter);
+  app.use('/api/sso', ssoAdminRouter);
+  app.use('/api/team-links', teamLinksRouter);
   app.use('/api/ops', opsRouter);
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API endpoint' }));

@@ -27,14 +27,14 @@ import {
 import { useAuth } from '@/state/auth';
 import { useToast } from '@/components/ui/Toast';
 import { Button } from '@/components/ui/Button';
-import { Field, Select, Textarea } from '@/components/ui/Field';
+import { Field, Select } from '@/components/ui/Field';
 import { RichText } from '@/components/ui/RichText';
 import { CustomFieldSummary } from '@/components/CustomFieldInputs';
 import { RichTextEditor } from '@/components/ui/RichTextEditor';
 import { PriorityBadge, Reference, StatusBadge } from '@/components/ui/Badge';
 import { Avatar, UserChip } from '@/components/ui/Avatar';
 import { ErrorPane, LoadingPane } from '@/components/ui/Feedback';
-import { ConfirmDialog, Modal } from '@/components/ui/Modal';
+import { ConfirmDialog } from '@/components/ui/Modal';
 import { Menu } from '@/components/ui/Menu';
 import {
   TERMINAL_STATUSES,
@@ -46,6 +46,7 @@ import {
 } from '@shared/types';
 import { useDocumentTitle } from '@/state/branding';
 import { IncidentPanel, SeverityBadge } from '@/components/ops/IncidentPanel';
+import { EscalateDialog } from '@/components/EscalateDialog';
 
 type Directory = Awaited<ReturnType<typeof api.users.directory>>['users'];
 
@@ -133,6 +134,11 @@ export function TicketDetailPage() {
               <StatusBadge status={ticket.status} />
               <PriorityBadge priority={ticket.priority} />
               {ticket.severity && <SeverityBadge severity={ticket.severity} />}
+              {ticket.templateName && (
+                <span className="rounded-[3px] border px-1.5 py-0.5 text-2xs text-muted" title="Raised as a quick ticket">
+                  {ticket.templateName}
+                </span>
+              )}
               {ticket.escalationLevel > 0 && (
                 <span className="rounded-[3px] border border-[var(--priority-urgent)]/35 bg-[var(--priority-urgent)]/8 px-1.5 py-0.5 text-2xs font-semibold text-[var(--priority-urgent)]">
                   Escalation level {ticket.escalationLevel}
@@ -266,12 +272,19 @@ export function TicketDetailPage() {
       <EscalateDialog
         open={escalateOpen}
         onClose={() => setEscalateOpen(false)}
-        onSubmit={async (reason) => {
+        teams={teams}
+        currentTeamId={ticket.teamId}
+        currentPriority={ticket.priority}
+        onSubmit={async (request) => {
           try {
-            await api.tickets.escalate(ticket.id, { reason });
+            await api.tickets.escalate(ticket.id, request);
             setEscalateOpen(false);
             await load();
-            toast.success('Ticket escalated', 'Everyone watching has been notified.');
+            const target = request.teamId ? teams.find((team) => team.id === request.teamId)?.name : null;
+            toast.success(
+              target ? `Escalated to ${target}` : 'Ticket escalated',
+              target ? `${target} has been notified.` : 'Everyone watching has been notified.',
+            );
           } catch (caught) {
             toast.error('Escalation failed', caught instanceof ApiError ? caught.message : undefined);
           }
@@ -513,6 +526,7 @@ function describeEvent(event: TicketDetailType['events'][number]): string {
       return 'assigned this ticket';
     case 'escalated':
       if (event.field === 'pageLevel') return `moved paging on to escalation level ${event.toValue}`;
+      if (event.field === 'team') return `escalated this from ${event.fromValue} to ${event.toValue}`;
       return `escalated this to level ${event.toValue}`;
     case 'paged':
       return `started paging with "${event.toValue}"`;
@@ -733,56 +747,5 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <dt className="shrink-0 text-subtle">{label}</dt>
       <dd className="min-w-0 truncate text-right">{children}</dd>
     </div>
-  );
-}
-
-function EscalateDialog({
-  open,
-  onClose,
-  onSubmit,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onSubmit: (reason: string) => Promise<void>;
-}) {
-  const [reason, setReason] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Escalate this ticket"
-      description="Raises the escalation level, bumps the priority, and alerts every connected channel."
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            loading={submitting}
-            disabled={!reason.trim()}
-            onClick={async () => {
-              setSubmitting(true);
-              await onSubmit(reason.trim());
-              setSubmitting(false);
-              setReason('');
-            }}
-          >
-            Escalate
-          </Button>
-        </>
-      }
-    >
-      <Field label="Why is this being escalated?" hint="Recorded as an internal note on the ticket." required>
-        <Textarea
-          value={reason}
-          onChange={(event) => setReason(event.target.value)}
-          rows={4}
-          placeholder="Customer impact is growing and the current owner needs support from the on-call engineer."
-        />
-      </Field>
-    </Modal>
   );
 }

@@ -164,6 +164,9 @@ export interface Ticket {
   severity: 'sev1' | 'sev2' | 'sev3' | 'sev4' | null;
   commanderId: string | null;
   commanderName: string | null;
+  /** The quick-ticket template it was raised from, if any. */
+  templateId: string | null;
+  templateName: string | null;
 }
 
 export interface TicketDetail extends Ticket {

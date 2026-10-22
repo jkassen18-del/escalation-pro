@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { Field, Input, Select } from '@/components/ui/Field';
 import { RichTextEditor } from '@/components/ui/RichTextEditor';
 import { CustomFieldInputs, type CustomFieldValues } from '@/components/CustomFieldInputs';
+import { QuickTicketGrid } from '@/components/quick/QuickTicketGrid';
 import { TICKET_PRIORITIES, TICKET_TYPES, type Team } from '@shared/types';
 import { useDocumentTitle } from '@/state/branding';
 import type { TeamFormField } from '@shared/types';
@@ -128,6 +129,8 @@ export function NewTicketPage() {
       <p className="mt-0.5 text-xs text-muted">
         The routing rules on the selected team decide who picks this up if you leave the assignee blank.
       </p>
+
+      <QuickTicketGrid />
 
       <form onSubmit={onSubmit} className="mt-5 space-y-4 rounded-md border p-4 surface sm:p-5">
         <Field label="Subject" htmlFor="subject" error={errors.Subject} required>

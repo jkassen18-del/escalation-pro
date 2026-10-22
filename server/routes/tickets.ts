@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { db } from '../db/index.ts';
 import { randomId } from '../lib/crypto.ts';
 import { isEffectivelyEmpty, sanitizeRichText } from '../lib/rich-text.ts';
-import { extractInlineImages } from '../lib/inline-images.ts';
+import { extractInlineImages, lengthWithoutInlineImages } from '../lib/inline-images.ts';
 import {
   asyncRoute,
   badRequest,
@@ -19,7 +19,7 @@ import {
 } from '../lib/http.ts';
 import { clientIp, recordAudit } from '../lib/audit.ts';
 import { can, requireAuth, requirePermission, visibleTeamIds, type AuthedRequest } from '../middleware/auth.ts';
-import { findTeamById } from '../repositories/teams.ts';
+import { findTeamById, pickAssignee } from '../repositories/teams.ts';
 import { findUserById } from '../repositories/users.ts';
 import { SEVERITIES } from '../../shared/ops.ts';
 import { getSettings } from '../repositories/settings.ts';
@@ -51,6 +51,22 @@ import {
 export const ticketsRouter: Router = Router();
 
 ticketsRouter.use(requireAuth);
+
+/**
+ * A description or comment body. Pasted screenshots are not counted against
+ * the text limit (they have their own caps when they are stored); text over
+ * the limit is refused rather than silently cut, which used to slice through
+ * the middle of an image.
+ */
+function richTextBody(value: unknown, isHtml: boolean, field: string): string | null {
+  const text = typeof value === 'string' ? value.trim() : value === null || value === undefined ? '' : String(value).trim();
+  if (!text) return null;
+  const limit = isHtml ? 400_000 : 20_000;
+  if ((isHtml ? lengthWithoutInlineImages(text) : text.length) > limit) {
+    throw badRequest(`${field} must be ${limit.toLocaleString('en')} characters or fewer`, { [field]: 'Too long' });
+  }
+  return text;
+}
 
 function csv(value: unknown): string[] {
   if (typeof value !== 'string' || !value.trim()) return [];
@@ -163,7 +179,7 @@ ticketsRouter.post(
       {
         subject: requireString(req.body?.subject, 'Subject', { max: 200 }),
         // The larger cap reflects markup overhead, not more prose.
-        description: optionalString(req.body?.description, isHtml ? 400_000 : 20_000) ?? '',
+        description: richTextBody(req.body?.description, isHtml, 'Description') ?? '',
         descriptionFormat: isHtml ? 'html' : 'text',
         teamId: optionalString(req.body?.teamId, 60) ?? settings.defaultTeamId,
         requesterId: optionalString(req.body?.requesterId, 60) ?? user.id,
@@ -379,6 +395,15 @@ ticketsRouter.post(
     if (!canSeeTicket(user, ticket)) throw forbidden('You do not have access to this ticket.');
 
     const reason = requireString(req.body?.reason, 'Reason', { max: 2000 });
+
+    // Naming a department hands the ticket over to it, rather than only raising the level.
+    const targetTeamId = optionalString(req.body?.teamId, 60);
+    if (targetTeamId) {
+      const after = await escalateToTeam(req, ticket, targetTeamId, reason);
+      res.json({ ticket: after });
+      return;
+    }
+
     const nextPriority = ticket.priority === 'urgent' ? 'urgent' : ticket.priority === 'high' ? 'urgent' : 'high';
     const nextLevel = Math.min(ticket.escalationLevel + 1, 5);
 
@@ -391,7 +416,7 @@ ticketsRouter.post(
     await db.run(
       `INSERT INTO ticket_comments (id, ticket_id, author_id, body, is_internal, created_at, updated_at)
        VALUES (?, ?, ?, ?, 1, ?, ?)`,
-      [randomId(), ticket.id, user.id, `**Escalated to level ${nextLevel}.** ${reason}`, new Date().toISOString(), new Date().toISOString()],
+      [randomId(), ticket.id, user.id, `Escalated to level ${nextLevel}. ${reason}`, new Date().toISOString(), new Date().toISOString()],
     );
 
     const after = await findTicket(ticket.id, settings.ticketPrefix);
@@ -519,7 +544,8 @@ ticketsRouter.post(
     if (!canSeeTicket(user, ticket)) throw forbidden('You do not have access to this ticket.');
 
     const commentIsHtml = req.body?.bodyFormat === 'html';
-    const rawBody = requireString(req.body?.body, 'Comment', { max: commentIsHtml ? 400_000 : 20_000 });
+    const rawBody = richTextBody(req.body?.body, commentIsHtml, 'Comment');
+    if (!rawBody) throw badRequest('Comment is required', { Comment: 'Required' });
     const cleanBody = commentIsHtml ? sanitizeRichText(rawBody) : rawBody;
     if (commentIsHtml && isEffectivelyEmpty(cleanBody)) throw badRequest('Write something before posting.');
     const body = cleanBody;
@@ -601,3 +627,89 @@ ticketsRouter.post(
     res.status(201).json({ ticket: detail });
   }),
 );
+
+/**
+ * Hands a ticket to another department: "this is a network problem, not a
+ * desktop one". The level goes up, the reason is kept as an internal note,
+ * and the new department hears about it in the app and in its own channels.
+ *
+ * The assignee stays only if they belong to the new department; otherwise the
+ * ticket goes to that department's auto-assignment, or to its queue
+ * unassigned. The type is left alone, so an incident stays an incident.
+ */
+async function escalateToTeam(req: Request, ticket: Ticket, targetTeamId: string, reason: string): Promise<Ticket> {
+  const user = (req as AuthedRequest).user;
+  const settings = await getSettings();
+  const target = await findTeamById(targetTeamId);
+  if (!target) throw badRequest('That department no longer exists.', { teamId: 'Unknown' });
+  if (target.id === ticket.teamId) throw badRequest(`${ticket.reference} is already with ${target.name}.`, { teamId: 'Same department' });
+
+  const priority = req.body?.priority === undefined || req.body?.priority === null || req.body?.priority === ''
+    ? ticket.priority
+    : requireEnum(req.body.priority, TICKET_PRIORITIES, 'Priority');
+  const nextLevel = Math.min(ticket.escalationLevel + 1, 5);
+
+  let assigneeId = ticket.assigneeId;
+  if (assigneeId) {
+    const member = await db.get<{ user_id: string }>(`SELECT user_id FROM team_members WHERE team_id = ? AND user_id = ?`, [target.id, assigneeId]);
+    if (!member) assigneeId = null;
+  }
+  if (!assigneeId) assigneeId = await pickAssignee(target.id, target.autoAssign);
+
+  const now = new Date().toISOString();
+  const fromName = ticket.teamName ?? 'no department';
+  await db.run(
+    `UPDATE tickets SET team_id = ?, assignee_id = ?, priority = ?, escalation_level = ?, updated_at = ? WHERE id = ?`,
+    [target.id, assigneeId, priority, nextLevel, now, ticket.id],
+  );
+  await recordEvent(ticket.id, user.id, 'escalated', 'team', fromName, target.name);
+  if (priority !== ticket.priority) await recordEvent(ticket.id, user.id, 'updated', 'priority', ticket.priority, priority);
+  if (assigneeId !== ticket.assigneeId) {
+    await recordEvent(ticket.id, user.id, 'updated', 'assignee', ticket.assigneeName, assigneeId);
+    if (assigneeId) await addWatcher(ticket.id, assigneeId);
+  }
+  await db.run(
+    `INSERT INTO ticket_comments (id, ticket_id, author_id, body, is_internal, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 1, ?, ?)`,
+    [randomId(), ticket.id, user.id, `Escalated from ${fromName} to ${target.name}. ${reason}`, now, now],
+  );
+
+  const after = await findTicket(ticket.id, settings.ticketPrefix);
+  if (!after) throw new Error('Escalation failed.');
+
+  await recordAudit({
+    actorId: user.id,
+    actorName: user.name,
+    entityType: 'ticket',
+    entityId: after.id,
+    action: 'ticket_escalated',
+    summary: `Escalated ${after.reference} from ${fromName} to ${target.name}`,
+    meta: { reason, level: nextLevel, fromTeamId: ticket.teamId, toTeamId: target.id, priority },
+    ip: clientIp(req),
+  });
+
+  const members = await db.all<{ user_id: string }>(
+    `SELECT tm.user_id FROM team_members tm JOIN users u ON u.id = tm.user_id WHERE tm.team_id = ? AND u.status = 'active'`,
+    [target.id],
+  );
+  await notifyUsers(
+    Array.from(new Set([...members.map((m) => m.user_id), ...after.watcherIds])).filter((id) => id !== user.id),
+    {
+      ticketId: after.id,
+      type: 'escalated',
+      title: `${after.reference} escalated from ${fromName} to ${target.name}`,
+      body: reason.slice(0, 200),
+    },
+  );
+
+  // Dispatched with the ticket as it is now, so team routing sends it to the new department's channels.
+  dispatchAsync({
+    event: 'ticketEscalated',
+    ticket: after,
+    actorName: user.name,
+    headline: `Escalated from ${fromName} to ${target.name}: ${after.reference}`,
+    detail: reason,
+    ticketUrl: await buildTicketUrl(after, `${req.protocol}://${req.get('host')}`),
+  });
+  return after;
+}

@@ -58,24 +58,77 @@ ticket it opens and who it pages.
 
 1. **Deduplicate.** A repeat of an alert that is still open increments its
    count; it does not open another ticket.
-2. **Group.** A new alert from a source that already has an open incident from
-   the last 15 minutes joins that incident (`ALERT_GROUP_WINDOW_MINS`).
-3. **Route.** The monitor's or source's own escalation policy, or else its
-   team's default policy (*On-call → Escalation policies → Team defaults*).
-   SEV1–SEV3 page; SEV4 opens a ticket without paging.
-4. **Auto-resolve.** When the last open alert on an incident resolves, the
+2. **Apply routing rules** (below). A rule can send the alert to another
+   department, change its severity, or drop it.
+3. **Group.** A new alert from a source that already has an open incident
+   *for the same department* from the last 15 minutes joins that incident
+   (`ALERT_GROUP_WINDOW_MINS`).
+4. **Route.** The policy a routing rule set, else the monitor's or source's
+   own escalation policy, else its department's default policy
+   (*On-call → Escalation policies → Team defaults*). SEV1–SEV3 page; SEV4
+   opens a ticket without paging.
+5. **Auto-resolve.** When the last open alert on an incident resolves, the
    incident resolves and paging stops.
-5. **Maintenance windows** suppress paging, never recording: the alert and
+6. **Maintenance windows** suppress paging, never recording: the alert and
    ticket still appear, marked as suppressed.
 
 Every incident ticket says, on its page, why it paged and whom it reached.
 
+## Alert routing rules
+
+*Monitoring → Routing.* Ordered rules that decide where a new alert goes,
+before the source's own routing. Rules run top to bottom; the first one that
+matches decides, unless it is set to **keep evaluating**, in which case later
+matching rules add their tags and override what they set.
+
+A rule matches when every condition it sets holds:
+
+| Condition | Example |
+| --- | --- |
+| Specific monitors or alert sources | "Checkout API", "Production Grafana" |
+| Kind of source | HTTP(S) monitors, database monitors, AWS CloudWatch, Jenkins |
+| Title or summary | contains `checkout`, or matches `postgres\|mysql` (case-insensitive) |
+| Severity | SEV1 or SEV2 |
+| Payload field | `labels.service` equals `checkout` |
+| Time of day | only during, or only outside, working hours in a time zone |
+
+and then does any of:
+
+- **Route to a department.** The incident goes to that team and pages through
+  its default policy, unless the rule also names a policy.
+- **Use an escalation policy.**
+- **Set the severity.**
+- **Add tags** to the incident ticket.
+- **Ticket only.** Open the ticket, page nobody.
+- **Drop.** Record nothing. The delivery still counts on its source.
+
+The incident ticket, the alert and the page's *why was I paged?* all name the
+rule that routed it ("Routed by rule 'Website down → Web team'").
+*Try a sample alert* shows which rule a made-up alert would match and what
+would happen, without creating anything. Presets cover the common cases:
+website monitors to the web team, database alerts to the DBAs, SEV4 as ticket
+only, and no paging for SEV3 out of hours.
+
+Regular expressions that repeat a repeated group (such as `(a+)+`) are
+refused, because they can stall the pipeline.
+
 ## On-call
 
-- **Schedules** are layers of rotations (daily, weekly or custom shift
-  lengths) over a list of people. A higher layer wins where it has someone;
-  an **override** wins over every layer. Anyone can add themselves as cover;
-  on-call managers can put anyone in.
+- **Schedules** are layers. A layer is either a **rotation** (daily, weekly
+  or custom shift lengths over a list of people) or a **fixed roster**: who is
+  on standby for which dates, set by hand ("week 1 Jamal, Monday to Sunday;
+  week 2 Kopano"). A higher layer wins where it has someone; an **override**
+  wins over every layer. Anyone can add themselves as cover; on-call managers
+  can put anyone in.
+- **Rosters** are laid out week by week from a handover day and time in the
+  schedule's time zone (Monday 08:00 SAST by default). Pick the people to
+  repeat, fill as many weeks as you need, then change any single week. Custom
+  date ranges (Monday to Wednesday, a long weekend) sit alongside. Entries may
+  not overlap; a week left empty falls through to the layer below, so a
+  backstop rotation underneath covers the gaps.
+- **Calendar.** Each schedule shows the next 14 days as a timeline and a month
+  view of who is on call each day. *Download calendar (.ics)* exports the next
+  90 days for Outlook or Google Calendar.
 - **Escalation policies** are ordered levels. Each level notifies users,
   whoever is on call in a schedule, or a team's leads, then waits *N* minutes
   for an acknowledgement before moving on. The whole policy can repeat up to

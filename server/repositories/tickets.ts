@@ -48,6 +48,8 @@ interface TicketRow {
   severity: Ticket['severity'];
   commander_id: string | null;
   commander_name: string | null;
+  template_id: string | null;
+  template_name: string | null;
 }
 
 const SELECT_TICKET = `
@@ -57,6 +59,7 @@ const SELECT_TICKET = `
          asg.name AS assignee_name,
          crt.name AS created_by_name,
          cmd.name AS commander_name,
+         tpl.name AS template_name,
          (SELECT COUNT(*) FROM ticket_comments c WHERE c.ticket_id = t.id) AS comment_count,
          (SELECT COUNT(*) FROM ticket_attachments a WHERE a.ticket_id = t.id) AS attachment_count
   FROM tickets t
@@ -65,6 +68,7 @@ const SELECT_TICKET = `
   LEFT JOIN users asg ON asg.id = t.assignee_id
   LEFT JOIN users crt ON crt.id = t.created_by
   LEFT JOIN users cmd ON cmd.id = t.commander_id
+  LEFT JOIN ticket_templates tpl ON tpl.id = t.template_id
 `;
 
 export function referenceOf(prefix: string, number: number): string {
@@ -108,6 +112,8 @@ function mapTicket(row: TicketRow, prefix: string, watcherIds: string[], links: 
     severity: row.severity ?? null,
     commanderId: row.commander_id ?? null,
     commanderName: row.commander_name ?? null,
+    templateId: row.template_id ?? null,
+    templateName: row.template_name ?? null,
   };
 }
 
@@ -386,6 +392,7 @@ export interface CreateTicketInput {
   dueAt: string | null;
   createdBy: string | null;
   severity?: Ticket['severity'];
+  templateId?: string | null;
 }
 
 export async function insertTicket(input: CreateTicketInput): Promise<{ id: string; number: number }> {
@@ -396,8 +403,8 @@ export async function insertTicket(input: CreateTicketInput): Promise<{ id: stri
   await db.run(
     `INSERT INTO tickets (id, number, subject, description, description_format, team_id, requester_id,
        assignee_id, status, priority, type, source, tags, escalation_level, due_at, created_by,
-       severity, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
+       severity, template_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       number,
@@ -415,6 +422,7 @@ export async function insertTicket(input: CreateTicketInput): Promise<{ id: stri
       input.dueAt,
       input.createdBy,
       input.severity ?? null,
+      input.templateId ?? null,
       now,
       now,
     ],

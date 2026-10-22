@@ -28,6 +28,17 @@ const EXTENSIONS: Record<string, string> = {
   'image/webp': 'webp',
 };
 
+/**
+ * How long rich text is, not counting pasted images.
+ *
+ * The text limits exist for text. A screenshot pasted from the clipboard is
+ * hundreds of kilobytes of base64 on its way in, and counting it against them
+ * cut descriptions off mid-image - the size caps below are what bound images.
+ */
+export function lengthWithoutInlineImages(html: string): number {
+  return html.replace(/data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+/gi, '').length;
+}
+
 /** Per image, and across one submission, so a paste cannot exhaust storage. */
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 20 * 1024 * 1024;

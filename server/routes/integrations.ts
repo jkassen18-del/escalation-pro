@@ -444,5 +444,7 @@ function sampleTicket(prefix: string): Ticket {
     severity: 'sev2',
     commanderId: null,
     commanderName: null,
+    templateId: null,
+    templateName: null,
   };
 }

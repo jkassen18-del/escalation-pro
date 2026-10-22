@@ -26,6 +26,7 @@ import {
   saveRules,
   saveSchedule,
   scheduleShifts,
+  scheduleToIcs,
   validateRules,
   validateTimeZone,
 } from '../ops/oncall.ts';
@@ -33,6 +34,7 @@ import { acknowledgePage, escalateNow, getPage, listPages, sendTestPage, trigger
 import { getSource, listSources, rotateSourceToken, saveSource, validateSource } from '../ops/sources.ts';
 import { addStatusUpdate, getStatusPage, listStatusPages, renderStatusPage, saveStatusPage, validateStatusPage } from '../ops/status-pages.ts';
 import { publicTelephony, saveTelephony } from '../ops/telephony.ts';
+import { evaluateRules, getRule, listRules, reorderRules, saveRule, validateRule } from '../ops/routing.ts';
 
 /**
  * The operations API: monitors, alerts, on-call, status pages and backups.
@@ -193,6 +195,7 @@ opsRouter.post(
     if (!source) throw notFound('That alert source does not exist.');
     const result = await ingestSignal({
       sourceType: 'webhook',
+      sourceKind: source.kind,
       sourceId: source.id,
       sourceName: source.name,
       dedupKey: `test:${randomId()}`,
@@ -243,6 +246,93 @@ opsRouter.delete(
   }),
 );
 
+/* ------------------------------ Alert routing ----------------------------- */
+
+opsRouter.get('/alert-rules', asyncRoute(async (_req, res) => res.json({ rules: await listRules() })));
+
+opsRouter.post(
+  '/alert-rules',
+  requirePermission('monitors.manage'),
+  asyncRoute(async (req, res) => {
+    const rule = await saveRule(null, validateRule(req.body ?? {}));
+    await audit(req, { entityType: 'alert', entityId: rule.id, action: 'alert_rule_created', summary: `Created routing rule "${rule.name}"` });
+    res.status(201).json({ rule });
+  }),
+);
+
+opsRouter.put(
+  '/alert-rules/order',
+  requirePermission('monitors.manage'),
+  asyncRoute(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String).slice(0, 500) : [];
+    const rules = await reorderRules(ids);
+    await audit(req, { entityType: 'alert', action: 'alert_rules_reordered', summary: `Reordered routing rules: ${rules.map((r) => r.name).join(', ')}` });
+    res.json({ rules });
+  }),
+);
+
+opsRouter.put(
+  '/alert-rules/:id',
+  requirePermission('monitors.manage'),
+  asyncRoute(async (req, res) => {
+    if (!(await getRule(req.params.id))) throw notFound('That rule does not exist.');
+    const rule = await saveRule(req.params.id, validateRule(req.body ?? {}));
+    await audit(req, { entityType: 'alert', entityId: rule.id, action: 'alert_rule_updated', summary: `Updated routing rule "${rule.name}"` });
+    res.json({ rule });
+  }),
+);
+
+opsRouter.delete(
+  '/alert-rules/:id',
+  requirePermission('monitors.manage'),
+  asyncRoute(async (req, res) => {
+    const rule = await getRule(req.params.id);
+    if (!rule) throw notFound('That rule does not exist.');
+    await db.run(`DELETE FROM alert_rules WHERE id = ?`, [rule.id]);
+    await audit(req, { entityType: 'alert', entityId: rule.id, action: 'alert_rule_deleted', summary: `Deleted routing rule "${rule.name}"` });
+    res.status(204).end();
+  }),
+);
+
+/**
+ * Dry run: which rule a sample alert would match and what would happen to it.
+ * Nothing is recorded. An unsaved rule can be tried by sending it as `rule`.
+ */
+opsRouter.post(
+  '/alert-rules/test',
+  asyncRoute(async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const severity = (SEVERITIES as readonly string[]).includes(String(body.severity)) ? (body.severity as Severity) : 'sev2';
+    const sourceId = optionalString(body.sourceId, 60) ?? '';
+    // Default routing comes from the chosen source, as it would for a real alert.
+    const monitor = sourceId ? await getMonitor(sourceId) : null;
+    const source = sourceId && !monitor ? await getSource(sourceId) : null;
+    let payload: unknown = body.payload;
+    if (typeof payload === 'string') {
+      try {
+        payload = JSON.parse(payload);
+      } catch {
+        throw badRequest('The sample payload is not valid JSON.');
+      }
+    }
+    const signal = {
+      sourceType: (monitor ? 'monitor' : 'webhook') as 'monitor' | 'webhook',
+      sourceId,
+      sourceKind: optionalString(body.sourceKind, 40) ?? monitor?.kind ?? source?.kind ?? undefined,
+      title: optionalString(body.title, 300) ?? 'Sample alert',
+      summary: optionalString(body.summary, 4000) ?? '',
+      severity,
+      payload,
+      teamId: monitor?.teamId ?? source?.teamId ?? null,
+      escalationPolicyId: monitor?.escalationPolicyId ?? source?.escalationPolicyId ?? null,
+    };
+    const at = body.at ? new Date(String(body.at)) : new Date();
+    if (Number.isNaN(at.getTime())) throw badRequest('That time is not valid.');
+    const rules = body.rule ? [{ ...validateRule(body.rule as Record<string, unknown>), id: 'draft', position: -1, createdAt: '', updatedAt: '' }] : await listRules();
+    res.json({ outcome: evaluateRules(rules, signal, at) });
+  }),
+);
+
 /* ------------------------------- Schedules -------------------------------- */
 
 function scheduleInput(body: Record<string, unknown>) {
@@ -266,6 +356,20 @@ opsRouter.get(
     const to = req.query.to ? new Date(String(req.query.to)).getTime() : from + 15 * 86_400_000;
     if (!(to > from) || to - from > 92 * 86_400_000) throw badRequest('Ask for at most 92 days at a time.');
     res.json({ schedule, shifts: await scheduleShifts(schedule.id, from, to) });
+  }),
+);
+
+/** iCalendar feed of the next 90 days, for Outlook or Google Calendar. Needs a signed-in session. */
+opsRouter.get(
+  '/schedules/:id/calendar.ics',
+  asyncRoute(async (req, res) => {
+    const schedule = await getSchedule(req.params.id);
+    if (!schedule) throw notFound('That schedule does not exist.');
+    const from = Date.now() - 7 * 86_400_000;
+    const shifts = await scheduleShifts(schedule.id, from, from + 97 * 86_400_000);
+    res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${schedule.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.ics"`);
+    res.send(scheduleToIcs(schedule.name, shifts));
   }),
 );
 

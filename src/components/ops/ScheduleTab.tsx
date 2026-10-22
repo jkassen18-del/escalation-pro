@@ -13,12 +13,19 @@ import { useAuth } from '@/state/auth';
 import { ROTATION_KINDS, type RotationKind, type Schedule, type Shift } from '@shared/ops';
 import type { Team } from '@shared/types';
 import { fromLocalInput, personColor, toLocalInput, type DirectoryPerson } from './OnCallShared';
+import { RosterEditor } from './ScheduleRoster';
+import { ScheduleCalendar } from './ScheduleCalendar';
 
 const DAY_MS = 86_400_000;
 const TIMELINE_DAYS = 14;
 const LANE_COLORS = ['#4d6b8a', '#9a7b2f', '#5b8a5a', '#8a4d6b', '#4d8a86', '#7a5fa8', '#a8673f', '#5f6fa8'];
 
-const ROTATION_LABELS: Record<RotationKind, string> = { daily: 'Daily (24 h)', weekly: 'Weekly (7 days)', custom: 'Custom length' };
+const ROTATION_LABELS: Record<RotationKind, string> = {
+  daily: 'Daily (24 h)',
+  weekly: 'Weekly (7 days)',
+  custom: 'Custom length',
+  roster: 'Fixed roster',
+};
 
 export function ScheduleTab({ people, teams }: { people: DirectoryPerson[]; teams: Team[] }) {
   const { can } = useAuth();
@@ -242,8 +249,15 @@ function ScheduleDetail({ schedule, people, onChanged }: { schedule: Schedule; p
             )}
           </div>
         </div>
-        <p className="mt-2 text-2xs text-subtle">Outlined bars are overrides. The red line is now.</p>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-2xs text-subtle">Outlined bars are overrides. The red line is now.</p>
+          <a href={opsApi.schedules.calendarUrl(schedule.id)} className="text-2xs text-[var(--accent)] underline-offset-2 hover:underline" download>
+            Download calendar (.ics)
+          </a>
+        </div>
       </div>
+
+      <ScheduleCalendar schedule={schedule} colorOf={colorOf} />
 
       <div className="rounded-md border surface">
         <div className="flex items-center justify-between border-b px-4 py-2.5">
@@ -392,6 +406,7 @@ function newLayer(index: number): LayerDraft {
     shiftHours: 168,
     startsAt: start.toISOString(),
     memberIds: [],
+    entries: [],
   };
 }
 
@@ -485,8 +500,8 @@ function ScheduleDialog({
         <div>
           <p className="mb-1 text-xs font-medium">Layers</p>
           <p className="mb-2 text-xs text-subtle">
-            Each layer is a rotation. When two layers both have someone on call, the lower one in this list wins, so put
-            weekend or holiday cover below the main rotation.
+            Each layer is a rotation, or a fixed roster of who is on standby for which dates. When two layers both have
+            someone on call, the lower one in this list wins, so put weekend or holiday cover below the main rotation.
           </p>
           <div className="space-y-3">
             {layers.map((layer, index) => (
@@ -513,7 +528,7 @@ function ScheduleDialog({
                       ))}
                     </Select>
                   </Field>
-                  <Field label="Shift hours">
+                  <Field label="Shift hours" className={layer.rotation === 'roster' ? 'invisible' : undefined}>
                     <Input
                       type="number"
                       min={1}
@@ -523,7 +538,7 @@ function ScheduleDialog({
                       onChange={(event) => updateLayer(layer.key, { shiftHours: Number(event.target.value) })}
                     />
                   </Field>
-                  <Field label="First handover">
+                  <Field label="First handover" className={layer.rotation === 'roster' ? 'invisible' : undefined}>
                     <Input
                       type="datetime-local"
                       value={toLocalInput(layer.startsAt)}
@@ -543,6 +558,14 @@ function ScheduleDialog({
                   </div>
                 </div>
 
+                {layer.rotation === 'roster' ? (
+                  <RosterEditor
+                    entries={layer.entries ?? []}
+                    timeZone={form.timeZone}
+                    people={people}
+                    onChange={(entries) => updateLayer(layer.key, { entries })}
+                  />
+                ) : (
                 <div>
                   <p className="mb-1.5 text-xs font-medium">Rotation order</p>
                   {layer.memberIds.length === 0 && <p className="mb-1.5 text-xs text-subtle">Add people in the order they take shifts.</p>}
@@ -607,6 +630,7 @@ function ScheduleDialog({
                     ))}
                   </Select>
                 </div>
+                )}
                 {index === 0 && layers.length > 1 && <p className="text-2xs text-subtle">This is the base layer.</p>}
               </div>
             ))}

@@ -16,7 +16,7 @@ import {
 } from '../repositories/tickets.ts';
 import { buildTicketUrl, dispatchAsync } from '../integrations/dispatcher.ts';
 import { notifyUsers } from '../lib/notifications.ts';
-import type { PublicUser, Ticket, TicketPriority, TicketSource, TicketType } from '../../shared/types.ts';
+import type { PublicUser, TeamFormField, Ticket, TicketPriority, TicketSource, TicketType } from '../../shared/types.ts';
 
 /**
  * Who raised a ticket that no person raised: a monitor going down, an alert
@@ -70,6 +70,15 @@ export interface CreateTicketInput {
   /** Answers to the department's form, keyed by field key. */
   customFields?: Record<string, unknown>;
   severity?: Ticket['severity'];
+  /** Raised from a quick-ticket template: recorded on the ticket. */
+  templateId?: string | null;
+  /**
+   * Questions asked on top of the department's form (a template's own), with
+   * their answers. Where a key matches a department question, this one is
+   * asked instead of it, so nobody answers the same thing twice.
+   */
+  extraFields?: TeamFormField[];
+  extraAnswers?: Record<string, unknown>;
 }
 
 export interface CreateTicketContext {
@@ -109,8 +118,13 @@ export async function createTicket(
    * answers were typed: a form is data, and a caller can always omit a
    * required answer or send a choice that is not on the list.
    */
-  const formFields = team ? await listTeamFields(team.id) : [];
-  const answers = validateAnswers(formFields, input.customFields ?? {});
+  const extraFields = input.extraFields ?? [];
+  const extraKeys = new Set(extraFields.map((field) => field.key));
+  const formFields = (team ? await listTeamFields(team.id) : []).filter((field) => !extraKeys.has(field.key));
+  const answers = [
+    ...validateAnswers(formFields, input.customFields ?? {}),
+    ...validateAnswers(extraFields, input.extraAnswers ?? {}),
+  ];
 
   const result = await db.transaction(async () => {
     // Explicit assignee wins; otherwise fall back to the team's routing rule.
@@ -137,6 +151,7 @@ export async function createTicket(
       dueAt,
       createdBy: actorId,
       severity: input.severity ?? null,
+      templateId: input.templateId ?? null,
     });
 
     if (descriptionFormat === 'html') {

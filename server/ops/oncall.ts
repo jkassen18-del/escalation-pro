@@ -10,6 +10,7 @@ import {
   type EscalationTarget,
   type NotificationRule,
   type NotifyChannel,
+  type RosterEntry,
   type RotationKind,
   type Schedule,
   type ScheduleLayer,
@@ -31,6 +32,7 @@ interface LayerRow {
   shift_hours: number | string;
   starts_at: string;
   member_ids: string;
+  entries?: string | null;
 }
 
 function mapLayer(row: LayerRow): ScheduleLayer {
@@ -42,6 +44,7 @@ function mapLayer(row: LayerRow): ScheduleLayer {
     shiftHours: Number(row.shift_hours),
     startsAt: row.starts_at,
     memberIds: parseJson<string[]>(row.member_ids, []),
+    entries: parseJson<RosterEntry[]>(row.entries, []),
   };
 }
 
@@ -57,6 +60,10 @@ async function userNames(ids: string[]): Promise<Map<string, string>> {
 
 /** Who a single layer has on call at `t`, and when that shift ends. */
 export function layerOnCallAt(layer: ScheduleLayer, t: number): { userId: string; endsAt: number } | null {
+  if (layer.rotation === 'roster') {
+    const entry = (layer.entries ?? []).find((e) => new Date(e.startsAt).getTime() <= t && new Date(e.endsAt).getTime() > t);
+    return entry ? { userId: entry.userId, endsAt: new Date(entry.endsAt).getTime() } : null;
+  }
   const start = new Date(layer.startsAt).getTime();
   const length = layer.shiftHours * HOUR_MS;
   if (!layer.memberIds.length || !(length > 0) || t < start) return null;
@@ -83,7 +90,17 @@ export function onCallAt(layers: ScheduleLayer[], overrides: ScheduleOverride[],
 /** Every shift in [from, to), merged where the same person carries on. */
 export function renderShifts(layers: ScheduleLayer[], overrides: ScheduleOverride[], from: number, to: number): Array<Omit<Shift, 'userName'>> {
   const points = new Set<number>([from]);
+  const addEdge = (edge: number) => {
+    if (edge > from && edge < to) points.add(edge);
+  };
   for (const layer of layers) {
+    if (layer.rotation === 'roster') {
+      for (const entry of layer.entries ?? []) {
+        addEdge(new Date(entry.startsAt).getTime());
+        addEdge(new Date(entry.endsAt).getTime());
+      }
+      continue;
+    }
     const start = new Date(layer.startsAt).getTime();
     const length = layer.shiftHours * HOUR_MS;
     if (!(length > 0)) continue;
@@ -95,9 +112,8 @@ export function renderShifts(layers: ScheduleLayer[], overrides: ScheduleOverrid
     }
   }
   for (const override of overrides) {
-    for (const edge of [new Date(override.startsAt).getTime(), new Date(override.endsAt).getTime()]) {
-      if (edge > from && edge < to) points.add(edge);
-    }
+    addEdge(new Date(override.startsAt).getTime());
+    addEdge(new Date(override.endsAt).getTime());
   }
   const sorted = [...points].sort((a, b) => a - b);
   const shifts: Array<Omit<Shift, 'userName'>> = [];
@@ -182,6 +198,30 @@ export async function scheduleShifts(id: string, from: number, to: number): Prom
   return shifts.map((shift) => ({ ...shift, userName: names.get(shift.userId) ?? 'Unknown' }));
 }
 
+/** RFC 5545 text: escape the four specials, fold nothing (lines stay short). */
+function icsText(text: string): string {
+  return text.replace(/[\\;,]/g, (c) => `\\${c}`).replace(/\r?\n/g, '\\n');
+}
+
+const icsDate = (iso: string) => iso.replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+
+export function scheduleToIcs(name: string, shifts: Shift[]): string {
+  const stamp = icsDate(new Date().toISOString());
+  const events = shifts.map((shift) =>
+    [
+      'BEGIN:VEVENT',
+      `UID:${shift.userId}-${icsDate(shift.startsAt)}@infraticket`,
+      `DTSTAMP:${stamp}`,
+      `DTSTART:${icsDate(shift.startsAt)}`,
+      `DTEND:${icsDate(shift.endsAt)}`,
+      `SUMMARY:${icsText(`On call: ${shift.userName}${shift.source === 'override' ? ' (cover)' : ''}`)}`,
+      `DESCRIPTION:${icsText(`${name} on-call schedule`)}`,
+      'END:VEVENT',
+    ].join('\r\n'),
+  );
+  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//InfraTicket//On-call//EN', `X-WR-CALNAME:${icsText(name)}`, ...events, 'END:VCALENDAR', ''].join('\r\n');
+}
+
 export interface ScheduleInput {
   name: string;
   description: string | null;
@@ -205,23 +245,66 @@ export function validateTimeZone(zone: string): string {
   }
 }
 
+const MAX_ROSTER_ENTRIES = 500;
+
+/** Roster entries: valid dates, start before end, and no two covering the same moment. */
+export function parseRosterEntries(value: unknown, layerName: string): RosterEntry[] {
+  if (!Array.isArray(value)) return [];
+  if (value.length > MAX_ROSTER_ENTRIES) throw badRequest(`A roster holds at most ${MAX_ROSTER_ENTRIES} entries.`);
+  const entries = value.map((raw) => {
+    const entry = raw as Record<string, unknown>;
+    const startsAt = new Date(String(entry.startsAt ?? ''));
+    const endsAt = new Date(String(entry.endsAt ?? ''));
+    const userId = String(entry.userId ?? '');
+    if (!userId) throw badRequest(`Every entry in "${layerName}" needs a person.`);
+    if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) throw badRequest(`Every entry in "${layerName}" needs a start and an end.`);
+    if (endsAt <= startsAt) throw badRequest(`An entry in "${layerName}" ends before it starts.`);
+    return { userId, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() };
+  });
+  entries.sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+  for (let i = 1; i < entries.length; i += 1) {
+    if (entries[i].startsAt < entries[i - 1].endsAt) {
+      throw badRequest(
+        `Two entries in "${layerName}" overlap (${entries[i - 1].startsAt.slice(0, 16)} and ${entries[i].startsAt.slice(0, 16)}). ` +
+          'Use an override to cover part of someone\'s shift instead.',
+      );
+    }
+  }
+  return entries;
+}
+
 export function parseLayers(value: unknown): ScheduleInput['layers'] {
   if (!Array.isArray(value)) throw badRequest('A schedule needs at least one layer.');
   return value.slice(0, 10).map((raw, index) => {
     const layer = raw as Record<string, unknown>;
+    const name = String(layer.name || `Layer ${index + 1}`).slice(0, 80);
     const rotation = ROTATION_KINDS.includes(layer.rotation as RotationKind) ? (layer.rotation as RotationKind) : 'weekly';
+    if (rotation === 'roster') {
+      const entries = parseRosterEntries(layer.entries, name);
+      return {
+        name,
+        position: index,
+        rotation,
+        shiftHours: 168,
+        // Kept for display and for sorting layers; the entries decide who is on.
+        startsAt: entries[0]?.startsAt ?? new Date().toISOString(),
+        memberIds: Array.from(new Set(entries.map((entry) => entry.userId))),
+        entries,
+      };
+    }
     const shiftHours = rotation === 'daily' ? 24 : rotation === 'weekly' ? 168 : Math.round(Number(layer.shiftHours));
     if (!(shiftHours >= 1 && shiftHours <= 24 * 28)) throw badRequest('Shifts must be between 1 hour and 4 weeks long.');
     const startsAt = new Date(String(layer.startsAt ?? ''));
     if (Number.isNaN(startsAt.getTime())) throw badRequest('Each layer needs a start date and time.');
     const memberIds = Array.isArray(layer.memberIds) ? layer.memberIds.map(String).slice(0, 100) : [];
     return {
-      name: String(layer.name || `Layer ${index + 1}`).slice(0, 80),
+      name,
       position: index,
       rotation,
       shiftHours,
       startsAt: startsAt.toISOString(),
       memberIds,
+      entries: [],
     };
   });
 }
@@ -249,8 +332,18 @@ export async function saveSchedule(id: string | null, input: ScheduleInput): Pro
     }
     for (const layer of input.layers) {
       await db.run(
-        `INSERT INTO oncall_layers (id, schedule_id, name, position, rotation, shift_hours, starts_at, member_ids) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [randomId(), scheduleId, layer.name, layer.position, layer.rotation, layer.shiftHours, layer.startsAt, JSON.stringify(layer.memberIds)],
+        `INSERT INTO oncall_layers (id, schedule_id, name, position, rotation, shift_hours, starts_at, member_ids, entries) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          randomId(),
+          scheduleId,
+          layer.name,
+          layer.position,
+          layer.rotation,
+          layer.shiftHours,
+          layer.startsAt,
+          JSON.stringify(layer.memberIds),
+          JSON.stringify(layer.entries ?? []),
+        ],
       );
     }
   });

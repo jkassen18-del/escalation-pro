@@ -1,8 +1,8 @@
 import type {
+  DataSourceSummary,
   HttpIntegration,
   HttpIntegrationInput,
   LinearTeamMapping,
-  DataSourceSummary,
   TeamRoute,
   TeamFormField,
   AppSettings,
@@ -114,7 +114,8 @@ export const api = {
     remove: (id: string) => del<{ ok: true }>(`/tickets/${id}`),
     comment: (id: string, body: { body: string; bodyFormat?: 'text' | 'html'; isInternal: boolean }) =>
       post<{ ticket: TicketDetail }>(`/tickets/${id}/comments`, body),
-    escalate: (id: string, body: { reason: string }) => post<{ ticket: Ticket }>(`/tickets/${id}/escalate`, body),
+    escalate: (id: string, body: { reason: string; teamId?: string; priority?: string }) =>
+      post<{ ticket: Ticket }>(`/tickets/${id}/escalate`, body),
     watch: (id: string, watch: boolean) => post<{ ticket: Ticket }>(`/tickets/${id}/watch`, { watch }),
     pushToLinear: (id: string) => post<{ ticket: Ticket }>(`/tickets/${id}/push-to-linear`),
     upload: (id: string, files: File[]) => {

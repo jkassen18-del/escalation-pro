@@ -14,6 +14,7 @@ import { Checkbox, Field, Input, Select, SegmentedControl, Textarea } from '@/co
 import { Menu } from '@/components/ui/Menu';
 import { ConfirmDialog, Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
+import { RoutingTab } from '@/components/ops/AlertRouting';
 import { CopyField, MonitorTabs, SeverityBadge, StateDot, STATE_LABELS, UptimeBars } from '@/components/ops/MonitorShared';
 import {
   ALERT_SOURCE_KINDS,
@@ -37,7 +38,7 @@ import {
 } from '@shared/ops';
 import type { Team } from '@shared/types';
 
-type Tab = 'monitors' | 'sources' | 'alerts' | 'maintenance';
+type Tab = 'monitors' | 'sources' | 'routing' | 'alerts' | 'maintenance';
 
 function message(caught: unknown, fallback: string): string {
   return caught instanceof ApiError ? caught.message : fallback;
@@ -73,6 +74,7 @@ export function MonitorsPage() {
           tabs={[
             { value: 'monitors', label: 'Monitors' },
             { value: 'sources', label: 'Alert sources' },
+            { value: 'routing', label: 'Routing' },
             { value: 'alerts', label: 'Alerts' },
             { value: 'maintenance', label: 'Maintenance' },
           ]}
@@ -81,6 +83,7 @@ export function MonitorsPage() {
 
       {tab === 'monitors' && <MonitorsTab canManage={canManage} {...choices} />}
       {tab === 'sources' && <SourcesTab canManage={canManage} {...choices} />}
+      {tab === 'routing' && <RoutingTab canManage={canManage} {...choices} />}
       {tab === 'alerts' && <AlertsTab />}
       {tab === 'maintenance' && <MaintenanceTab canManage={canManage} />}
     </div>
@@ -1134,7 +1137,10 @@ function AlertsTab() {
                         </p>
                       )}
                     </td>
-                    <td className="hidden px-3 py-2 text-xs md:table-cell">{alert.sourceName}</td>
+                    <td className="hidden px-3 py-2 text-xs md:table-cell">
+                      {alert.sourceName}
+                      {alert.ruleName && <span className="block text-2xs text-subtle">via rule {alert.ruleName}</span>}
+                    </td>
                     <td className="tabular hidden px-3 py-2 text-right text-xs md:table-cell">{alert.count}</td>
                     <td className="hidden px-3 py-2 sm:table-cell">
                       <div className="flex flex-wrap gap-1">

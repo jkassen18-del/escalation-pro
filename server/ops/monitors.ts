@@ -299,6 +299,7 @@ async function recordResult(row: MonitorRow, result: ProbeResult): Promise<Monit
 
   const signal = {
     sourceType: 'monitor' as const,
+    sourceKind: row.kind,
     sourceId: row.id,
     sourceName: row.name,
     dedupKey: `monitor:${row.id}`,

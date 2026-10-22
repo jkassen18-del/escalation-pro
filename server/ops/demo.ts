@@ -37,7 +37,7 @@ export async function seedOpsWorkspace(ownerId: string): Promise<void> {
     description: 'Weekly rotation, handing over on Mondays at 09:00 SAST.',
     teamId,
     timeZone: 'Africa/Johannesburg',
-    layers: [{ name: 'Weekly', position: 0, rotation: 'weekly', shiftHours: 168, startsAt: monday.toISOString(), memberIds: [ownerId] }],
+    layers: [{ name: 'Weekly', position: 0, rotation: 'weekly', shiftHours: 168, startsAt: monday.toISOString(), memberIds: [ownerId], entries: [] }],
   });
   const policy = await savePolicy(null, {
     name: 'Operations SEV policy',

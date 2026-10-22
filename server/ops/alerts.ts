@@ -7,6 +7,7 @@ import { createTicket, SYSTEM_ACTOR } from '../services/tickets.ts';
 import { TERMINAL_STATUSES, type TicketPriority } from '../../shared/types.ts';
 import type { Alert, MaintenanceWindow, Severity } from '../../shared/ops.ts';
 import { resolvePagesForTicket, triggerPage } from './pager.ts';
+import { routeSignal } from './routing.ts';
 
 /**
  * The alert pipeline. Every signal - a monitor going down, a CloudWatch
@@ -33,6 +34,8 @@ export interface AlertSignal {
   payload?: unknown;
   teamId: string | null;
   escalationPolicyId: string | null;
+  /** Monitor kind or alert source kind, for routing rules that match on it. */
+  sourceKind?: string;
 }
 
 export type IngestAction = 'created' | 'grouped' | 'deduplicated' | 'resolved' | 'ignored';
@@ -74,6 +77,7 @@ interface AlertRow {
   ticket_id: string | null;
   ticket_number?: number | string | null;
   suppressed: number | string;
+  rule_name?: string | null;
   payload: string | null;
   first_seen_at: string;
   last_seen_at: string;
@@ -95,6 +99,7 @@ export function mapAlert(row: AlertRow, prefix: string): Alert {
     ticketId: row.ticket_id,
     ticketReference: row.ticket_number ? `${prefix}-${row.ticket_number}` : null,
     suppressed: toBool(row.suppressed),
+    ruleName: row.rule_name ?? null,
     payload: parseJson<unknown>(row.payload, null),
     firstSeenAt: row.first_seen_at,
     lastSeenAt: row.last_seen_at,
@@ -205,12 +210,20 @@ export async function ingestSignal(signal: AlertSignal): Promise<IngestResult> {
     return { action: 'deduplicated', alertId: open.id, ticketId: open.ticket_id, suppressed: toBool(open.suppressed), paged: false };
   }
 
+  // Routing rules see the alert before anything is recorded, so a rule can
+  // change its severity or drop it outright.
+  const routing = await routeSignal(signal);
+  if (routing.drop) return { action: 'ignored', alertId: null, ticketId: null, suppressed: true, paged: false };
+  const ruleName = routing.matchedRules.length ? routing.matchedRules.map((rule) => rule.name).join(' → ') : null;
+  const routed: AlertSignal = { ...signal, severity: routing.severity, teamId: routing.teamId, escalationPolicyId: routing.escalationPolicyId };
+
   const maintenance = await inMaintenance(signal.sourceId);
+  const suppressed = Boolean(maintenance) || routing.suppressPaging;
   const alertId = randomId();
   await db.run(
     `INSERT INTO alerts (id, source_type, source_id, source_name, dedup_key, title, summary, severity, status, count,
-       ticket_id, suppressed, payload, first_seen_at, last_seen_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'firing', 1, NULL, ?, ?, ?, ?)`,
+       ticket_id, suppressed, rule_name, payload, first_seen_at, last_seen_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'firing', 1, NULL, ?, ?, ?, ?, ?)`,
     [
       alertId,
       signal.sourceType,
@@ -219,60 +232,77 @@ export async function ingestSignal(signal: AlertSignal): Promise<IngestResult> {
       signal.dedupKey,
       signal.title.slice(0, 300),
       (signal.summary ?? '').slice(0, 4000),
-      signal.severity,
-      maintenance ? 1 : 0,
+      routed.severity,
+      suppressed ? 1 : 0,
+      ruleName,
       payload,
       now,
       now,
     ],
   );
 
-  // Grouping: another open alert from this source, recent, on an incident still open.
+  // Grouping: another open alert from this source, recent, on an incident
+  // still open - and with the same department. A rule that sends this alert
+  // somewhere else means it is not the same incident, whatever the source.
   const since = new Date(Date.now() - GROUP_WINDOW_MS).toISOString();
   const sibling = await db.get<{ ticket_id: string }>(
     `SELECT a.ticket_id FROM alerts a JOIN tickets t ON t.id = a.ticket_id
      WHERE a.source_id = ? AND a.id <> ? AND a.status <> 'resolved' AND a.last_seen_at >= ?
-       AND t.status NOT IN ('resolved', 'closed')
+       AND t.status NOT IN ('resolved', 'closed') AND COALESCE(t.team_id, '') = ?
      ORDER BY a.last_seen_at DESC LIMIT 1`,
-    [signal.sourceId, alertId, since],
+    [signal.sourceId, alertId, since, routed.teamId ?? ''],
   );
   if (sibling) {
     await db.run(`UPDATE alerts SET ticket_id = ? WHERE id = ?`, [sibling.ticket_id, alertId]);
     await addSystemComment(sibling.ticket_id, `Another alert joined this incident: ${signal.title}\n\n${signal.summary ?? ''}`.trim());
     await recordEvent(sibling.ticket_id, null, 'alert_grouped', 'alert', null, signal.title);
-    return { action: 'grouped', alertId, ticketId: sibling.ticket_id, suppressed: Boolean(maintenance), paged: false };
+    return { action: 'grouped', alertId, ticketId: sibling.ticket_id, suppressed, paged: false };
   }
 
-  const team = signal.teamId ? await findTeamById(signal.teamId) : null;
+  const team = routed.teamId ? await findTeamById(routed.teamId) : null;
   const ticket = await createTicket(
     {
-      subject: `[${signal.severity.toUpperCase()}] ${signal.title}`.slice(0, 200),
-      description: describePayload(signal),
+      subject: `[${routed.severity.toUpperCase()}] ${signal.title}`.slice(0, 200),
+      description: describePayload(routed),
       teamId: team?.id ?? null,
-      priority: SEVERITY_PRIORITY[signal.severity],
+      priority: SEVERITY_PRIORITY[routed.severity],
       type: 'incident',
       source: signal.sourceType,
-      tags: ['alert', signal.sourceType],
-      severity: signal.severity,
+      tags: Array.from(new Set(['alert', signal.sourceType, ...routing.tags])),
+      severity: routed.severity,
     },
     { actor: SYSTEM_ACTOR },
   );
   await db.run(`UPDATE alerts SET ticket_id = ? WHERE id = ?`, [ticket.id, alertId]);
+  if (ruleName) {
+    await addSystemComment(ticket.id, `${routing.explanation}${team ? ` Sent to ${team.name}.` : ''}`);
+    await recordEvent(ticket.id, null, 'routed', 'rule', null, ruleName);
+  }
 
   if (maintenance) {
     await addSystemComment(ticket.id, `Paging suppressed: maintenance window "${maintenance.title}" is in effect until ${maintenance.endsAt}.`);
     return { action: 'created', alertId, ticketId: ticket.id, suppressed: true, paged: false };
   }
+  if (routing.suppressPaging) {
+    await addSystemComment(ticket.id, `Nobody was paged: rule '${ruleName}' records this alert as a ticket only.`);
+    return { action: 'created', alertId, ticketId: ticket.id, suppressed: true, paged: false };
+  }
 
   const teamPolicyId = team ? (await db.get<{ escalation_policy_id: string | null }>(`SELECT escalation_policy_id FROM teams WHERE id = ?`, [team.id]))?.escalation_policy_id ?? null : null;
-  const policyId = signal.escalationPolicyId || teamPolicyId;
+  const policyId = routed.escalationPolicyId || teamPolicyId;
   let paged = false;
-  if (policyId && severityPages(signal.severity)) {
-    const via = signal.escalationPolicyId ? `its own escalation policy` : `the default escalation policy of team ${team?.name}`;
+  if (policyId && severityPages(routed.severity)) {
+    const via = routed.escalationPolicyId
+      ? ruleName && routed.escalationPolicyId !== signal.escalationPolicyId
+        ? `the escalation policy set by rule '${ruleName}'`
+        : `its own escalation policy`
+      : `the default escalation policy of team ${team?.name}`;
     await triggerPage(ticket.id, {
       policyId,
-      severity: signal.severity,
-      reason: `${signal.sourceType === 'monitor' ? 'Monitor' : 'Alert source'} "${signal.sourceName}" raised a ${signal.severity.toUpperCase()} alert ("${signal.title}") and was routed to ${via}.`,
+      severity: routed.severity,
+      reason:
+        `${signal.sourceType === 'monitor' ? 'Monitor' : 'Alert source'} "${signal.sourceName}" raised a ${routed.severity.toUpperCase()} alert ("${signal.title}") and was routed to ${via}.` +
+        (ruleName ? ` ${routing.explanation}` : ''),
     });
     paged = true;
   } else if (!policyId) {

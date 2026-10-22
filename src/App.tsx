@@ -7,6 +7,8 @@ import { SetupPage } from '@/pages/Setup';
 import { TicketListPage } from '@/pages/TicketList';
 import { TicketDetailPage } from '@/pages/TicketDetail';
 import { NewTicketPage } from '@/pages/NewTicket';
+import { QuickTicketPage } from '@/pages/QuickTicket';
+import { QuickTicketsPage } from '@/pages/QuickTickets';
 import { PeoplePage } from '@/pages/People';
 import { TeamsPage } from '@/pages/Teams';
 import { ReportsPage } from '@/pages/Reports';
@@ -14,6 +16,7 @@ import { IntegrationsPage } from '@/pages/Integrations';
 import { SettingsPage } from '@/pages/Settings';
 import { AuditLogPage } from '@/pages/AuditLog';
 import { ProfilePage } from '@/pages/Profile';
+import { QuickLinksPage } from '@/pages/QuickLinks';
 import { OperationsPage } from '@/pages/Operations';
 import { MonitorsPage } from '@/pages/Monitors';
 import { OnCallPage } from '@/pages/OnCall';
@@ -41,6 +44,8 @@ export function App() {
         <Route path="/" element={<Navigate to="/tickets" replace />} />
         <Route path="/tickets" element={<TicketListPage />} />
         <Route path="/tickets/new" element={<Guard permission="tickets.create"><NewTicketPage /></Guard>} />
+        <Route path="/tickets/quick/:id" element={<Guard permission="tickets.create"><QuickTicketPage /></Guard>} />
+        <Route path="/quick-tickets" element={<Guard permission="teams.manage"><QuickTicketsPage /></Guard>} />
         <Route path="/tickets/:id" element={<TicketDetailPage />} />
         <Route path="/people" element={<Guard permission="users.view"><PeoplePage /></Guard>} />
         <Route path="/teams" element={<Guard permission="teams.manage"><TeamsPage /></Guard>} />
@@ -52,6 +57,7 @@ export function App() {
         <Route path="/settings" element={<Guard permission="settings.manage"><SettingsPage /></Guard>} />
         <Route path="/audit" element={<Guard permission="audit.view"><AuditLogPage /></Guard>} />
         <Route path="/profile" element={<ProfilePage />} />
+        <Route path="/links" element={<QuickLinksPage />} />
         <Route path="/operations" element={<OperationsPage />} />
         <Route path="/monitors" element={<MonitorsPage />} />
         <Route path="/oncall" element={<OnCallPage />} />

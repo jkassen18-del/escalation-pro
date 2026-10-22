@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Activity,
+  Link2,
   Bell,
   Database,
   Globe,
@@ -24,8 +25,10 @@ import {
   TriangleAlert,
   Users as UsersIcon,
   X,
+  Zap,
 } from 'lucide-react';
 import { BrandMark } from '@/components/BrandMark';
+import { QuickTicketMenu } from '@/components/quick/QuickTicketMenu';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { relativeTime } from '@/lib/format';
@@ -58,12 +61,14 @@ const OPERATIONS_NAV: NavItem[] = [
   { to: '/oncall', label: 'On-call', icon: PhoneCall },
   { to: '/status-pages', label: 'Status pages', icon: Globe },
   { to: '/databases', label: 'Databases', icon: Database, permission: 'backups.manage' },
+  { to: '/links', label: 'Quick links', icon: Link2 },
 ];
 
 const MANAGE_NAV: NavItem[] = [
   { to: '/reports', label: 'Reports', icon: ScrollText, permission: 'reports.view' },
   { to: '/people', label: 'People', icon: UsersIcon, permission: 'users.view' },
   { to: '/teams', label: 'Teams', icon: Building2, permission: 'teams.manage' },
+  { to: '/quick-tickets', label: 'Quick tickets', icon: Zap, permission: 'teams.manage' },
   { to: '/integrations', label: 'Integrations', icon: Plug, permission: 'integrations.manage' },
   { to: '/settings', label: 'Settings', icon: SettingsIcon, permission: 'settings.manage' },
   { to: '/audit', label: 'Audit log', icon: KeyRound, permission: 'audit.view' },
@@ -306,6 +311,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             )}
           </div>
 
+          {can('tickets.create') && <QuickTicketMenu />}
           {can('tickets.create') && (
             <Button variant="primary" size="sm" onClick={() => navigate('/tickets/new')}>
               New ticket
