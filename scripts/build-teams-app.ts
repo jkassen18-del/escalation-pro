@@ -18,7 +18,8 @@
  *     --app-id 00000000-0000-0000-0000-000000000000 \
  *     --url https://tickets.example.internal \
  *     [--name InfraBot] [--org "Gold Media Lab"] [--version 1.1.0] \
- *     [--departments finance,hr,it] [--out infrabot-teams.zip]
+ *     [--departments finance,hr,it] [--icon color-192.png] [--outline outline-32.png]
+ *     [--out infrabot-teams.zip]
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -62,7 +63,7 @@ const appUrl = arg('url');
 if (!appId || !appUrl) {
   console.error(
     'Usage: npx tsx scripts/build-teams-app.ts --app-id <guid> --url <https://host> ' +
-      '[--name InfraBot] [--org "Your Company"] [--version 1.1.0] [--departments finance,hr,it] [--out file.zip]\n' +
+      '[--name InfraBot] [--org "Your Company"] [--version 1.1.0] [--departments finance,hr,it] [--icon color.png] [--outline outline.png] [--out file.zip]\n' +
       '   or: npm run build:teams-app -- --from-db [--out file.zip]',
   );
   process.exit(2);
@@ -94,6 +95,8 @@ try {
     organizationName: arg('org') ?? 'Service Desk',
     version: arg('version') ?? '1.1.0',
     teams: departments,
+    colorIconPng: arg('icon') ? fs.readFileSync(arg('icon')!) : undefined,
+    outlineIconPng: arg('outline') ? fs.readFileSync(arg('outline')!) : undefined,
   });
 } catch (error) {
   console.error(error instanceof ManifestError ? error.message : error);

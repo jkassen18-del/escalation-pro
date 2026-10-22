@@ -41,6 +41,8 @@ export interface ManifestOptions {
   commands?: Array<{ title: string; description: string }>;
   /** A replacement 192x192 colour icon; the generated one otherwise. */
   colorIconPng?: Buffer;
+  /** A replacement 32x32 outline icon: white on transparent, as Teams requires. */
+  outlineIconPng?: Buffer;
 }
 
 /** Teams' own limits, checked before Microsoft gets to reject the upload. */
@@ -202,7 +204,7 @@ export function buildTeamsAppPackage(options: ManifestOptions): PackageResult {
     [
       { name: 'manifest.json', data: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8') },
       { name: 'color.png', data: options.colorIconPng ?? colorIcon(options.accentColor) },
-      { name: 'outline.png', data: outlineIcon() },
+      { name: 'outline.png', data: options.outlineIconPng ?? outlineIcon() },
     ],
     // Fixed, so re-downloading an unchanged configuration gives identical
     // bytes and Teams does not think it is a different package.
@@ -270,7 +272,7 @@ export function validateTeamsPackage(options: ManifestOptions): string[] {
     if (!size) problems.push('The uploaded icon is not a PNG.');
     else if (size.width !== 192 || size.height !== 192) problems.push(`The colour icon must be 192x192 pixels; the uploaded one is ${size.width}x${size.height}.`);
   }
-  const outline = pngSize(outlineIcon());
+  const outline = pngSize(options.outlineIconPng ?? outlineIcon());
   if (!outline || outline.width !== 32 || outline.height !== 32) problems.push('The outline icon must be 32x32 pixels.');
 
   return problems;
