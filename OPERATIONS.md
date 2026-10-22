@@ -278,6 +278,20 @@ does not wake anyone.
   is paged now, and an alert that only was recorded becomes a ticket and pages.
   Monitors that came back during the work raise nothing.
 
+### Discord direct messages
+
+Free, and needs no public URL. With the Discord integration on (see the
+README), each person links their account by typing `/link` in Discord and
+entering the code under *Profile → Discord*, then adds **Discord DM** to their
+notification rules. A page arrives as a DM with **Acknowledge** and
+**Escalate now** buttons; the clicks come back over the bot's own outbound
+connection, so they work even when InfraTicket sits on an internal network.
+Every attempt is on the incident timeline, and Discord DM counts as a wake-up
+channel for high urgency. For it to be loud, set the InfraTicket server (or
+the bot's DMs) to *All messages* and allow it through Do Not Disturb on the
+phone. Discord refuses a DM to someone who shares no server with the bot or
+has turned off DMs from that server; the attempt then shows that reason.
+
 ## Status pages
 
 Make as many as you need, public or internal. Components are monitors, with a

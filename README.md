@@ -468,6 +468,55 @@ team that mirrored issues should be filed against.
   left alone rather than dumped into a queue nobody is watching, and an issue
   this app created never comes back as a second ticket.
 
+### Discord
+
+Free, and needs **no public URL**: the bot connects *out* to Discord's
+Gateway, so button clicks, slash commands and thread replies arrive over that
+connection rather than at an address Discord has to reach. It works from the
+lab server, behind a firewall, or from the portable exe on a laptop.
+
+Setup (Integrations → Discord):
+
+1. [Discord Developer Portal](https://discord.com/developers/applications) →
+   **New Application**. Copy the **Application ID** from General Information.
+2. **Bot** → **Reset Token**, copy it. Under *Privileged Gateway Intents*, turn
+   on **Message Content Intent** (without it replies in threads arrive empty).
+3. Paste both into InfraTicket and **Save**. Use **Add to server**: the invite
+   asks for View Channels, Send Messages, Send Messages in Threads, Create
+   Public Threads, Embed Links, Read Message History and Use Application
+   Commands.
+4. Pick the default channel for new tickets and, optionally, a channel per
+   department under *Department channels*. **Test**, then turn it on.
+
+What people can do:
+
+- **`/link`** replies (only to them) with a code to enter on their InfraTicket
+  profile. Everything below needs a linked account, and every action is
+  checked against that account's permissions; `/unlink` undoes it.
+- **`/ticket`** with a department (or a quick-ticket template) and an optional
+  priority opens a form for the subject and details. The ticket goes through
+  the normal path (SLA, auto-assignment, audit, Slack/Teams/Linear) with
+  source *discord*. Text questions the department or template requires are
+  asked in the form (up to three); anything else - a choice, a date, a
+  lookup - gets a link to the web form instead.
+- Every ticket gets a **card in its department's channel and a thread**.
+  Status changes, assignments, escalations, SLA breaches and public comments
+  from the web are posted there; replies in the thread from linked people
+  become comments, with images and PDFs copied onto the ticket. The bot's own
+  posts are never read back, and a reply is never echoed into the thread it
+  came from.
+- The card's **Take**, **Resolve** and **Escalate** buttons (Escalate asks for
+  the department and a reason) work like the web app.
+- **Pages by direct message** with **Acknowledge** and **Escalate now**
+  buttons: add *Discord DM* to your notification rules. It counts as a
+  wake-up channel for high urgency. Discord delivers a bot's DM only to people
+  who share a server with it and allow DMs from that server's members.
+
+With several instances, one holds the Discord connection (a lease in the
+database) and another takes over within a minute if it stops. A token Discord
+rejects, or a missing intent, shows on the card and is not retried until the
+settings change.
+
 ### Email (SMTP)
 
 Standard SMTP with STARTTLS on port 587 or implicit TLS on port 465. Notifies
