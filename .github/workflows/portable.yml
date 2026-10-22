@@ -1,0 +1,38 @@
+name: Portable build
+
+# Builds InfraTicket.exe on a real Windows runner, starts it, and proves it
+# answers /health before uploading it. Download it from the run's artifacts.
+on:
+  workflow_dispatch:
+  push:
+    branches: ['InfraTicket-v*']
+    tags: ['v*']
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.0
+          cache: npm
+      - run: npm ci
+      - run: npm run build:portable
+      - name: Start the exe and check it serves
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist/portable/InfraTicket.exe -ArgumentList '--no-browser' -PassThru
+          $ok = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Seconds 2
+            try { $r = Invoke-RestMethod http://localhost:8080/health; if ($r.status -eq 'ok') { $ok = $true; break } } catch {}
+          }
+          Stop-Process -Id $p.Id -Force
+          if (-not $ok) { throw 'InfraTicket.exe did not answer /health' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: InfraTicket-portable-windows
+          path: |
+            dist/portable/InfraTicket.exe
+            dist/portable/InfraTicket.exe.sha256

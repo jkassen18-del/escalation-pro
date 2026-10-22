@@ -26,6 +26,7 @@ import { auditRouter } from './routes/audit.ts';
 import { webhooksRouter } from './routes/webhooks.ts';
 import { cronRouter } from './routes/cron.ts';
 import { startSlaMonitor } from './jobs/sla-monitor.ts';
+import { APP_VERSION } from '../shared/version.ts';
 import { pruneAttempts } from './lib/rate-limit.ts';
 
 export async function createApp() {
@@ -230,19 +231,24 @@ export function getServerlessApp(): Promise<express.Express> {
   return serverlessApp;
 }
 
-async function main() {
+export async function startServer() {
   await initDatabase();
   await bootstrapFromEnvironment();
 
   const app = await createApp();
-  const server = app.listen(config.port, config.host, () => {
-    console.log('');
-    console.log(`  InfraTicket`);
-    console.log(`  → http://localhost:${config.port}`);
-    console.log(`  → database: ${db.dialect}`);
-    console.log(`  → mode: ${IS_PRODUCTION ? 'production' : 'development'}`);
-    console.log('');
+  const server = app.listen(config.port, config.host);
+  // Resolve once listening, so a caller (the portable launcher) can report a
+  // port that is already taken instead of the process dying unexplained.
+  await new Promise<void>((resolve, reject) => {
+    server.once('listening', resolve);
+    server.once('error', reject);
   });
+  console.log('');
+  console.log(`  InfraTicket ${APP_VERSION}`);
+  console.log(`  → http://localhost:${config.port}`);
+  console.log(`  → database: ${db.dialect}`);
+  console.log(`  → mode: ${IS_PRODUCTION ? 'production' : 'development'}`);
+  console.log('');
 
   const stopSla = startSlaMonitor();
 
@@ -288,7 +294,7 @@ function isEntryModule(): boolean {
 }
 
 if (!IS_SERVERLESS && isEntryModule()) {
-  main().catch((error) => {
+  startServer().catch((error) => {
     console.error('\n[fatal] InfraTicket failed to start:\n');
     console.error(error instanceof Error ? error.message : error);
     process.exit(1);

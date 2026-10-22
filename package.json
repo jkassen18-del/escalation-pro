@@ -1,6 +1,6 @@
 {
   "name": "infraticket",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "description": "InfraTicket - a departmental ticketing and escalation management system.",
@@ -19,7 +19,8 @@
     "lint": "npm run typecheck",
     "test": "tsx --test --test-force-exit tests/*.test.ts",
     "build:function": "esbuild server/serverless.ts --bundle --platform=node --format=esm --target=node22 --external:better-sqlite3 --external:pg --external:pg-native --external:pg-query-stream --external:mysql2 --external:nodemailer --banner:js=\"import{createRequire as __createRequire}from'node:module';const require=__createRequire(import.meta.url);\" --outfile=dist/function/index.mjs",
-    "build:teams-app": "tsx scripts/build-teams-app.ts"
+    "build:teams-app": "tsx scripts/build-teams-app.ts",
+    "build:portable": "tsx scripts/build-portable.ts"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",
@@ -58,6 +59,7 @@
     "@vitejs/plugin-react": "^5.0.4",
     "esbuild": "^0.25.10",
     "playwright-core": "^1.63.0",
+    "postject": "^1.0.0-alpha.6",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",

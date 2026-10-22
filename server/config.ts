@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import dotenv from 'dotenv';
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const ROOT = process.cwd();
 
@@ -45,7 +45,7 @@ export const paths = {
   data: dirOf('DATA_DIR', 'data'),
   uploads: dirOf('UPLOADS_DIR', 'data/uploads'),
   exports: dirOf('EXPORTS_DIR', 'data/exports'),
-  clientDist: path.resolve(ROOT, 'dist/client'),
+  clientDist: path.resolve(ROOT, process.env.CLIENT_DIST || 'dist/client'),
 };
 
 /**
@@ -159,7 +159,8 @@ const SESSION_SECRET_FILE = path.join(paths.data, '.session-secret');
  */
 function resolveSessionSecret(): string {
   if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
-  if (IS_PRODUCTION) {
+  // The portable build is one machine by definition; the persisted secret is the right answer there.
+  if (IS_PRODUCTION && !process.env.INFRATICKET_PORTABLE) {
     console.warn(
       '[config] SESSION_SECRET is not set. Generating a persisted local secret. ' +
         'Set SESSION_SECRET explicitly for multi-instance deployments.',

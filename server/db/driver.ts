@@ -46,19 +46,56 @@ export function toPositional(sql: string): string {
   return out;
 }
 
-async function createSqliteDriver(): Promise<DbDriver> {
-  // The specifier is built at runtime so serverless bundlers do not try to
-  // trace and include this native addon, which they cannot package.
-  const specifier = ['better', 'sqlite3'].join('-');
-  const { default: Database } = (await import(/* @vite-ignore */ specifier)) as {
-    default: new (path: string) => any;
+interface SqliteHandle {
+  prepare(sql: string): {
+    all(...params: unknown[]): unknown[];
+    get(...params: unknown[]): unknown;
+    run(...params: unknown[]): unknown;
   };
-  const database = new Database(dbConfig.sqlitePath);
+  exec(sql: string): void;
+  close(): void;
+}
 
-  // WAL keeps readers from blocking on the writer; FK enforcement is off by default.
-  database.pragma('journal_mode = WAL');
-  database.pragma('foreign_keys = ON');
-  database.pragma('busy_timeout = 5000');
+/**
+ * Opens the SQLite file with whichever engine is available.
+ *
+ * better-sqlite3 is a native addon: fast, but it has to be compiled for the
+ * exact platform, which a single portable executable cannot carry. Node's own
+ * `node:sqlite` needs nothing installed, so it is the fallback - and the only
+ * engine the portable build uses. SQLITE_ENGINE=node forces it.
+ */
+async function openSqlite(file: string): Promise<{ handle: SqliteHandle; engine: string }> {
+  if ((process.env.SQLITE_ENGINE || '').toLowerCase() !== 'node') {
+    try {
+      // The specifier is built at runtime so serverless bundlers do not try to
+      // trace and include this native addon, which they cannot package.
+      const specifier = ['better', 'sqlite3'].join('-');
+      const { default: Database } = (await import(/* @vite-ignore */ specifier)) as {
+        default: new (path: string) => SqliteHandle & { pragma(statement: string): unknown };
+      };
+      const database = new Database(file);
+      // WAL keeps readers from blocking on the writer; FK enforcement is off by default.
+      database.pragma('journal_mode = WAL');
+      database.pragma('foreign_keys = ON');
+      database.pragma('busy_timeout = 5000');
+      return { handle: database, engine: 'better-sqlite3' };
+    } catch (error) {
+      if (process.env.SQLITE_ENGINE) throw error;
+    }
+  }
+
+  const { DatabaseSync } = (await import('node:sqlite')) as unknown as {
+    DatabaseSync: new (path: string) => SqliteHandle;
+  };
+  const database = new DatabaseSync(file);
+  database.exec('PRAGMA journal_mode = WAL');
+  database.exec('PRAGMA foreign_keys = ON');
+  database.exec('PRAGMA busy_timeout = 5000');
+  return { handle: database, engine: 'node:sqlite' };
+}
+
+async function createSqliteDriver(): Promise<DbDriver> {
+  const { handle: database, engine } = await openSqlite(dbConfig.sqlitePath);
 
   let depth = 0;
 
@@ -94,7 +131,7 @@ async function createSqliteDriver(): Promise<DbDriver> {
       database.close();
     },
     describe() {
-      return `SQLite (${dbConfig.sqlitePath})`;
+      return `SQLite (${dbConfig.sqlitePath}, ${engine})`;
     },
   };
 }
