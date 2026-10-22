@@ -76,6 +76,8 @@ interface TeamsAppSettings {
   accentColor: string;
   /** Base64 PNG, 192x192. Null uses the generated icon. */
   iconPng: string | null;
+  /** Base64 PNG, 32x32, white on transparent. Null uses the generated outline. */
+  outlinePng?: string | null;
   /** Null until an admin edits the menu: the defaults until then. */
   commands: StoredCommand[] | null;
   /** Set when the app was already uploaded at a higher version elsewhere. */
@@ -96,6 +98,7 @@ const DEFAULTS: TeamsAppSettings = {
   fullDescription: '',
   accentColor: '',
   iconPng: null,
+  outlinePng: null,
   commands: null,
   minimumVersion: '',
   lastDownload: null,
@@ -202,6 +205,7 @@ async function packageInputs(): Promise<PackageInputs> {
   const commands = resolveCommands(appSettings.commands, teams);
   const calling = (await (await import('../ops/teams-calls.ts')).teamsCallSettings()).enabled;
   const icon = appSettings.iconPng ? Buffer.from(appSettings.iconPng, 'base64') : undefined;
+  const outline = appSettings.outlinePng ? Buffer.from(appSettings.outlinePng, 'base64') : undefined;
   const name = appSettings.name.trim() || config.botName?.trim() || 'InfraBot';
 
   const options: ManifestOptions = {
@@ -216,6 +220,7 @@ async function packageInputs(): Promise<PackageInputs> {
     fullDescription: appSettings.fullDescription || undefined,
     commands: commands.filter((command) => command.enabled).map((command) => ({ title: command.title, description: command.description })),
     colorIconPng: icon,
+    outlineIconPng: outline,
   };
 
   const snapshot: PackageSnapshot = {
@@ -225,7 +230,10 @@ async function packageInputs(): Promise<PackageInputs> {
     shortDescription: appSettings.shortDescription,
     fullDescription: appSettings.fullDescription,
     accentColor: appSettings.accentColor,
-    icon: icon ? crypto.createHash('sha256').update(icon).digest('hex').slice(0, 16) : 'generated',
+    // Both icons count: Teams shows a new outline only after an update too.
+    icon:
+      (icon ? crypto.createHash('sha256').update(icon).digest('hex').slice(0, 16) : 'generated') +
+      (outline ? `/${crypto.createHash('sha256').update(outline).digest('hex').slice(0, 16)}` : ''),
     calling,
     commands: commands.filter((command) => command.listed).map((command) => `${command.title}: ${command.description}`),
   };
@@ -276,7 +284,7 @@ export interface TeamsAppState {
   updateAvailable: boolean;
   changes: string[];
   problems: string[];
-  settings: { name: string; defaultName: string; shortDescription: string; fullDescription: string; accentColor: string; hasCustomIcon: boolean; minimumVersion: string };
+  settings: { name: string; defaultName: string; shortDescription: string; fullDescription: string; accentColor: string; hasCustomIcon: boolean; hasCustomOutline: boolean; minimumVersion: string };
   commands: TeamsCommand[];
   limits: typeof TEAMS_LIMITS;
 }
@@ -304,6 +312,7 @@ export async function teamsAppState(): Promise<TeamsAppState> {
       fullDescription: settings.fullDescription,
       accentColor: settings.accentColor,
       hasCustomIcon: Boolean(settings.iconPng),
+      hasCustomOutline: Boolean(settings.outlinePng),
       minimumVersion: settings.minimumVersion,
     },
     commands: inputs.commands,
@@ -342,6 +351,8 @@ export interface TeamsAppInput {
   accentColor?: unknown;
   /** A data URL or base64 PNG; null removes it; undefined keeps it. */
   icon?: unknown;
+  /** The same for the 32x32 outline icon. */
+  outline?: unknown;
   minimumVersion?: unknown;
   commands?: unknown;
 }
@@ -381,6 +392,16 @@ export async function saveTeamsApp(input: TeamsAppInput): Promise<TeamsAppState>
     if (!size) throw badRequest('The icon must be a PNG file.');
     if (size.width !== 192 || size.height !== 192) throw badRequest(`Teams needs a 192x192 icon; this one is ${size.width}x${size.height}.`);
     next.iconPng = raw.toString('base64');
+  }
+  if (input.outline === null) next.outlinePng = null;
+  else if (input.outline !== undefined) {
+    if (typeof input.outline !== 'string') throw badRequest('The outline icon must be a PNG.');
+    const raw = Buffer.from(input.outline.replace(/^data:image\/png;base64,/, ''), 'base64');
+    if (raw.length > 64 * 1024) throw badRequest('The outline icon must be under 64 KB.');
+    const size = pngSize(raw);
+    if (!size) throw badRequest('The outline icon must be a PNG file.');
+    if (size.width !== 32 || size.height !== 32) throw badRequest(`Teams needs a 32x32 outline icon; this one is ${size.width}x${size.height}.`);
+    next.outlinePng = raw.toString('base64');
   }
 
   if (input.commands !== undefined) {

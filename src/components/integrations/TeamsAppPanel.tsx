@@ -28,13 +28,16 @@ const BUILTIN_HINT: Record<string, string> = {
   oncall: 'Who is on call now',
 };
 
-const readIcon = (file: File): Promise<string> =>
+const readIcon = (file: File, size = 192): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
       const url = String(reader.result);
       const image = new Image();
-      image.onload = () => (image.width === 192 && image.height === 192 ? resolve(url) : reject(new Error(`Teams needs a 192x192 PNG; this one is ${image.width}x${image.height}.`)));
+      image.onload = () =>
+        image.width === size && image.height === size
+          ? resolve(url)
+          : reject(new Error(`Teams needs a ${size}x${size} PNG; this one is ${image.width}x${image.height}.`));
       image.onerror = () => reject(new Error('That is not an image.'));
       image.src = url;
     };
@@ -49,6 +52,7 @@ export function TeamsAppPanel({ appConfigured }: { appConfigured: boolean }) {
   const [templates, setTemplates] = useState<TicketTemplate[]>([]);
   const [details, setDetails] = useState({ name: '', shortDescription: '', fullDescription: '', accentColor: '', minimumVersion: '' });
   const [icon, setIcon] = useState<string | null | undefined>(undefined);
+  const [outline, setOutline] = useState<string | null | undefined>(undefined);
   const [commands, setCommands] = useState<Draft[]>([]);
   const [saving, setSaving] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -63,6 +67,7 @@ export function TeamsAppPanel({ appConfigured }: { appConfigured: boolean }) {
       minimumVersion: next.settings.minimumVersion,
     });
     setIcon(undefined);
+    setOutline(undefined);
     setCommands(next.commands.map(({ listed: _listed, ...rest }) => rest));
   }, []);
 
@@ -90,8 +95,8 @@ export function TeamsAppPanel({ appConfigured }: { appConfigured: boolean }) {
       details.accentColor === s.accentColor &&
       details.minimumVersion === s.minimumVersion;
     const sameCommands = JSON.stringify(commands) === JSON.stringify(state.commands.map(({ listed: _listed, ...rest }) => rest));
-    return !sameDetails || !sameCommands || icon !== undefined;
-  }, [state, details, commands, icon]);
+    return !sameDetails || !sameCommands || icon !== undefined || outline !== undefined;
+  }, [state, details, commands, icon, outline]);
 
   const listedIds = useMemo(() => {
     const ids = new Set<string>();
@@ -105,6 +110,7 @@ export function TeamsAppPanel({ appConfigured }: { appConfigured: boolean }) {
       const input: TeamsAppInput = {
         ...details,
         ...(icon !== undefined ? { icon } : {}),
+        ...(outline !== undefined ? { outline } : {}),
         commands: commands.map((command) => ({
           id: command.id,
           kind: command.kind,
@@ -142,6 +148,17 @@ export function TeamsAppPanel({ appConfigured }: { appConfigured: boolean }) {
       setIcon(await readIcon(file));
     } catch (caught) {
       toast.error('Icon not used', (caught as Error).message);
+    }
+  };
+
+  const onOutline = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      setOutline(await readIcon(file, 32));
+    } catch (caught) {
+      toast.error('Outline icon not used', (caught as Error).message);
     }
   };
 
@@ -264,6 +281,23 @@ export function TeamsAppPanel({ appConfigured }: { appConfigured: boolean }) {
               </label>
               {(state.settings.hasCustomIcon || typeof icon === 'string') && icon !== null && (
                 <Button size="sm" variant="ghost" onClick={() => setIcon(null)}>
+                  Use generated
+                </Button>
+              )}
+            </div>
+          </Field>
+          <Field label="Outline icon" hint="A 32x32 PNG, white on transparent: the small icon in the Teams side bar.">
+            <div className="flex items-center gap-2">
+              <span className="flex size-10 items-center justify-center overflow-hidden rounded-md border bg-[#464775]">
+                {typeof outline === 'string' ? <img src={outline} alt="New outline icon" className="size-6" /> : <span className="text-2xs text-white">{outline === null ? 'auto' : state.settings.hasCustomOutline ? 'custom' : 'auto'}</span>}
+              </span>
+              <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 py-1.5 text-xs font-medium hover:bg-[var(--surface-3)]">
+                <Upload className="size-3.5" />
+                Upload PNG
+                <input type="file" accept="image/png" className="sr-only" onChange={onOutline} />
+              </label>
+              {(state.settings.hasCustomOutline || typeof outline === 'string') && outline !== null && (
+                <Button size="sm" variant="ghost" onClick={() => setOutline(null)}>
                   Use generated
                 </Button>
               )}

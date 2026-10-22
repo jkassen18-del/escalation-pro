@@ -347,6 +347,18 @@ test('an icon must be a 192x192 PNG', async () => {
   await saveApp({ icon: null });
 });
 
+test('an outline icon must be a 32x32 PNG, and changing it is an update', async () => {
+  const wrong = await saveApp({ outline: fakePng(192, 192).toString('base64') });
+  assert.equal(wrong.status, 400);
+  assert.match((await wrong.json()).error, /32x32/);
+  const before = await appState();
+  assert.equal((await saveApp({ outline: fakePng(32, 32).toString('base64') })).status, 200);
+  const after = await appState();
+  assert.equal(after.settings.hasCustomOutline, true);
+  assert.ok(after.changes.includes('The icon changed.') || before.lastDownload === null);
+  await saveApp({ outline: null });
+});
+
 test('custom commands are validated', async () => {
   const clash = await saveApp({ commands: [{ kind: 'custom', title: 'finance', description: 'x', action: { type: 'reply', text: 'hi' } }] });
   assert.equal(clash.status, 400);

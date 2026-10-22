@@ -68,7 +68,7 @@ export interface TeamsAppState {
   updateAvailable: boolean;
   changes: string[];
   problems: string[];
-  settings: { name: string; defaultName: string; shortDescription: string; fullDescription: string; accentColor: string; hasCustomIcon: boolean; minimumVersion: string };
+  settings: { name: string; defaultName: string; shortDescription: string; fullDescription: string; accentColor: string; hasCustomIcon: boolean; hasCustomOutline: boolean; minimumVersion: string };
   commands: TeamsCommand[];
   limits: { commands: number; commandTitle: number; commandDescription: number; shortName: number; fullName: number; shortDescription: number; fullDescription: number };
 }
@@ -79,6 +79,7 @@ export interface TeamsAppInput {
   fullDescription?: string;
   accentColor?: string;
   icon?: string | null;
+  outline?: string | null;
   minimumVersion?: string;
   commands?: Array<{ id?: string; kind: TeamsCommand['kind']; ref?: string; title?: string; description: string; enabled: boolean; action?: TeamsCommandAction }>;
 }
