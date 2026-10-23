@@ -13,6 +13,7 @@ The same build runs in the cloud, on-prem, or as a single portable
 - **[PORTABLE.md](PORTABLE.md)**: the portable Windows build, from download to first page.
 - **[OPERATIONS.md](OPERATIONS.md)**: monitors, alert sources, on-call, status pages and backups.
 - **[DEPLOY.md](DEPLOY.md)**: Docker, Postgres, MySQL and serverless deployments.
+- **[PROXMOX.md](PROXMOX.md)**: a Proxmox VE lab server from USB stick to remote access, for Linux beginners.
 
 **Accounts are created by administrators. There is no public sign-up** — the
 only exception is the one-time setup screen that creates the very first
