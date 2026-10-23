@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowUpRight,
   ChevronLeft,
@@ -31,7 +31,7 @@ import { Field, Select } from '@/components/ui/Field';
 import { RichText } from '@/components/ui/RichText';
 import { CustomFieldSummary } from '@/components/CustomFieldInputs';
 import { RichTextEditor } from '@/components/ui/RichTextEditor';
-import { PriorityBadge, Reference, StatusBadge } from '@/components/ui/Badge';
+import { PriorityBadge, Reference, StatusBadge, TypeLabel } from '@/components/ui/Badge';
 import { Avatar, UserChip } from '@/components/ui/Avatar';
 import { ErrorPane, LoadingPane } from '@/components/ui/Feedback';
 import { ConfirmDialog } from '@/components/ui/Modal';
@@ -48,6 +48,8 @@ import {
 import { useDocumentTitle } from '@/state/branding';
 import { IncidentPanel, SeverityBadge } from '@/components/ops/IncidentPanel';
 import { EscalateDialog } from '@/components/EscalateDialog';
+import { NotifyOnCall, useOnCall } from '@/components/NotifyOnCall';
+import { LabelChip, LabelPicker, labelFor, useTeamLabels } from '@/components/Labels';
 
 type Directory = Awaited<ReturnType<typeof api.users.directory>>['users'];
 
@@ -66,6 +68,10 @@ export function TicketDetailPage() {
   const [escalateOpen, setEscalateOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const location = useLocation();
+  // Set by the new-ticket forms, so the on-call prompt shows once, right after raising it.
+  const [justCreated, setJustCreated] = useState(Boolean((location.state as { justCreated?: boolean } | null)?.justCreated));
+  const onCall = useOnCall(id, ticket?.teamId ?? null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -137,6 +143,7 @@ export function TicketDetailPage() {
               <Reference value={ticket.reference} className="text-xs" />
               <StatusBadge status={ticket.status} />
               <PriorityBadge priority={ticket.priority} />
+              <TypeLabel type={ticket.type} className="text-2xs" />
               {ticket.severity && <SeverityBadge severity={ticket.severity} />}
               {ticket.templateName && (
                 <span className="rounded-[3px] border px-1.5 py-0.5 text-2xs text-muted" title="Raised as a quick ticket">
@@ -249,10 +256,26 @@ export function TicketDetailPage() {
 
       <div className="grid items-start lg:grid-cols-[minmax(0,1fr)_19rem]">
         <div className="min-w-0 surface">
+          {justCreated && !isTerminal && (
+            <NotifyOnCall
+              ticketId={ticket.id}
+              teamName={ticket.teamName}
+              state={onCall}
+              variant="banner"
+              onDismiss={() => setJustCreated(false)}
+              onNotified={() => {
+                setJustCreated(false);
+                void load();
+              }}
+            />
+          )}
           <Conversation ticket={ticket} onChanged={load} />
         </div>
 
         <aside className="border-t surface lg:sticky lg:top-0 lg:border-t-0 lg:border-l">
+          {!isTerminal && (
+            <NotifyOnCall ticketId={ticket.id} teamName={ticket.teamName} state={onCall} onNotified={() => void load()} />
+          )}
           <IncidentPanel
             ticket={ticket}
             directory={directory}
@@ -551,6 +574,8 @@ function describeEvent(event: TicketDetailType['events'][number]): string {
       return `started paging with "${event.toValue}"`;
     case 'acknowledged':
       return `acknowledged the page via ${event.toValue}`;
+    case 'oncall_notified':
+      return `notified on-call (${event.toValue})`;
     case 'alert_grouped':
       return `grouped another alert into this incident: ${event.toValue}`;
     case 'routed':
@@ -723,22 +748,7 @@ function PropertiesPanel({
         </Row>
       </dl>
 
-      {ticket.tags.length > 0 && (
-        <div className="border-t pt-4">
-          <p className="eyebrow mb-1.5">Tags</p>
-          <div className="flex flex-wrap gap-1">
-            {ticket.tags.map((tag) => (
-              <Link
-                key={tag}
-                to={`/tickets?tag=${encodeURIComponent(tag)}`}
-                className="rounded-[3px] border px-1.5 py-0.5 text-2xs surface-2 hover:border-[var(--border-strong)]"
-              >
-                {tag}
-              </Link>
-            ))}
-          </div>
-        </div>
-      )}
+      <TicketLabels ticket={ticket} editable={editable && !busy} onPatch={onPatch} />
 
       {/* Only links that go somewhere. The rest are bookkeeping - which Slack
           replies and Linear comments have already been recorded. */}
@@ -760,6 +770,45 @@ function PropertiesPanel({
               </a>
             ))}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Labels on the ticket: a picker for those who can edit it, coloured links to the filtered list for everyone else. */
+function TicketLabels({
+  ticket,
+  editable,
+  onPatch,
+}: {
+  ticket: TicketDetailType;
+  editable: boolean;
+  onPatch: (body: Record<string, unknown>, message: string) => Promise<void>;
+}) {
+  const labels = useTeamLabels(ticket.teamId);
+  if (!editable && ticket.tags.length === 0) return null;
+
+  return (
+    <div className="border-t pt-4">
+      <p className="eyebrow mb-1.5">Labels</p>
+      {editable ? (
+        <LabelPicker
+          labels={labels}
+          value={ticket.tags}
+          onChange={(next) => void onPatch({ tags: next }, 'Labels updated.')}
+          emptyHint={ticket.teamId ? 'This team has no labels yet. Add them under Teams.' : 'Assign a team to pick its labels.'}
+        />
+      ) : (
+        <div className="flex flex-wrap gap-1">
+          {ticket.tags.map((tag) => {
+            const label = labelFor(tag, labels);
+            return (
+              <Link key={tag} to={`/tickets?tag=${encodeURIComponent(tag)}`} className="max-w-full hover:opacity-80">
+                <LabelChip name={label?.name ?? tag} color={label?.color} className={label ? undefined : 'surface-2'} />
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>

@@ -13,6 +13,7 @@ import { ConfirmDialog, Modal } from '@/components/ui/Modal';
 import { FormBuilder } from '@/components/FormBuilder';
 import { TeamRouting } from '@/components/TeamRouting';
 import { TeamLinks } from '@/components/TeamLinks';
+import { LabelManager } from '@/components/Labels';
 import { Menu } from '@/components/ui/Menu';
 import { AUTO_ASSIGN_MODES, TICKET_PRIORITIES, type Team } from '@shared/types';
 import { useDocumentTitle } from '@/state/branding';
@@ -175,6 +176,16 @@ export function TeamsPage() {
             </article>
           ))}
         </div>
+      )}
+
+      {!loading && !error && can('teams.manage') && (
+        <section className="mx-4 mb-6 sm:mx-6">
+          <h2 className="text-sm font-semibold">Labels for every department</h2>
+          <p className="mt-0.5 mb-2 text-xs text-muted">
+            Offered on every ticket alongside the department's own labels. Each department's labels are under Edit team.
+          </p>
+          <LabelManager teamId={null} />
+        </section>
       )}
 
       {(creating || editing) && (
@@ -451,6 +462,14 @@ function TeamDialog({
           <div>
             <p className="mb-2 text-xs font-medium">Links to other systems</p>
             <TeamLinks teamId={team.id} />
+          </div>
+        )}
+
+        {team && can('teams.forms') && (
+          <div>
+            <p className="mb-0.5 text-xs font-medium">Labels</p>
+            <p className="mb-2 text-xs text-muted">Picked from on this department's tickets instead of typing free-text tags.</p>
+            <LabelManager teamId={team.id} />
           </div>
         )}
 

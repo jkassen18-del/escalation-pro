@@ -8,7 +8,8 @@ import { useAuth } from '@/state/auth';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Field';
-import { PriorityBadge, Reference, StatusBadge } from '@/components/ui/Badge';
+import { PriorityBadge, Reference, StatusBadge, TypeLabel } from '@/components/ui/Badge';
+import { LabelChip, labelFor, useTeamLabels } from '@/components/Labels';
 import { UserChip } from '@/components/ui/Avatar';
 import { EmptyState, ErrorPane, LoadingPane } from '@/components/ui/Feedback';
 import {
@@ -49,6 +50,9 @@ export function TicketListPage() {
       teamId: searchParams.get('teamId') ?? undefined,
       assigneeId: searchParams.get('assignee') ?? undefined,
       search: searchParams.get('search') ?? undefined,
+      tag: searchParams.get('tag') ?? undefined,
+      from: searchParams.get('from') ?? undefined,
+      to: searchParams.get('to') ?? undefined,
       overdue: searchParams.get('overdue') === 'true' || undefined,
       unassigned: searchParams.get('unassigned') === 'true' || undefined,
       sort: searchParams.get('sort') ?? 'newest',
@@ -99,7 +103,7 @@ export function TicketListPage() {
     setSearchParams(next, { replace: true });
   };
 
-  const activeFilterCount = ['status', 'priority', 'type', 'teamId', 'assignee', 'overdue', 'unassigned'].filter(
+  const activeFilterCount = ['status', 'priority', 'type', 'teamId', 'assignee', 'overdue', 'unassigned', 'tag', 'from'].filter(
     (key) => searchParams.get(key),
   ).length;
 
@@ -174,6 +178,39 @@ export function TicketListPage() {
             <option value="due">Due soonest</option>
           </Select>
         </div>
+
+        {/* Filters that arrive from links (a label, a heatmap day) have no control of their own. */}
+        {(searchParams.get('tag') || searchParams.get('from')) && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+            {searchParams.get('tag') && (
+              <button
+                onClick={() => updateParam('tag', '')}
+                className="inline-flex items-center gap-1 rounded-[3px] border px-1.5 py-0.5 surface-2 hover:border-[var(--border-strong)]"
+              >
+                Label: {searchParams.get('tag')}
+                <X className="size-3" />
+              </button>
+            )}
+            {searchParams.get('from') && (
+              <button
+                onClick={() => {
+                  const next = new URLSearchParams(searchParams);
+                  next.delete('from');
+                  next.delete('to');
+                  next.delete('offset');
+                  setSearchParams(next, { replace: true });
+                }}
+                className="inline-flex items-center gap-1 rounded-[3px] border px-1.5 py-0.5 surface-2 hover:border-[var(--border-strong)]"
+              >
+                Created {new Date(searchParams.get('from')!).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
+                {searchParams.get('to') &&
+                  new Date(searchParams.get('to')!).getTime() - new Date(searchParams.get('from')!).getTime() > 86_400_000 * 1.5 &&
+                  ` – ${new Date(new Date(searchParams.get('to')!).getTime() - 1).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}`}
+                <X className="size-3" />
+              </button>
+            )}
+          </div>
+        )}
 
         {showFilters && (
           <div className="mt-3 flex flex-wrap items-end gap-2 border-t pt-3">
@@ -363,6 +400,8 @@ function TicketCards({ tickets }: { tickets: Ticket[] }) {
  * without scrolling.
  */
 function TicketTable({ tickets }: { tickets: Ticket[] }) {
+  // Every label, so a ticket's tags can be drawn in their department's colours.
+  const labels = useTeamLabels(undefined, { all: true });
   return (
     <div className="hidden overflow-x-auto lg:block">
       <table className="w-full min-w-[60rem] border-collapse text-sm">
@@ -372,10 +411,10 @@ function TicketTable({ tickets }: { tickets: Ticket[] }) {
             <Th>Subject</Th>
             <Th className="w-28">Status</Th>
             <Th className="w-36">Priority</Th>
-            <Th className="w-32">Team</Th>
+            <Th className="w-44">Team</Th>
             <Th className="w-40">Assignee</Th>
             <Th className="w-28">SLA</Th>
-            <Th className="w-24 text-right">Updated</Th>
+            <Th className="w-36 text-right">Updated</Th>
           </tr>
         </thead>
         <tbody>
@@ -405,9 +444,18 @@ function TicketTable({ tickets }: { tickets: Ticket[] }) {
                       )}
                     </span>
                     <span className="mt-0.5 block truncate text-2xs text-subtle">
-                      {TYPE_LABELS[ticket.type]} · opened by {ticket.requesterName ?? 'unknown'} ·{' '}
+                      <TypeLabel type={ticket.type} /> · opened by {ticket.requesterName ?? 'unknown'} ·{' '}
                       {ticket.commentCount} comment{ticket.commentCount === 1 ? '' : 's'}
                     </span>
+                    {ticket.tags.length > 0 && (
+                      <span className="mt-1 flex flex-wrap gap-1 overflow-hidden">
+                        {ticket.tags.slice(0, 4).map((tag) => {
+                          const label = labelFor(tag, labels.filter((item) => !item.teamId || item.teamId === ticket.teamId));
+                          return <LabelChip key={tag} name={label?.name ?? tag} color={label?.color} className={label ? undefined : 'surface-2'} />;
+                        })}
+                        {ticket.tags.length > 4 && <span className="text-2xs text-subtle">+{ticket.tags.length - 4}</span>}
+                      </span>
+                    )}
                   </Link>
                 </Td>
                 <Td>
@@ -421,7 +469,7 @@ function TicketTable({ tickets }: { tickets: Ticket[] }) {
                   </span>
                 </Td>
                 <Td>
-                  <span className="truncate text-xs text-muted">{ticket.teamName ?? '—'}</span>
+                  <span className="block truncate text-xs text-muted" title={ticket.teamName ?? undefined}>{ticket.teamName ?? '—'}</span>
                 </Td>
                 <Td>
                   <UserChip name={ticket.assigneeName} muted />

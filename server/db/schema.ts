@@ -711,6 +711,23 @@ const TABLES: string[] = [
   )`,
 
   /*
+   * Labels a department picks from instead of typing free-text tags. A null
+   * team_id is an organisation-wide label offered to every department.
+   * Tickets still store the label's name in their tags, lower-cased, so
+   * filtering by tag and the integrations that read tags keep working.
+   */
+  `CREATE TABLE IF NOT EXISTS team_labels (
+    id TEXT PRIMARY KEY,
+    team_id TEXT REFERENCES teams(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT '#6b7280',
+    description TEXT,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
+  /*
    * Browser and phone push subscriptions. One person can have several (a
    * phone and a laptop); a subscription the push service reports as gone is
    * deleted on the next send.
@@ -900,6 +917,7 @@ const INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_status_updates_page ON status_updates(status_page_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_backup_runs_job ON backup_runs(job_id, started_at)`,
   `CREATE INDEX IF NOT EXISTS idx_team_links_team ON team_links(team_id, position)`,
+  `CREATE INDEX IF NOT EXISTS idx_team_labels_team ON team_labels(team_id, position)`,
 ];
 
 /**

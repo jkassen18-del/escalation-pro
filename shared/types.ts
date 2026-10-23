@@ -86,6 +86,36 @@ export interface Team {
   openTicketCount?: number;
 }
 
+/** A selectable label for a department's tickets; teamId null means every department. */
+export interface TicketLabel {
+  id: string;
+  teamId: string | null;
+  teamName: string | null;
+  name: string;
+  color: string;
+  description: string | null;
+  position: number;
+}
+
+/** Someone on call for a ticket's department, and how to reach them. */
+export interface OnCallContact {
+  scheduleId: string;
+  scheduleName: string;
+  userId: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  jobTitle: string | null;
+  until: string | null;
+}
+
+/** One day on the activity heatmap. */
+export interface ActivityDay {
+  date: string;
+  created: number;
+  resolved: number;
+}
+
 export interface TicketComment {
   id: string;
   ticketId: string;

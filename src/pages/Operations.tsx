@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/Button';
 import { ErrorPane, LoadingPane } from '@/components/ui/Feedback';
 import { useAuth } from '@/state/auth';
 import { SeverityBadge } from '@/components/ops/IncidentPanel';
+import { ActivityHeatmap } from '@/components/ActivityHeatmap';
 import { useDocumentTitle } from '@/state/branding';
 import type { Page } from '@shared/ops';
 
@@ -100,6 +101,8 @@ export function OperationsPage() {
             </ul>
           </section>
         )}
+
+        <ActivityHeatmap />
 
         {fresh ? (
           <GettingStarted />

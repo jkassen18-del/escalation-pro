@@ -44,8 +44,8 @@ async function loadChromium() {
 
 /** The theme tokens the options are expected to resolve to. */
 const THEMES = [
-  { name: 'light', surface: 'rgb(255, 255, 255)', fg: 'rgb(26, 24, 21)', subtle: 'rgb(147, 141, 132)' },
-  { name: 'dark', surface: 'rgb(25, 23, 20)', fg: 'rgb(237, 233, 227)', subtle: 'rgb(116, 110, 101)' },
+  { name: 'light', surface: 'rgb(255, 255, 255)', fg: 'rgb(26, 24, 21)', subtle: 'rgb(119, 113, 106)' },
+  { name: 'dark', surface: 'rgb(25, 23, 20)', fg: 'rgb(237, 233, 227)', subtle: 'rgb(154, 148, 138)' },
 ];
 
 test('dropdown options are readable in both themes', async (t) => {

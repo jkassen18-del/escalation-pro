@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { db } from '../db/index.ts';
+import { db, placeholders } from '../db/index.ts';
 import { randomId } from '../lib/crypto.ts';
 import { lengthWithoutInlineImages } from '../lib/inline-images.ts';
 import {
@@ -35,6 +35,8 @@ import { addTicketComment, canSeeTicket, updateTicket, type TicketPatch } from '
 import { loadIntegration } from '../integrations/store.ts';
 import { createLinearIssue } from '../integrations/linear.ts';
 import { notifyUsers } from '../lib/notifications.ts';
+import { notifyOnCall, onCallContactsForTeam } from '../services/oncall-notify.ts';
+import type { ActivityDay } from '../../shared/types.ts';
 import {
   TICKET_PRIORITIES,
   TICKET_SOURCES,
@@ -136,6 +138,61 @@ ticketsRouter.get(
   }),
 );
 
+/**
+ * Tickets created and resolved per day, for the activity heatmap. Scoped the
+ * same way as the list; `tzOffset` is the browser's getTimezoneOffset() so a
+ * ticket raised just after local midnight lands on the right square.
+ */
+ticketsRouter.get(
+  '/activity',
+  asyncRoute(async (req, res) => {
+    const user = (req as AuthedRequest).user;
+    const days = parseIntOr(req.query.days as string, 365, { min: 7, max: 400 });
+    const offsetMs = parseIntOr(req.query.tzOffset as string, 0, { min: -900, max: 900 }) * 60_000;
+    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+
+    const conditions = [`(t.created_at >= ? OR t.resolved_at >= ?)`];
+    const params: Array<string | number> = [since, since];
+    const teamIds = csv((req.query as Record<string, string>).teamId);
+    if (teamIds.length) {
+      conditions.push(`t.team_id IN (${placeholders(teamIds.length)})`);
+      params.push(...teamIds);
+    }
+    const scoped = visibleTeamIds(user);
+    if (scoped) {
+      // Matches listTickets: their departments' tickets, plus any they are personally on.
+      const parts: string[] = [];
+      if (scoped.length) {
+        parts.push(`t.team_id IN (${placeholders(scoped.length)})`);
+        params.push(...scoped);
+      }
+      parts.push(`t.assignee_id = ?`, `t.requester_id = ?`, `t.created_by = ?`);
+      params.push(user.id, user.id, user.id);
+      conditions.push(`(${parts.join(' OR ')})`);
+    }
+
+    const rows = await db.all<{ created_at: string; resolved_at: string | null }>(
+      `SELECT t.created_at, t.resolved_at FROM tickets t WHERE ${conditions.join(' AND ')}`,
+      params,
+    );
+
+    const dayOf = (iso: string) => new Date(new Date(iso).getTime() - offsetMs).toISOString().slice(0, 10);
+    const counts = new Map<string, ActivityDay>();
+    const bump = (iso: string | null, key: 'created' | 'resolved') => {
+      if (!iso || iso < since) return;
+      const date = dayOf(iso);
+      const entry = counts.get(date) ?? { date, created: 0, resolved: 0 };
+      entry[key] += 1;
+      counts.set(date, entry);
+    };
+    for (const row of rows) {
+      bump(row.created_at, 'created');
+      bump(row.resolved_at, 'resolved');
+    }
+    res.json({ days: [...counts.values()].sort((a, b) => a.date.localeCompare(b.date)), from: since });
+  }),
+);
+
 ticketsRouter.get(
   '/:id',
   asyncRoute(async (req, res) => {
@@ -203,6 +260,48 @@ ticketsRouter.patch(
       origin: `${req.protocol}://${req.get('host')}`,
     });
     res.json({ ticket: after });
+  }),
+);
+
+/** Who the ticket's department has on call right now, with numbers to ring. */
+ticketsRouter.get(
+  '/:id/oncall',
+  asyncRoute(async (req, res) => {
+    const user = (req as AuthedRequest).user;
+    const settings = await getSettings();
+    const ticket = await findTicket(req.params.id, settings.ticketPrefix);
+    if (!ticket) throw notFound('That ticket does not exist.');
+    if (!canSeeTicket(user, ticket)) throw forbidden('You do not have access to this ticket.');
+    const teams = await loadIntegration('msteams');
+    res.json({ contacts: await onCallContactsForTeam(ticket.teamId), teamsConnected: teams.enabled });
+  }),
+);
+
+/** Nudges whoever is on call: the bell, their phone's push, and the department's Teams channel. */
+ticketsRouter.post(
+  '/:id/notify-oncall',
+  asyncRoute(async (req, res) => {
+    const user = (req as AuthedRequest).user;
+    const settings = await getSettings();
+    const ticket = await findTicket(req.params.id, settings.ticketPrefix);
+    if (!ticket) throw notFound('That ticket does not exist.');
+    if (!canSeeTicket(user, ticket)) throw forbidden('You do not have access to this ticket.');
+    const result = await notifyOnCall(
+      ticket,
+      user,
+      { userIds: toStringArray(req.body?.userIds, 20), note: optionalString(req.body?.note, 500) },
+      `${req.protocol}://${req.get('host')}`,
+    );
+    await recordAudit({
+      actorId: user.id,
+      actorName: user.name,
+      entityType: 'ticket',
+      entityId: ticket.id,
+      action: 'oncall_notified',
+      summary: `Notified on-call about ${ticket.reference}: ${result.notified.map((contact) => contact.name).join(', ')}`,
+      ip: clientIp(req),
+    });
+    res.json(result);
   }),
 );
 

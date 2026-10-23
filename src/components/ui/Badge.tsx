@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
-import { PRIORITY_COLORS, PRIORITY_LABELS, STATUS_COLORS, STATUS_LABELS } from '@/lib/format';
-import type { TicketPriority, TicketStatus } from '@shared/types';
+import { PRIORITY_COLORS, PRIORITY_LABELS, STATUS_COLORS, STATUS_LABELS, TYPE_COLORS, TYPE_LABELS } from '@/lib/format';
+import type { TicketPriority, TicketStatus, TicketType } from '@shared/types';
 
 /**
  * Small, square-ish tags with a leading colour dot. Deliberately not pill
@@ -48,6 +48,19 @@ export function PriorityBadge({ priority, className }: { priority: TicketPriorit
     >
       {PRIORITY_LABELS[priority]}
     </Badge>
+  );
+}
+
+/**
+ * The ticket's type in its own colour, so a list of Problems and Requests
+ * can be told apart at a glance. Plain text, not a boxed badge: it sits in
+ * running metadata lines as well as the header.
+ */
+export function TypeLabel({ type, className }: { type: TicketType; className?: string }) {
+  return (
+    <span className={cn('font-semibold', className)} style={{ color: TYPE_COLORS[type] }}>
+      {TYPE_LABELS[type]}
+    </span>
   );
 }
 

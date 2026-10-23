@@ -20,6 +20,9 @@ import type {
   Team,
   Ticket,
   TicketDetail,
+  TicketLabel,
+  OnCallContact,
+  ActivityDay,
 } from '@shared/types';
 
 export class ApiError extends Error {
@@ -133,6 +136,25 @@ export const api = {
     },
     removeAttachment: (ticketId: string, attachmentId: string) =>
       del<{ ok: true }>(`/tickets/${ticketId}/attachments/${attachmentId}`),
+    activity: (params: { days?: number; teamId?: string } = {}) =>
+      get<{ days: ActivityDay[]; from: string }>(
+        `/tickets/activity${toQuery({ ...params, tzOffset: new Date().getTimezoneOffset() })}`,
+      ),
+    onCall: (id: string) => get<{ contacts: OnCallContact[]; teamsConnected: boolean }>(`/tickets/${id}/oncall`),
+    notifyOnCall: (id: string, body: { userIds?: string[]; note?: string }) =>
+      post<{
+        results: Array<{ channel: 'in_app' | 'push' | 'msteams'; userId: string | null; status: 'sent' | 'failed' | 'skipped'; detail: string }>;
+        notified: OnCallContact[];
+      }>(`/tickets/${id}/notify-oncall`, body),
+  },
+
+  labels: {
+    list: (teamId?: string) => get<{ labels: TicketLabel[] }>(`/labels${toQuery({ teamId })}`),
+    create: (body: { teamId: string | null; name: string; color: string; description?: string | null }) =>
+      post<{ label: TicketLabel }>('/labels', body),
+    update: (id: string, body: { name: string; color: string; description?: string | null; position?: number }) =>
+      put<{ label: TicketLabel }>(`/labels/${id}`, body),
+    remove: (id: string) => del<void>(`/labels/${id}`),
   },
 
   users: {

@@ -36,7 +36,7 @@
   --color-brass-800: #5d4025;
   --color-brass-900: #4a3420;
 
-  --text-2xs: 0.6875rem;
+  --text-2xs: 0.71875rem;
   --text-xs: 0.75rem;
   --text-sm: 0.8125rem;
   --text-base: 0.875rem;
@@ -58,8 +58,8 @@
   --border: #e3e0da;
   --border-strong: #d0ccc4;
   --fg: #1a1815;
-  --fg-muted: #6b665e;
-  --fg-subtle: #938d84;
+  --fg-muted: #57524b;
+  --fg-subtle: #77716a;
   --accent: #96692f;
   --accent-fg: #ffffff;
   --focus: #b4863a;
@@ -75,6 +75,13 @@
   --priority-normal: #1d6fb8;
   --priority-low: #7d776e;
 
+  /* Ticket types, so "Problem" and "Request" do not read as the same grey. */
+  --type-incident: #b42318;
+  --type-request: #0e7c86;
+  --type-question: #6d4fc2;
+  --type-problem: #c2410c;
+  --type-escalation: #be185d;
+
   color-scheme: light;
 }
 
@@ -86,8 +93,8 @@
   --border: #302c27;
   --border-strong: #423e38;
   --fg: #ede9e3;
-  --fg-muted: #9c968c;
-  --fg-subtle: #746e65;
+  --fg-muted: #bdb7ad;
+  --fg-subtle: #9a948a;
   --accent: #c9a04b;
   --accent-fg: #191714;
   --focus: #c9a04b;
@@ -102,6 +109,12 @@
   --priority-high: #dc9350;
   --priority-normal: #6ba7de;
   --priority-low: #948d83;
+
+  --type-incident: #f08a80;
+  --type-request: #4fc3c9;
+  --type-question: #a99bf0;
+  --type-problem: #f0a060;
+  --type-escalation: #ef7fb4;
 
   color-scheme: dark;
 }
@@ -163,6 +176,11 @@
    * pasted content needs it back - scoped here rather than globally so it only
    * applies inside a ticket body or the editor.
    */
+  /* A pasted URL has no spaces to break at and would push the column wide. */
+  .rich-text {
+    overflow-wrap: anywhere;
+  }
+
   .rich-text > *:first-child {
     margin-top: 0;
   }

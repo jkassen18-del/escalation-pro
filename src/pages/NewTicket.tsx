@@ -9,6 +9,7 @@ import { Field, Input, Select } from '@/components/ui/Field';
 import { RichTextEditor } from '@/components/ui/RichTextEditor';
 import { CustomFieldInputs, type CustomFieldValues } from '@/components/CustomFieldInputs';
 import { QuickTicketGrid } from '@/components/quick/QuickTicketGrid';
+import { LabelPicker, useTeamLabels } from '@/components/Labels';
 import { TICKET_PRIORITIES, TICKET_TYPES, type Team } from '@shared/types';
 import { useDocumentTitle } from '@/state/branding';
 import type { TeamFormField } from '@shared/types';
@@ -25,6 +26,7 @@ export function NewTicketPage() {
   /* Every team's questions, fetched once so switching team is instant. */
   const [forms, setForms] = useState<Record<string, TeamFormField[]>>({});
   const [customValues, setCustomValues] = useState<CustomFieldValues>({});
+  const [tags, setTags] = useState<string[]>([]);
 
   const [form, setForm] = useState({
     subject: '',
@@ -33,7 +35,6 @@ export function NewTicketPage() {
     assigneeId: '',
     priority: 'normal',
     type: 'request',
-    tags: '',
   });
 
   useEffect(() => {
@@ -78,6 +79,7 @@ export function NewTicketPage() {
     setForm((current) => ({ ...current, [key]: event.target.value }));
 
   const selectedTeam = teams.find((team) => team.id === form.teamId);
+  const labels = useTeamLabels(form.teamId || null);
   const teamFields = form.teamId ? (forms[form.teamId] ?? []) : [];
   const assignable = form.teamId
     ? directory.filter((person) => person.teamIds.includes(form.teamId) && person.role !== 'viewer')
@@ -98,13 +100,11 @@ export function NewTicketPage() {
         priority: form.priority,
         customFields: customValues,
         type: form.type,
-        tags: form.tags
-          .split(',')
-          .map((tag) => tag.trim())
-          .filter(Boolean),
+        tags,
       });
       toast.success(`${ticket.reference} created.`);
-      navigate(`/tickets/${ticket.id}`);
+      // The detail page offers to notify the department's on-call person.
+      navigate(`/tickets/${ticket.id}`, { state: { justCreated: true } });
     } catch (caught) {
       if (caught instanceof ApiError) {
         setErrors(caught.details ?? {});
@@ -211,8 +211,17 @@ export function NewTicketPage() {
           </Field>
         </div>
 
-        <Field label="Tags" htmlFor="tags" hint="Comma separated, e.g. payments, eu">
-          <Input id="tags" value={form.tags} onChange={set('tags')} placeholder="payments, eu" />
+        <Field label="Labels" hint={form.teamId ? 'Click to add or remove.' : 'Pick a team to see its labels.'}>
+          <LabelPicker
+            labels={labels}
+            value={tags}
+            onChange={setTags}
+            emptyHint={
+              form.teamId
+                ? `${selectedTeam?.name ?? 'This team'} has no labels yet. An administrator can add them under Teams.`
+                : 'Pick a team to see its labels.'
+            }
+          />
         </Field>
 
         {teamFields.length > 0 && (

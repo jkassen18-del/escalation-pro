@@ -39,6 +39,14 @@ export const TYPE_LABELS: Record<TicketType, string> = {
   escalation: 'Escalation',
 };
 
+export const TYPE_COLORS: Record<TicketType, string> = {
+  incident: 'var(--type-incident)',
+  request: 'var(--type-request)',
+  question: 'var(--type-question)',
+  problem: 'var(--type-problem)',
+  escalation: 'var(--type-escalation)',
+};
+
 export const ROLE_LABELS: Record<UserRole, string> = {
   admin: 'Administrator',
   manager: 'Manager',
@@ -76,15 +84,17 @@ export function fullDateTime(iso: string | null | undefined): string {
 /** Turns a minute count into "4h 30m" / "2d 3h" for SLA displays. */
 export function duration(minutes: number | null | undefined): string {
   if (minutes === null || minutes === undefined) return '—';
-  if (minutes < 60) return `${Math.round(minutes)}m`;
-  const hours = minutes / 60;
-  if (hours < 24) {
-    const wholeHours = Math.floor(hours);
-    const mins = Math.round(minutes - wholeHours * 60);
-    return mins ? `${wholeHours}h ${mins}m` : `${wholeHours}h`;
+  // Round once, up front: rounding each part separately produced "1d 24h" and "1h 60m".
+  const total = Math.round(minutes);
+  if (total < 60) return `${total}m`;
+  if (total < 24 * 60) {
+    const hours = Math.floor(total / 60);
+    const mins = total % 60;
+    return mins ? `${hours}h ${mins}m` : `${hours}h`;
   }
-  const days = Math.floor(hours / 24);
-  const remainingHours = Math.round(hours - days * 24);
+  const totalHours = Math.round(total / 60);
+  const days = Math.floor(totalHours / 24);
+  const remainingHours = totalHours % 24;
   return remainingHours ? `${days}d ${remainingHours}h` : `${days}d`;
 }
 

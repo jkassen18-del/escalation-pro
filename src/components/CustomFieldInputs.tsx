@@ -131,11 +131,11 @@ export function CustomFieldSummary({
   if (values.length === 0) return null;
 
   return (
-    <dl className="grid gap-x-4 gap-y-2 sm:grid-cols-[max-content_1fr]">
+    <dl className="grid min-w-0 gap-x-4 gap-y-2 sm:grid-cols-[max-content_minmax(0,1fr)]">
       {values.map((entry) => (
         <div key={entry.key} className="contents">
           <dt className="text-2xs uppercase tracking-wide text-subtle">{entry.label}</dt>
-          <dd className="text-xs">{renderValue(entry.type, entry.value)}</dd>
+          <dd className="min-w-0 text-xs break-words [overflow-wrap:anywhere]">{renderValue(entry.type, entry.value)}</dd>
         </div>
       ))}
     </dl>

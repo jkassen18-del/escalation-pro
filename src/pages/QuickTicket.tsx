@@ -108,7 +108,7 @@ export function QuickTicketPage() {
         }
       }
       toast.success(`${ticket.reference} sent to ${template.teamName ?? 'the department'}.`);
-      navigate(`/tickets/${ticket.id}`);
+      navigate(`/tickets/${ticket.id}`, { state: { justCreated: true } });
     } catch (caught) {
       if (caught instanceof ApiError) {
         setErrors(caught.details ?? {});
