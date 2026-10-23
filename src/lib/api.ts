@@ -1,4 +1,7 @@
 import type {
+  DepartmentRole,
+  Invite,
+  InvitePreview,
   DataSourceSummary,
   HttpIntegration,
   HttpIntegrationInput,
@@ -65,6 +68,8 @@ const post = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) });
 const patch = <T>(path: string, body: unknown) =>
   request<T>(path, { method: 'PATCH', body: JSON.stringify(body) });
+const put = <T>(path: string, body: unknown) =>
+  request<T>(path, { method: 'PUT', body: JSON.stringify(body) });
 const del = <T>(path: string) => request<T>(path, { method: 'DELETE' });
 
 /** Drops empty values so the query string stays readable. */
@@ -161,6 +166,24 @@ export const api = {
       post<{ ok: true; temporaryPassword?: string }>(`/users/${id}/reset-password`, body),
     remove: (id: string) => del<{ ok: true }>(`/users/${id}`),
   },
+  invites: {
+    list: () => get<{ invites: Invite[] }>('/invites'),
+    create: (body: {
+      label?: string | null;
+      roleId: string;
+      email?: string | null;
+      allowedDomains?: string[];
+      teamIds?: string[];
+      expiresInDays?: number;
+      maxUses?: number | null;
+      sendEmail?: boolean;
+    }) => post<{ invite: Invite; token: string; url: string; emailed: { ok: boolean; error: string | null } | null }>('/invites', body),
+    revoke: (id: string) => del<{ invite: Invite }>(`/invites/${id}`),
+    /** The public side, used before anyone is signed in. */
+    preview: (token: string) => get<{ invite: InvitePreview }>(`/invite/${encodeURIComponent(token)}`),
+    accept: (token: string, body: { firstName: string; lastName: string; email: string; teamId: string; password: string }) =>
+      post<{ user: PublicUser | null; ssoRequired: boolean }>(`/invite/${encodeURIComponent(token)}/accept`, body),
+  },
   roles: {
     list: () => get<{ roles: Role[] }>('/roles'),
     create: (body: { name: string; description?: string | null; permissions: Permission[] }) => post<{ role: Role }>('/roles', body),
@@ -175,6 +198,8 @@ export const api = {
     create: (body: Record<string, unknown>) => post<{ team: Team }>('/teams', body),
     update: (id: string, body: Record<string, unknown>) => patch<{ team: Team }>(`/teams/${id}`, body),
     remove: (id: string) => del<{ ok: true }>(`/teams/${id}`),
+    setMemberRole: (teamId: string, userId: string, role: DepartmentRole) =>
+      put<{ team: Team; user: PublicUser }>(`/teams/${teamId}/members/${userId}`, { role }),
     form: (id: string) => get<{ fields: TeamFormField[] }>(`/teams/${id}/form`),
     allForms: () => get<{ forms: Record<string, TeamFormField[]> }>('/teams/forms/all'),
     routing: (id: string) => get<{ routes: TeamRoute[] }>(`/teams/${id}/routing`),

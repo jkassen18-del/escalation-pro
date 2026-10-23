@@ -36,7 +36,7 @@ Each person belongs to one or more **departments**, chosen when their account is
 - **Tickets.** Without **View all tickets**, people see only the tickets of their own departments, plus any ticket they raised, are assigned to or created. That applies everywhere: lists, counts, search, reports and exports, the AI connector, and Slack, Teams, Discord and Linear actions.
 - **Alerts and pages** tied to a ticket follow the same rule. A page that is ringing you is always shown to you.
 - **Department links** show the links of your own departments.
-- **On-call** schedules and who is on call are visible to everyone. Changing them needs **Manage all on-call** (any department) or **Manage own department's on-call** (only the departments you belong to). Escalation policies and phone settings span departments and need **Manage all on-call**.
+- **On-call** schedules and who is on call are visible to everyone. Changing them needs **Manage all on-call** (any department), **Manage own department's on-call** (only the departments you belong to), or being one of that department's **managers** (see [Department managers](teams-and-people.md#department-managers)). Escalation policies and phone settings span departments and need **Manage all on-call**.
 
 Internal notes, and files attached to them, are visible only with **Internal notes**.
 
@@ -76,6 +76,7 @@ The API checks every permission on every request. Hiding a button in the web app
 | `users.create` | Create users: Provision new accounts | ✓ | ✓ |  |  |
 | `users.update` | Edit users: Change profile details, departments and account status | ✓ | ✓ |  |  |
 | `users.assign_roles` | Assign roles and permissions: Change someone’s role and extra permissions (never beyond their own) | ✓ | ✓ |  |  |
+| `users.invite` | Invite people: Create invite links people use to sign themselves up into a department | ✓ | ✓ |  |  |
 | `users.delete` | Delete users: Remove accounts | ✓ |  |  |  |
 | `users.reset_password` | Reset passwords: Issue a new password for an account | ✓ | ✓ |  |  |
 | `roles.manage` | Manage roles: Create, edit and delete roles (never beyond their own permissions) | ✓ |  |  |  |

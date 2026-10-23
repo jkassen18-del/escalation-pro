@@ -41,7 +41,7 @@ Answers are validated against the field definitions on the server, whichever too
 
 ## People
 
-*Manage → People* (permission `users.view` to see, `users.create` to add). There is **no public sign-up**: every account is created here, or by single sign-on if you turn on account creation.
+*Manage → People* (permission `users.view` to see, `users.create` to add). There is **no open sign-up**: every account is created here, by someone using an invite link you made, or by single sign-on if you turn on account creation.
 
 [Open People](/people)
 
@@ -52,6 +52,30 @@ Answers are validated against the field definitions on the server, whichever too
 3. Choose a **Role** (see [Roles and permissions](roles-and-permissions.md)) and their departments.
 4. Optionally tick extra permissions on top of the role.
 5. Save. A **Temporary password** is shown **once**: copy it and send it to the person securely. They should change it under *Profile → Change password*.
+
+### Inviting people
+
+Rather than typing everyone in, make an invite link and share it (permission `users.invite`, which Administrators and Managers start with).
+
+1. *People → Invite people*.
+2. Choose the **Role** they get. You can only pick roles within your own access, as when creating an account.
+3. **Company email domains**: only addresses ending in these are accepted, e.g. `goldmedialab.com`. It starts with your own domain; empty accepts any address.
+4. Optionally limit the **departments** they can pick (none ticked means any), the **expiry** (7 days by default) and **how many people** can use it (empty for no limit).
+5. Or fill in **For one person** to make a single-use link for one address. It is emailed to them when [email](email.md) is set up.
+6. **Create invite link** and copy it. It is shown **once**: only a fingerprint of it is stored, so a lost link cannot be recovered, only replaced.
+
+Whoever opens the link enters their **first name**, **surname**, **company email**, picks their **department** from the list and chooses a password (at least 10 characters). Their account is made with the invite's role as a plain member of that department, and they are signed straight in. Everyone who manages people gets a notification, so an admin can then decide whether they should be a department manager.
+
+The **Invites** tab lists every invite with its uses, expiry and status. **Revoke** stops a link working at once; accounts already made with it are kept. Expired, used-up, revoked and mistyped links all show the same message, so a guessed link learns nothing.
+
+### Department managers
+
+Each member of a department is either a **member** or a **manager** of it. New people, invited or not, start as members; an admin chooses the managers afterwards (permission `teams.manage` or `users.update`):
+
+- in someone's account (*Edit account → Departments*), with the Member / Manager choice next to each department; or
+- in *Teams → Edit department → Members*, with the same choice next to each person.
+
+A department's managers can edit that department's on-call schedules, rosters and overrides, whatever their role, and act on pages about its tickets. They are also who a "team leads" escalation step reaches.
 
 ### Changing and removing accounts
 
@@ -64,4 +88,4 @@ Answers are validated against the field definitions on the server, whichever too
 
 Everyone can edit their own name, phone number, paging rules, phone push devices, Discord link, theme and password under *Profile*. See [Paging channels](paging-channels.md).
 
-> **Note** Escalation policies can page "a team's leads". A team with no leads pages every active member instead. The app currently has no screen for marking someone as a lead (only the sample workspace sets one), so in practice a team target pages the whole team.
+> **Note** Escalation policies can page "a team's leads": its department managers. A department with no managers pages every active member instead.

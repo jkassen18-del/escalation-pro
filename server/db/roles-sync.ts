@@ -6,7 +6,17 @@ import { USER_ROLES, type Permission } from '../../shared/types.ts';
  * Bumped whenever the permission catalogue changes in a way existing grants
  * have to follow. Version 1 is the move from four fixed roles to editable ones.
  */
-const PERMISSIONS_VERSION = 1;
+const PERMISSIONS_VERSION = 2;
+
+/**
+ * Permissions added after version 1, by the version that added them. On
+ * upgrade, every role and every person holding the permission each one was
+ * split from gets it too. Only these are widened: re-expanding everything
+ * would undo permissions an admin deliberately took out of a role.
+ */
+const ADDED_IN: Record<number, Permission[]> = {
+  2: ['users.invite'],
+};
 const VERSION_KEY = 'ops.permissions_version';
 
 export const BUILT_IN_ROLE_ID = (key: string) => `role-${key}`;
@@ -64,6 +74,10 @@ export async function syncRoles(driver: DbDriver): Promise<void> {
     }
   }
 
+  for (let step = Math.max(version, 1) + 1; step <= PERMISSIONS_VERSION; step += 1) {
+    await widenGrants(driver, ADDED_IN[step] ?? []);
+  }
+
   for (const key of USER_ROLES) {
     await driver.run(`UPDATE users SET role_id = ? WHERE role_id IS NULL AND role = ?`, [BUILT_IN_ROLE_ID(key), key]);
   }
@@ -76,6 +90,33 @@ export async function syncRoles(driver: DbDriver): Promise<void> {
        ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
       [VERSION_KEY, String(PERMISSIONS_VERSION), now],
     );
+  }
+}
+
+/** Gives `added` to every role and every person holding what each was split from. */
+async function widenGrants(driver: DbDriver, added: Permission[]): Promise<void> {
+  if (!added.length) return;
+  const roles = await driver.all<{ id: string; permissions: string }>(`SELECT id, permissions FROM roles`);
+  for (const role of roles) {
+    const held = parse(role.permissions);
+    const widened = expandImplied(held).filter((key) => held.includes(key) || added.includes(key));
+    if (widened.length !== held.length) {
+      await driver.run(`UPDATE roles SET permissions = ? WHERE id = ?`, [JSON.stringify(widened), role.id]);
+    }
+  }
+  const rows = await driver.all<{ user_id: string; permission: string }>(`SELECT user_id, permission FROM user_permissions`);
+  const byUser = new Map<string, Permission[]>();
+  for (const row of rows) {
+    if (isPermission(row.permission)) byUser.set(row.user_id, [...(byUser.get(row.user_id) ?? []), row.permission]);
+  }
+  for (const [userId, held] of byUser) {
+    for (const permission of expandImplied(held)) {
+      if (held.includes(permission) || !added.includes(permission)) continue;
+      await driver.run(
+        `INSERT INTO user_permissions (user_id, permission) VALUES (?, ?) ON CONFLICT (user_id, permission) DO NOTHING`,
+        [userId, permission],
+      );
+    }
   }
 }
 

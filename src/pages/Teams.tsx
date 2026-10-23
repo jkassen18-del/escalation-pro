@@ -162,6 +162,15 @@ export function TeamsPage() {
                     <span className="text-2xs text-subtle italic">Nobody assigned yet</span>
                   )}
                 </div>
+                {team.managerIds.length > 0 && (
+                  <p className="mt-1.5 truncate text-2xs text-subtle">
+                    Managed by{' '}
+                    {team.managerIds
+                      .map((id) => directory.find((entry) => entry.id === id)?.name)
+                      .filter(Boolean)
+                      .join(', ')}
+                  </p>
+                )}
               </div>
             </article>
           ))}
@@ -244,12 +253,13 @@ function TeamDialog({
     slaResolveMins: team?.slaResolveMins ?? 2880,
   });
   const [memberIds, setMemberIds] = useState<string[]>(team?.memberIds ?? []);
+  const [managerIds, setManagerIds] = useState<string[]>(team?.managerIds ?? []);
   const [submitting, setSubmitting] = useState(false);
 
   const submit = async () => {
     setSubmitting(true);
     try {
-      const payload = { ...form, memberIds };
+      const payload = { ...form, memberIds, managerIds: managerIds.filter((id) => memberIds.includes(id)) };
       if (team) await api.teams.update(team.id, payload);
       else await api.teams.create(payload);
       await onSaved();
@@ -382,22 +392,43 @@ function TeamDialog({
         </div>
 
         <div>
-          <p className="mb-2 text-xs font-medium">Members</p>
-          <div className="grid max-h-56 gap-2 overflow-y-auto rounded-sm border p-3 surface-2 sm:grid-cols-2">
+          <p className="mb-1 text-xs font-medium">Members</p>
+          <p className="mb-2 text-xs text-subtle">
+            Managers edit this department’s on-call and are who a “team leads” escalation step reaches.
+          </p>
+          <div className="grid max-h-72 gap-2 overflow-y-auto rounded-sm border p-3 surface-2 sm:grid-cols-2">
             {directory.map((person) => (
-              <Checkbox
-                key={person.id}
-                checked={memberIds.includes(person.id)}
-                onChange={() =>
-                  setMemberIds((current) =>
-                    current.includes(person.id)
-                      ? current.filter((id) => id !== person.id)
-                      : [...current, person.id],
-                  )
-                }
-                label={person.name}
-                hint={person.jobTitle ?? person.email}
-              />
+              <div key={person.id} className="flex items-start justify-between gap-2">
+                <Checkbox
+                  checked={memberIds.includes(person.id)}
+                  onChange={() =>
+                    setMemberIds((current) =>
+                      current.includes(person.id)
+                        ? current.filter((id) => id !== person.id)
+                        : [...current, person.id],
+                    )
+                  }
+                  label={person.name}
+                  hint={person.jobTitle ?? person.email}
+                />
+                {memberIds.includes(person.id) && (
+                  <Select
+                    aria-label={`${person.name}'s role in the department`}
+                    className="h-7 w-auto shrink-0 text-xs"
+                    value={managerIds.includes(person.id) ? 'manager' : 'member'}
+                    onChange={(event) =>
+                      setManagerIds((current) =>
+                        event.target.value === 'manager'
+                          ? [...current.filter((id) => id !== person.id), person.id]
+                          : current.filter((id) => id !== person.id),
+                      )
+                    }
+                  >
+                    <option value="member">Member</option>
+                    <option value="manager">Manager</option>
+                  </Select>
+                )}
+              </div>
             ))}
           </div>
         </div>

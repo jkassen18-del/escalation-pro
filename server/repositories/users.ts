@@ -1,7 +1,7 @@
 import { db, fromBool, toBool } from '../db/index.ts';
 import { hashPassword, randomId } from '../lib/crypto.ts';
 import { ROLE_LABELS, permissionsForRole, resolvePermissions } from '../permissions.ts';
-import type { Permission, PublicUser, Role, UserRole, UserStatus } from '../../shared/types.ts';
+import type { DepartmentRole, Permission, PublicUser, Role, UserRole, UserStatus } from '../../shared/types.ts';
 import { builtInRoleId, roleMap } from './roles.ts';
 
 export interface UserRow {
@@ -42,14 +42,19 @@ function nameOrder(): string {
 
 async function loadRelations() {
   const teams = new Map<string, string[]>();
+  const managed = new Map<string, string[]>();
   const perms = new Map<string, Permission[]>();
 
-  const teamRows = await db.all<{ user_id: string; team_id: string }>(
-    `SELECT tm.user_id, tm.team_id FROM team_members tm JOIN teams t ON t.id = tm.team_id ORDER BY t.name`,
+  const teamRows = await db.all<{ user_id: string; team_id: string; is_lead: number | string }>(
+    `SELECT tm.user_id, tm.team_id, tm.is_lead FROM team_members tm JOIN teams t ON t.id = tm.team_id ORDER BY t.name`,
   );
   for (const row of teamRows) {
     if (!teams.has(row.user_id)) teams.set(row.user_id, []);
     teams.get(row.user_id)!.push(row.team_id);
+    if (Number(row.is_lead) === 1) {
+      if (!managed.has(row.user_id)) managed.set(row.user_id, []);
+      managed.get(row.user_id)!.push(row.team_id);
+    }
   }
 
   const permRows = await db.all<{ user_id: string; permission: string }>(
@@ -60,10 +65,16 @@ async function loadRelations() {
     perms.get(row.user_id)!.push(row.permission as Permission);
   }
 
-  return { teams, perms, roles: await roleMap() };
+  return { teams, managed, perms, roles: await roleMap() };
 }
 
-export function mapUser(row: UserRow, teamIds: string[], extraPermissions: Permission[], role: Role | undefined): PublicUser {
+export function mapUser(
+  row: UserRow,
+  teamIds: string[],
+  extraPermissions: Permission[],
+  role: Role | undefined,
+  managedTeamIds: string[] = [],
+): PublicUser {
   // A role deleted underneath someone (it cannot happen through the API)
   // falls back to what their tier could always do.
   const rolePermissions = role?.permissions ?? permissionsForRole(row.role);
@@ -84,6 +95,7 @@ export function mapUser(row: UserRow, teamIds: string[], extraPermissions: Permi
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     teamIds,
+    managedTeamIds,
     extraPermissions,
     permissions: resolvePermissions(rolePermissions, extraPermissions),
   };
@@ -93,15 +105,17 @@ export async function listUsers(options: { activeOnly?: boolean } = {}): Promise
   const rows = await db.all<UserRow>(
     `SELECT * FROM users ${options.activeOnly ? `WHERE status = 'active'` : ''} ORDER BY ${nameOrder()}`,
   );
-  const { teams, perms, roles } = await loadRelations();
-  return rows.map((row) => mapUser(row, teams.get(row.id) ?? [], perms.get(row.id) ?? [], roles.get(row.role_id ?? '')));
+  const { teams, managed, perms, roles } = await loadRelations();
+  return rows.map((row) =>
+    mapUser(row, teams.get(row.id) ?? [], perms.get(row.id) ?? [], roles.get(row.role_id ?? ''), managed.get(row.id) ?? []),
+  );
 }
 
 export async function findUserById(id: string): Promise<PublicUser | null> {
   const row = await db.get<UserRow>(`SELECT * FROM users WHERE id = ?`, [id]);
   if (!row) return null;
-  const { teams, perms, roles } = await loadRelations();
-  return mapUser(row, teams.get(id) ?? [], perms.get(id) ?? [], roles.get(row.role_id ?? ''));
+  const { teams, managed, perms, roles } = await loadRelations();
+  return mapUser(row, teams.get(id) ?? [], perms.get(id) ?? [], roles.get(row.role_id ?? ''), managed.get(id) ?? []);
 }
 
 export function findUserRowById(id: string) {
@@ -131,6 +145,8 @@ export interface CreateUserInput {
   jobTitle?: string | null;
   phone?: string | null;
   teamIds?: string[];
+  /** Of `teamIds`, the departments they manage. */
+  managedTeamIds?: string[];
   extraPermissions?: Permission[];
   mustChangePassword?: boolean;
   status?: UserStatus;
@@ -164,20 +180,46 @@ export async function createUser(input: CreateUserInput): Promise<string> {
     ],
   );
 
-  await setUserTeams(id, input.teamIds ?? []);
+  await setUserTeams(id, input.teamIds ?? [], input.managedTeamIds);
   await setUserPermissions(id, input.extraPermissions ?? []);
   return id;
 }
 
-export async function setUserTeams(userId: string, teamIds: string[]): Promise<void> {
-  await db.run(`DELETE FROM team_members WHERE user_id = ?`, [userId]);
-  for (const teamId of Array.from(new Set(teamIds))) {
+/**
+ * Sets someone's departments. A department they stay in keeps whether they
+ * manage it; `managedTeamIds`, when given, sets that too (it is clipped to
+ * `teamIds`, since only a member can manage a department).
+ */
+export async function setUserTeams(userId: string, teamIds: string[], managedTeamIds?: string[]): Promise<void> {
+  const wanted = Array.from(new Set(teamIds));
+  const current = await db.all<{ team_id: string }>(`SELECT team_id FROM team_members WHERE user_id = ?`, [userId]);
+  for (const { team_id } of current) {
+    if (!wanted.includes(team_id)) await db.run(`DELETE FROM team_members WHERE user_id = ? AND team_id = ?`, [userId, team_id]);
+  }
+  for (const teamId of wanted) {
     await db.run(
       `INSERT INTO team_members (team_id, user_id, is_lead) VALUES (?, ?, 0)
        ON CONFLICT (team_id, user_id) DO NOTHING`,
       [teamId, userId],
     );
   }
+  if (managedTeamIds) {
+    for (const teamId of wanted) {
+      await db.run(`UPDATE team_members SET is_lead = ? WHERE user_id = ? AND team_id = ?`, [
+        managedTeamIds.includes(teamId) ? 1 : 0,
+        userId,
+        teamId,
+      ]);
+    }
+  }
+}
+
+/** Makes someone a member or a manager of a department they already belong to. False if they do not. */
+export async function setDepartmentRole(userId: string, teamId: string, role: DepartmentRole): Promise<boolean> {
+  const row = await db.get<{ user_id: string }>(`SELECT user_id FROM team_members WHERE user_id = ? AND team_id = ?`, [userId, teamId]);
+  if (!row) return false;
+  await db.run(`UPDATE team_members SET is_lead = ? WHERE user_id = ? AND team_id = ?`, [role === 'manager' ? 1 : 0, userId, teamId]);
+  return true;
 }
 
 export async function setUserPermissions(userId: string, permissions: Permission[]): Promise<void> {

@@ -40,6 +40,7 @@ export const SYSTEM_ACTOR: PublicUser = {
   createdAt: '',
   updatedAt: '',
   teamIds: [],
+  managedTeamIds: [],
   permissions: [],
   extraPermissions: [],
 };

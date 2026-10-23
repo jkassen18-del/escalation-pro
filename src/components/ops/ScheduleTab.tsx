@@ -29,16 +29,20 @@ const ROTATION_LABELS: Record<RotationKind, string> = {
 
 /**
  * Whether the signed-in person may edit a department's on-call: every
- * department with "Manage all on-call", only their own with "Manage own
- * department's on-call". The server applies the same rule.
+ * department with "Manage all on-call", their own with "Manage own
+ * department's on-call", and any they have been made a manager of. The
+ * server applies the same rule.
  */
 function useOnCallAccess() {
   const { user, can } = useAuth();
+  const managed = user?.managedTeamIds ?? [];
   return {
-    canCreate: can('oncall.manage', 'oncall.manage_own_department'),
+    canCreate: can('oncall.manage', 'oncall.manage_own_department') || managed.length > 0,
     managesAll: can('oncall.manage'),
     manages: (teamId: string | null | undefined) =>
-      can('oncall.manage') || (can('oncall.manage_own_department') && Boolean(teamId && user?.teamIds.includes(teamId))),
+      can('oncall.manage') ||
+      Boolean(teamId && managed.includes(teamId)) ||
+      (can('oncall.manage_own_department') && Boolean(teamId && user?.teamIds.includes(teamId))),
   };
 }
 

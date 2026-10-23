@@ -17,7 +17,7 @@ interface TeamRow {
   updated_at: string;
 }
 
-function mapTeam(row: TeamRow, memberIds: string[], openTicketCount: number): Team {
+function mapTeam(row: TeamRow, memberIds: string[], openTicketCount: number, managerIds: string[] = []): Team {
   return {
     id: row.id,
     key: row.key,
@@ -29,22 +29,28 @@ function mapTeam(row: TeamRow, memberIds: string[], openTicketCount: number): Te
     slaResponseMins: Number(row.sla_response_mins),
     slaResolveMins: Number(row.sla_resolve_mins),
     memberIds,
+    managerIds,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     openTicketCount,
   };
 }
 
-async function memberMap(): Promise<Map<string, string[]>> {
-  const rows = await db.all<{ team_id: string; user_id: string }>(
-    `SELECT tm.team_id, tm.user_id FROM team_members tm JOIN users u ON u.id = tm.user_id ORDER BY u.name`,
+async function memberMap(): Promise<{ members: Map<string, string[]>; managers: Map<string, string[]> }> {
+  const rows = await db.all<{ team_id: string; user_id: string; is_lead: number | string }>(
+    `SELECT tm.team_id, tm.user_id, tm.is_lead FROM team_members tm JOIN users u ON u.id = tm.user_id ORDER BY u.name`,
   );
-  const map = new Map<string, string[]>();
+  const members = new Map<string, string[]>();
+  const managers = new Map<string, string[]>();
   for (const row of rows) {
-    if (!map.has(row.team_id)) map.set(row.team_id, []);
-    map.get(row.team_id)!.push(row.user_id);
+    if (!members.has(row.team_id)) members.set(row.team_id, []);
+    members.get(row.team_id)!.push(row.user_id);
+    if (Number(row.is_lead) === 1) {
+      if (!managers.has(row.team_id)) managers.set(row.team_id, []);
+      managers.get(row.team_id)!.push(row.user_id);
+    }
   }
-  return map;
+  return { members, managers };
 }
 
 async function openCountMap(): Promise<Map<string, number>> {
@@ -61,17 +67,17 @@ async function openCountMap(): Promise<Map<string, number>> {
 
 export async function listTeams(): Promise<Team[]> {
   const rows = await db.all<TeamRow>(`SELECT * FROM teams ORDER BY name`);
-  const members = await memberMap();
+  const { members, managers } = await memberMap();
   const counts = await openCountMap();
-  return rows.map((row) => mapTeam(row, members.get(row.id) ?? [], counts.get(row.id) ?? 0));
+  return rows.map((row) => mapTeam(row, members.get(row.id) ?? [], counts.get(row.id) ?? 0, managers.get(row.id) ?? []));
 }
 
 export async function findTeamById(id: string): Promise<Team | null> {
   const row = await db.get<TeamRow>(`SELECT * FROM teams WHERE id = ?`, [id]);
   if (!row) return null;
-  const members = await memberMap();
+  const { members, managers } = await memberMap();
   const counts = await openCountMap();
-  return mapTeam(row, members.get(id) ?? [], counts.get(id) ?? 0);
+  return mapTeam(row, members.get(id) ?? [], counts.get(id) ?? 0, managers.get(id) ?? []);
 }
 
 export async function keyInUse(key: string, excludeId?: string): Promise<boolean> {
@@ -92,6 +98,7 @@ export interface CreateTeamInput {
   slaResponseMins?: number;
   slaResolveMins?: number;
   memberIds?: string[];
+  managerIds?: string[];
 }
 
 export async function createTeam(input: CreateTeamInput): Promise<string> {
@@ -115,18 +122,31 @@ export async function createTeam(input: CreateTeamInput): Promise<string> {
       now,
     ],
   );
-  await setTeamMembers(id, input.memberIds ?? []);
+  await setTeamMembers(id, input.memberIds ?? [], input.managerIds);
   return id;
 }
 
-export async function setTeamMembers(teamId: string, userIds: string[]): Promise<void> {
-  await db.run(`DELETE FROM team_members WHERE team_id = ?`, [teamId]);
-  for (const userId of Array.from(new Set(userIds))) {
+/**
+ * Sets a department's members. Someone who stays keeps whether they manage
+ * it; `managerIds`, when given, sets that too (clipped to the members).
+ */
+export async function setTeamMembers(teamId: string, userIds: string[], managerIds?: string[]): Promise<void> {
+  const wanted = Array.from(new Set(userIds));
+  const current = await db.all<{ user_id: string }>(`SELECT user_id FROM team_members WHERE team_id = ?`, [teamId]);
+  for (const { user_id } of current) {
+    if (!wanted.includes(user_id)) await db.run(`DELETE FROM team_members WHERE team_id = ? AND user_id = ?`, [teamId, user_id]);
+  }
+  for (const userId of wanted) {
     await db.run(
       `INSERT INTO team_members (team_id, user_id, is_lead) VALUES (?, ?, 0)
        ON CONFLICT (team_id, user_id) DO NOTHING`,
       [teamId, userId],
     );
+  }
+  if (managerIds) {
+    for (const userId of wanted) {
+      await db.run(`UPDATE team_members SET is_lead = ? WHERE team_id = ? AND user_id = ?`, [managerIds.includes(userId) ? 1 : 0, teamId, userId]);
+    }
   }
 }
 

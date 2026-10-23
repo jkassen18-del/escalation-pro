@@ -154,3 +154,22 @@ export async function sendEmail(
     return { ok: false, statusCode: null, error: error instanceof Error ? error.message : String(error) };
   }
 }
+
+/**
+ * A plain message that is not about a ticket, such as an invite. Sends only
+ * when email is turned on and has a server; otherwise says why it did not.
+ */
+export async function sendPlainEmail(
+  record: IntegrationRecord,
+  to: string,
+  message: { subject: string; text: string; html?: string },
+): Promise<{ ok: boolean; error: string | null }> {
+  const config = record.config as EmailConfig;
+  if (!record.enabled || !config.host) return { ok: false, error: 'Email is not set up' };
+  try {
+    await buildTransport(config).sendMail({ from: fromAddress(config), to, ...message });
+    return { ok: true, error: null };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Copy, KeyRound, MoreHorizontal, Trash2, UserPlus, Users } from 'lucide-react';
+import { Copy, KeyRound, MoreHorizontal, Send, Trash2, UserPlus, Users } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { relativeTime } from '@/lib/format';
@@ -16,6 +16,7 @@ import { Menu } from '@/components/ui/Menu';
 import type { Permission, PublicUser, Role, Team } from '@shared/types';
 import { PermissionPicker } from '@/components/PermissionPicker';
 import { RolesPanel } from '@/components/RolesPanel';
+import { InviteDialog, InvitesPanel } from '@/components/InvitesPanel';
 import { OnCallTabs } from '@/components/ops/OnCallShared';
 import { useDocumentTitle } from '@/state/branding';
 
@@ -36,7 +37,11 @@ export function PeoplePage() {
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<PublicUser | null>(null);
   const [credentials, setCredentials] = useState<{ email: string; password: string } | null>(null);
-  const [tab, setTab] = useState<'people' | 'roles'>('people');
+  const [tab, setTab] = useState<'people' | 'invites' | 'roles'>(() =>
+    new URLSearchParams(window.location.search).get('tab') === 'invites' ? 'invites' : 'people',
+  );
+  const [inviting, setInviting] = useState(false);
+  const [inviteReload, setInviteReload] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -78,13 +83,23 @@ export function PeoplePage() {
     <div>
       <PageHeader
         title="People"
-        description="Accounts are created here. There is no public sign-up — every user is provisioned by an administrator or manager."
+        description="Accounts are created here, or by the people you invite. There is no open sign-up — only someone with an invite link can make their own account."
         actions={
-          tab === 'people' && can('users.create') ? (
-            <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
-              <UserPlus className="size-3.5" />
-              New user
-            </Button>
+          tab !== 'roles' && (can('users.create') || can('users.invite')) ? (
+            <div className="flex gap-2">
+              {can('users.invite') && (
+                <Button variant={can('users.create') ? 'secondary' : 'primary'} size="sm" onClick={() => setInviting(true)}>
+                  <Send className="size-3.5" />
+                  Invite people
+                </Button>
+              )}
+              {can('users.create') && (
+                <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+                  <UserPlus className="size-3.5" />
+                  New user
+                </Button>
+              )}
+            </div>
           ) : undefined
         }
       >
@@ -102,12 +117,15 @@ export function PeoplePage() {
           onChange={setTab}
           tabs={[
             { value: 'people', label: 'People' },
+            ...(can('users.invite') ? [{ value: 'invites' as const, label: 'Invites' }] : []),
             { value: 'roles', label: 'Roles' },
           ]}
         />
       </PageHeader>
 
-      {tab === 'roles' ? (
+      {tab === 'invites' ? (
+        <InvitesPanel teams={teams} roles={meta?.roles ?? []} onInvite={() => setInviting(true)} reloadKey={inviteReload} />
+      ) : tab === 'roles' ? (
         meta ? (
           <RolesPanel meta={meta} onChanged={load} />
         ) : (
@@ -157,13 +175,16 @@ export function PeoplePage() {
                   </td>
                   <td className="px-3 py-2">
                     <Badge dot={false}>{user.roleName}</Badge>
-                    {user.extraPermissions.length > 0 && (
+                    {/* An Administrator holds everything, so extras say nothing there. */}
+                    {user.role !== 'admin' && user.extraPermissions.length > 0 && (
                       <span className="ml-1.5 text-2xs text-subtle">+{user.extraPermissions.length}</span>
                     )}
                   </td>
                   <td className="px-3 py-2">
                     <span className="text-xs text-muted">
-                      {user.teamIds.length ? user.teamIds.map(teamName).join(', ') : '—'}
+                      {user.teamIds.length
+                        ? user.teamIds.map((id) => `${teamName(id)}${user.managedTeamIds.includes(id) ? ' (manager)' : ''}`).join(', ')
+                        : '—'}
                     </span>
                   </td>
                   <td className="px-3 py-2">
@@ -305,6 +326,18 @@ export function PeoplePage() {
       />
 
       <CredentialsDialog credentials={credentials} onClose={() => setCredentials(null)} />
+
+      {inviting && meta && (
+        <InviteDialog
+          teams={teams}
+          roles={meta.roles}
+          onClose={() => setInviting(false)}
+          onCreated={() => {
+            setInviteReload((n) => n + 1);
+            setTab('invites');
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -396,6 +429,7 @@ function UserDialog({
     status: user?.status ?? 'active',
   });
   const [teamIds, setTeamIds] = useState<string[]>(user?.teamIds ?? []);
+  const [managedTeamIds, setManagedTeamIds] = useState<string[]>(user?.managedTeamIds ?? []);
   const [extraPermissions, setExtraPermissions] = useState<Permission[]>(user?.extraPermissions ?? []);
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -429,6 +463,7 @@ function UserDialog({
         roleId: form.roleId,
         status: form.status,
         teamIds,
+        managedTeamIds: managedTeamIds.filter((id) => teamIds.includes(id)),
         // Only someone who may change grants sends them; anyone else leaves them as they are.
         ...(canAssign ? { extraPermissions: extras } : {}),
       };
@@ -525,20 +560,38 @@ function UserDialog({
           <p className="mb-1 text-xs font-medium">Departments</p>
           <p className="mb-2 text-xs text-subtle">
             Without “View all tickets”, people only see the tickets of the departments they are in, plus tickets they
-            raised or are assigned.
+            raised or are assigned. A department’s managers edit its on-call and are who “team leads” escalation steps reach.
           </p>
           {teams.length === 0 ? (
             <p className="text-xs text-subtle">No departments have been created yet.</p>
           ) : (
             <div className="grid gap-2 rounded-sm border p-3 surface-2 sm:grid-cols-2">
               {teams.map((team) => (
-                <Checkbox
-                  key={team.id}
-                  checked={teamIds.includes(team.id)}
-                  onChange={() => setTeamIds((current) => toggle(current, team.id))}
-                  label={team.name}
-                  hint={team.description ?? undefined}
-                />
+                <div key={team.id} className="flex items-start justify-between gap-2">
+                  <Checkbox
+                    checked={teamIds.includes(team.id)}
+                    onChange={() => setTeamIds((current) => toggle(current, team.id))}
+                    label={team.name}
+                    hint={team.description ?? undefined}
+                  />
+                  {teamIds.includes(team.id) && (
+                    <Select
+                      aria-label={`Role in ${team.name}`}
+                      className="h-7 w-auto shrink-0 text-xs"
+                      value={managedTeamIds.includes(team.id) ? 'manager' : 'member'}
+                      onChange={(event) =>
+                        setManagedTeamIds((current) =>
+                          event.target.value === 'manager'
+                            ? [...current.filter((id) => id !== team.id), team.id]
+                            : current.filter((id) => id !== team.id),
+                        )
+                      }
+                    >
+                      <option value="member">Member</option>
+                      <option value="manager">Manager</option>
+                    </Select>
+                  )}
+                </div>
               ))}
             </div>
           )}

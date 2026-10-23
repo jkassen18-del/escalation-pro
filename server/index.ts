@@ -15,6 +15,7 @@ import { attachUser } from './middleware/auth.ts';
 import { authRouter } from './routes/auth.ts';
 import { brandingRouter } from './routes/branding.ts';
 import { usersRouter } from './routes/users.ts';
+import { invitePublicRouter, invitesRouter } from './routes/invites.ts';
 import { rolesRouter } from './routes/roles.ts';
 import { teamsRouter } from './routes/teams.ts';
 import { ticketsRouter } from './routes/tickets.ts';
@@ -158,6 +159,8 @@ export async function createApp() {
   // SAML first: the identity provider posts here, before any session exists.
   app.use('/api/auth/saml', samlRouter);
   app.use('/api/auth', authRouter);
+  // Invite links are opened before anyone is signed in.
+  app.use('/api/invite', invitePublicRouter);
   // Before attachUser: the sign-in screen needs the company name and logo.
   app.use('/api/branding', brandingRouter);
   app.use('/api/webhooks', webhooksRouter);
@@ -178,6 +181,7 @@ export async function createApp() {
   app.use(SCREENSHOT_ROUTES, (req, res, next) => ((req as Request & { user?: unknown }).user ? screenshotJson(req, res, next) : next()));
   app.use('/api/users', usersRouter);
   app.use('/api/roles', rolesRouter);
+  app.use('/api/invites', invitesRouter);
   app.use('/api/teams', teamsRouter);
   app.use('/api/tickets/:id/attachments', attachmentsRouter);
   app.use('/api/tickets', ticketsRouter);

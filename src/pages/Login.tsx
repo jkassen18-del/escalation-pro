@@ -107,8 +107,8 @@ export function LoginPage() {
       <div className="mt-6 flex gap-2 border-t pt-4">
         <ShieldCheck className="mt-px size-3.5 shrink-0 text-[var(--fg-subtle)]" />
         <p className="text-xs leading-relaxed text-subtle">
-          Accounts are created by an administrator. If you need access, ask your team lead to provision an account
-          for you.
+          Accounts are created by an administrator. If you need access, ask your team lead for an account or an
+          invite link.
         </p>
       </div>
     </AuthLayout>

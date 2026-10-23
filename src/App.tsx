@@ -3,6 +3,7 @@ import { useAuth } from '@/state/auth';
 import { AppShell } from '@/components/AppShell';
 import { Spinner } from '@/components/ui/Feedback';
 import { LoginPage } from '@/pages/Login';
+import { AcceptInvitePage } from '@/pages/AcceptInvite';
 import { SetupPage } from '@/pages/Setup';
 import { TicketListPage } from '@/pages/TicketList';
 import { TicketDetailPage } from '@/pages/TicketDetail';
@@ -39,6 +40,9 @@ export function App() {
   }
 
   if (setupRequired) return <SetupPage />;
+  // An invite link stands alone, signed in or not.
+  const inviteMatch = /^\/invite\/([^/]+)\/?$/.exec(window.location.pathname);
+  if (inviteMatch) return <AcceptInvitePage token={decodeURIComponent(inviteMatch[1])} />;
   if (!user) return <LoginPage />;
   // The OAuth consent screen stands alone, outside the app shell.
   if (window.location.pathname === '/connect/authorize') return <ConnectAuthorizePage />;

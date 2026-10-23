@@ -4,6 +4,7 @@ import {
   asyncRoute,
   badRequest,
   conflict,
+  forbidden,
   notFound,
   optionalString,
   parseIntOr,
@@ -16,7 +17,8 @@ import { requireAuth, requirePermission, type AuthedRequest } from '../middlewar
 import { listAllFields, listTeamFields, replaceTeamForm } from '../repositories/form-fields.ts';
 import { listTeamRoutes, setTeamRoute } from '../repositories/team-routing.ts';
 import { createTeam, findTeamById, keyInUse, listTeams, setTeamMembers } from '../repositories/teams.ts';
-import { AUTO_ASSIGN_MODES, INTEGRATION_PROVIDERS, TICKET_PRIORITIES } from '../../shared/types.ts';
+import { findUserById, setDepartmentRole } from '../repositories/users.ts';
+import { AUTO_ASSIGN_MODES, DEPARTMENT_ROLES, INTEGRATION_PROVIDERS, TICKET_PRIORITIES } from '../../shared/types.ts';
 
 export const teamsRouter: Router = Router();
 
@@ -62,6 +64,7 @@ teamsRouter.post(
       slaResponseMins: parseIntOr(req.body?.slaResponseMins, 240, { min: 5, max: 100_000 }),
       slaResolveMins: parseIntOr(req.body?.slaResolveMins, 2880, { min: 15, max: 500_000 }),
       memberIds: toStringArray(req.body?.memberIds, 500),
+      managerIds: Array.isArray(req.body?.managerIds) ? toStringArray(req.body.managerIds, 500) : undefined,
     });
 
     const team = await findTeamById(id);
@@ -123,7 +126,13 @@ teamsRouter.patch(
     }
 
     if (Array.isArray(req.body?.memberIds)) {
-      await setTeamMembers(team.id, toStringArray(req.body.memberIds, 500));
+      await setTeamMembers(
+        team.id,
+        toStringArray(req.body.memberIds, 500),
+        Array.isArray(req.body?.managerIds) ? toStringArray(req.body.managerIds, 500) : undefined,
+      );
+    } else if (Array.isArray(req.body?.managerIds)) {
+      await setTeamMembers(team.id, team.memberIds, toStringArray(req.body.managerIds, 500));
     }
 
     await recordAudit({
@@ -137,6 +146,40 @@ teamsRouter.patch(
     });
 
     res.json({ team: await findTeamById(team.id) });
+  }),
+);
+
+/**
+ * Makes a member of a department one of its managers, or back to a plain
+ * member. Department managers edit that department's on-call and are who a
+ * "team leads" escalation step reaches. Either managing departments or
+ * editing users is enough to do it.
+ */
+teamsRouter.put(
+  '/:id/members/:userId',
+  requirePermission('teams.manage', 'users.update'),
+  asyncRoute(async (req, res) => {
+    const actor = (req as AuthedRequest).user;
+    const team = await findTeamById(req.params.id);
+    if (!team) throw notFound('That team does not exist.');
+    const role = requireEnum(req.body?.role, DEPARTMENT_ROLES, 'Department role');
+    const target = await findUserById(req.params.userId);
+    if (!target) throw notFound('That user does not exist.');
+    if (target.role === 'admin' && actor.role !== 'admin') throw forbidden('Only an administrator can change an administrator account.');
+    if (!(await setDepartmentRole(target.id, team.id, role))) {
+      throw badRequest(`${target.name} is not a member of ${team.name}. Add them to the department first.`);
+    }
+    await recordAudit({
+      actorId: actor.id,
+      actorName: actor.name,
+      entityType: 'team',
+      entityId: team.id,
+      action: 'department_role_changed',
+      summary: `Made ${target.name} ${role === 'manager' ? 'a manager' : 'a member'} of ${team.name}`,
+      meta: { userId: target.id, role },
+      ip: clientIp(req),
+    });
+    res.json({ team: await findTeamById(team.id), user: await findUserById(target.id) });
   }),
 );
 

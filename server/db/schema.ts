@@ -824,6 +824,36 @@ const TABLES: string[] = [
     created_at TEXT NOT NULL
   )`,
 
+  /* Invite links people use to sign themselves up into a department. */
+  `CREATE TABLE IF NOT EXISTS invites (
+    id TEXT PRIMARY KEY,
+    token_hash TEXT NOT NULL UNIQUE,
+    label TEXT,
+    role_id TEXT NOT NULL,
+    email TEXT,
+    allowed_domains TEXT NOT NULL DEFAULT '[]',
+    team_ids TEXT NOT NULL DEFAULT '[]',
+    max_uses INTEGER,
+    uses INTEGER NOT NULL DEFAULT 0,
+    expires_at TEXT NOT NULL,
+    revoked_at TEXT,
+    created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL
+  )`,
+
+  /*
+   * One row per use of an invite, numbered. The (invite_id, seq) key is what
+   * stops two people taking the last use of a link at the same moment.
+   */
+  `CREATE TABLE IF NOT EXISTS invite_uses (
+    invite_id TEXT NOT NULL REFERENCES invites(id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL,
+    claim_id TEXT NOT NULL,
+    user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (invite_id, seq)
+  )`,
+
   `CREATE TABLE IF NOT EXISTS sessions (
     sid TEXT PRIMARY KEY,
     data TEXT NOT NULL,

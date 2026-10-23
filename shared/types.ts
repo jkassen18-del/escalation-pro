@@ -48,6 +48,8 @@ export interface PublicUser {
   createdAt: string;
   updatedAt: string;
   teamIds: string[];
+  /** The departments, among teamIds, this person is a manager of (the rest they are a member of). */
+  managedTeamIds: string[];
   /** The role's permissions plus per-user grants, already merged. */
   permissions: Permission[];
   /** Grants stored explicitly against this user, on top of their role. */
@@ -76,6 +78,8 @@ export interface Team {
   /** Minutes allowed before resolution breaches SLA. */
   slaResolveMins: number;
   memberIds: string[];
+  /** The members who manage this department. */
+  managerIds: string[];
   createdAt: string;
   updatedAt: string;
   /** Present on list endpoints. */
@@ -418,6 +422,7 @@ export const PERMISSIONS = [
   'users.create',
   'users.update',
   'users.assign_roles',
+  'users.invite',
   'users.delete',
   'users.reset_password',
   'roles.manage',
@@ -475,4 +480,43 @@ export interface Role {
 export interface ApiError {
   error: string;
   details?: Record<string, string>;
+}
+
+/** A department membership: plain member, or one of the department's managers. */
+export const DEPARTMENT_ROLES = ['member', 'manager'] as const;
+export type DepartmentRole = (typeof DEPARTMENT_ROLES)[number];
+
+export type InviteStatus = 'active' | 'expired' | 'used_up' | 'revoked';
+
+/** An invite link as admins see it. The token itself is only returned once, on creation. */
+export interface Invite {
+  id: string;
+  label: string | null;
+  roleId: string;
+  roleName: string;
+  /** A single person the invite is for; anyone with the link otherwise. */
+  email: string | null;
+  /** Company email domains accepted, e.g. ["goldmedialab.com"]; empty accepts any. */
+  allowedDomains: string[];
+  /** Departments the person may pick from; empty means every department. */
+  teamIds: string[];
+  /** Null for unlimited. */
+  maxUses: number | null;
+  uses: number;
+  expiresAt: string;
+  revokedAt: string | null;
+  createdById: string | null;
+  createdByName: string | null;
+  createdAt: string;
+  status: InviteStatus;
+}
+
+/** What the public invite page shows before anyone signs up. */
+export interface InvitePreview {
+  organizationName: string;
+  label: string | null;
+  email: string | null;
+  allowedDomains: string[];
+  departments: Array<{ id: string; name: string }>;
+  expiresAt: string;
 }

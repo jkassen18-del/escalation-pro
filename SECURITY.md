@@ -100,14 +100,22 @@ Verified by test:
   (with `pages.respond`), by a holder of `oncall.manage`, or by a holder of
   `oncall.manage_own_department` in the ticket's department.
 - On-call schedules and overrides for others can be changed only by holders of
-  `oncall.manage`, or of `oncall.manage_own_department` for their own
-  departments' schedules.
+  `oncall.manage`, of `oncall.manage_own_department` for their own
+  departments' schedules, or by a department's managers for that department.
+- Invite links are the only self sign-up. The token is 192 random bits, stored
+  as a SHA-256 hash and shown once; it can only create an account with the
+  invite's role, which its creator must have been able to grant, as a plain
+  member of one of the invite's departments, with an email on its allowed
+  domains. Uses are claimed atomically (racing sign-ups cannot exceed the
+  limit), the public endpoints are rate limited per IP, and expired, used-up,
+  revoked and unknown links all give the same answer.
 - Attachments follow the ticket's visibility for upload, download and delete,
   and files on an internal note are hidden from anyone who cannot read
   internal notes. The XLSX export covers only the tickets the exporter can see
   and leaves out internal notes for people without `tickets.comment_internal`.
 - A viewer cannot see internal notes.
-- Unauthenticated requests are rejected on every API route.
+- Unauthenticated requests are rejected on every API route except sign-in,
+  first-run setup, branding, and opening or accepting an invite link.
 - `createdBy` cannot be spoofed through the request body.
 
 The system refuses to remove, suspend, or demote the last active administrator.

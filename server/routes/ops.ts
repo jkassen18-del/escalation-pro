@@ -1,4 +1,4 @@
-import express, { Router, type Request } from 'express';
+import express, { Router, type NextFunction, type Request, type Response } from 'express';
 import { db } from '../db/index.ts';
 import { clientIp, recordAudit, type AuditInput } from '../lib/audit.ts';
 import { asyncRoute, badRequest, forbidden, notFound, optionalString, requireString } from '../lib/http.ts';
@@ -23,7 +23,7 @@ import {
   validateMaintenance,
 } from '../ops/maintenance.ts';
 import { deleteJob, getJob, jobConnection, listJobs, listRuns, openDecryptedBackup, runBackup, saveJob, validateJob } from '../ops/backups.ts';
-import { canActOnPage, canManageOnCallFor, filterToVisibleTickets, redactMonitor, redactSource } from '../ops/access.ts';
+import { canActOnPage, canManageAnyOnCall, canManageOnCallFor, filterToVisibleTickets, redactMonitor, redactSource } from '../ops/access.ts';
 import { checkDatabaseHealth } from '../ops/db-health.ts';
 import { checkMonitorNow, deleteMonitor, getMonitor, listMonitors, monitorChecks, monitorDays, saveMonitor, validateMonitor } from '../ops/monitors.ts';
 import {
@@ -479,7 +479,7 @@ opsRouter.get(
 
 opsRouter.post(
   '/schedules',
-  requirePermission('oncall.manage', 'oncall.manage_own_department'),
+  requireOnCallEditor,
   asyncRoute(async (req, res) => {
     const input = scheduleInput(req.body ?? {});
     assertCanManageOnCall(req, input.teamId);
@@ -491,7 +491,7 @@ opsRouter.post(
 
 opsRouter.put(
   '/schedules/:id',
-  requirePermission('oncall.manage', 'oncall.manage_own_department'),
+  requireOnCallEditor,
   asyncRoute(async (req, res) => {
     const existing = await getSchedule(req.params.id);
     if (!existing) throw notFound('That schedule does not exist.');
@@ -507,7 +507,7 @@ opsRouter.put(
 
 opsRouter.delete(
   '/schedules/:id',
-  requirePermission('oncall.manage', 'oncall.manage_own_department'),
+  requireOnCallEditor,
   asyncRoute(async (req, res) => {
     const schedule = await getSchedule(req.params.id);
     if (!schedule) throw notFound('That schedule does not exist.');
@@ -517,6 +517,12 @@ opsRouter.delete(
     res.status(204).end();
   }),
 );
+
+/** Lets through anyone who can edit some department's on-call; the route then checks which. */
+function requireOnCallEditor(req: Request, _res: Response, next: NextFunction): void {
+  if (!canManageAnyOnCall(userOf(req))) return next(forbidden('You do not have permission to do that.'));
+  next();
+}
 
 function assertCanManageOnCall(req: Request, teamId: string | null | undefined): void {
   if (!canManageOnCallFor(userOf(req), teamId)) {

@@ -50,6 +50,7 @@ export const PERMISSION_GROUPS: Array<{ label: string; permissions: PermissionIn
       { key: 'users.create', label: 'Create users', hint: 'Provision new accounts' },
       { key: 'users.update', label: 'Edit users', hint: 'Change profile details, departments and account status' },
       { key: 'users.assign_roles', label: 'Assign roles and permissions', hint: 'Change someone’s role and extra permissions (never beyond their own)' },
+      { key: 'users.invite', label: 'Invite people', hint: 'Create invite links people use to sign themselves up into a department', impliedBy: 'users.create' },
       { key: 'users.delete', label: 'Delete users', hint: 'Remove accounts' },
       { key: 'users.reset_password', label: 'Reset passwords', hint: 'Issue a new password for an account' },
       { key: 'roles.manage', label: 'Manage roles', hint: 'Create, edit and delete roles (never beyond their own permissions)' },

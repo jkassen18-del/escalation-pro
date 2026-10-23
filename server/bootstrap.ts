@@ -2,7 +2,6 @@ import { config } from './config.ts';
 import { countUsers, createUser, emailInUse, findUserById } from './repositories/users.ts';
 import { listTeams, createTeam } from './repositories/teams.ts';
 import { getSettings, updateSettings } from './repositories/settings.ts';
-import { ALL_PERMISSIONS } from './permissions.ts';
 import { conflict } from './lib/http.ts';
 import type { PublicUser } from '../shared/types.ts';
 
@@ -56,7 +55,8 @@ export async function bootstrapFirstAdmin(input: {
     password: input.password,
     role: 'admin',
     teamIds,
-    extraPermissions: [...ALL_PERMISSIONS],
+    // The Administrator role already holds everything, now and as permissions are added.
+    extraPermissions: [],
     mustChangePassword: false,
   });
 

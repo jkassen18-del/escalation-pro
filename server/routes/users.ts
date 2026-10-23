@@ -181,6 +181,7 @@ usersRouter.post(
         jobTitle: optionalString(req.body?.jobTitle, 120),
         phone: optionalString(req.body?.phone, 40),
         teamIds: toStringArray(req.body?.teamIds),
+        managedTeamIds: Array.isArray(req.body?.managedTeamIds) ? toStringArray(req.body.managedTeamIds) : undefined,
         extraPermissions,
         mustChangePassword: req.body?.mustChangePassword !== false,
         status: requireEnum(req.body?.status ?? 'active', USER_STATUSES, 'Status'),
@@ -265,8 +266,10 @@ usersRouter.patch(
       await db.run(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
     }
 
-    if (Array.isArray(req.body?.teamIds)) {
-      await setUserTeams(target.id, toStringArray(req.body.teamIds));
+    if (Array.isArray(req.body?.teamIds) || Array.isArray(req.body?.managedTeamIds)) {
+      const teamIds = Array.isArray(req.body?.teamIds) ? toStringArray(req.body.teamIds) : target.teamIds;
+      const managed = Array.isArray(req.body?.managedTeamIds) ? toStringArray(req.body.managedTeamIds) : undefined;
+      await setUserTeams(target.id, teamIds, managed);
     }
     if (Array.isArray(req.body?.extraPermissions)) {
       const requested = readPermissions(req.body.extraPermissions);

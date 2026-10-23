@@ -10,7 +10,6 @@ import { createTeam, listTeams, pickAssignee } from '../repositories/teams.ts';
 import { updateSettings } from '../repositories/settings.ts';
 import { addWatcher, dueDateFrom, insertTicket, recordEvent, slaMultiplier } from '../repositories/tickets.ts';
 import { randomId } from '../lib/crypto.ts';
-import { ALL_PERMISSIONS } from '../permissions.ts';
 import type { TicketPriority, TicketStatus, TicketType } from '../../shared/types.ts';
 
 const DEMO_PASSWORD = process.env.SEED_PASSWORD || 'ChangeMe123!';
@@ -90,7 +89,7 @@ async function seed(): Promise<void> {
       role: person.role,
       jobTitle: person.jobTitle,
       teamIds: person.teams.map((key) => teamIds.get(key)!).filter(Boolean),
-      extraPermissions: person.role === 'admin' ? [...ALL_PERMISSIONS] : [],
+      extraPermissions: [],
       mustChangePassword: false,
     });
     userIds.set(person.email, id);

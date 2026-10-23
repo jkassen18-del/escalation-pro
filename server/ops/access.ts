@@ -37,12 +37,16 @@ export function redactSource(source: AlertSource, user: Pick<PublicUser, 'permis
  * waiting on), or by anyone who manages on-call. Anyone else seeing an id must
  * not be able to silence someone else's page.
  */
-export async function canActOnPage(user: Pick<PublicUser, 'id' | 'permissions'> & { teamIds?: string[] }, pageId: string, currentTargetIds: string[] = []): Promise<boolean> {
+export async function canActOnPage(
+  user: Pick<PublicUser, 'id' | 'permissions'> & { teamIds?: string[]; managedTeamIds?: string[] },
+  pageId: string,
+  currentTargetIds: string[] = [],
+): Promise<boolean> {
   if (user.permissions.includes('oncall.manage')) return true;
   // A department's on-call manager may act on pages about that department's tickets.
-  if (user.permissions.includes('oncall.manage_own_department') && user.teamIds?.length) {
+  if (user.teamIds?.length && (user.permissions.includes('oncall.manage_own_department') || user.managedTeamIds?.length)) {
     const row = await db.get<{ team_id: string | null }>(`SELECT t.team_id FROM pages p JOIN tickets t ON t.id = p.ticket_id WHERE p.id = ?`, [pageId]);
-    if (row?.team_id && user.teamIds.includes(row.team_id)) return true;
+    if (row?.team_id && canManageOnCallFor({ permissions: user.permissions, teamIds: user.teamIds, managedTeamIds: user.managedTeamIds ?? [] }, row.team_id)) return true;
   }
   if (!user.permissions.includes('pages.respond')) return false;
   if (currentTargetIds.includes(user.id)) return true;
@@ -84,11 +88,25 @@ export async function filterToVisibleTickets<T extends { ticketId: string | null
 
 /**
  * Whether someone may edit a department's on-call: everyone's with
- * oncall.manage, only their own departments' with oncall.manage_own_department.
+ * oncall.manage; their own departments' with oncall.manage_own_department;
+ * and any department they have been made a manager of, whatever their role.
  * A schedule that belongs to no department needs oncall.manage.
  */
-export function canManageOnCallFor(user: Pick<PublicUser, 'permissions' | 'teamIds'>, teamId: string | null | undefined): boolean {
+export function canManageOnCallFor(
+  user: Pick<PublicUser, 'permissions' | 'teamIds'> & { managedTeamIds?: string[] },
+  teamId: string | null | undefined,
+): boolean {
   if (user.permissions.includes('oncall.manage')) return true;
-  if (!user.permissions.includes('oncall.manage_own_department')) return false;
-  return Boolean(teamId && user.teamIds.includes(teamId));
+  if (!teamId) return false;
+  if (user.managedTeamIds?.includes(teamId)) return true;
+  return user.permissions.includes('oncall.manage_own_department') && user.teamIds.includes(teamId);
+}
+
+/** Whether someone can edit on-call anywhere at all, before knowing which schedule. */
+export function canManageAnyOnCall(user: Pick<PublicUser, 'permissions'> & { managedTeamIds?: string[] }): boolean {
+  return (
+    user.permissions.includes('oncall.manage') ||
+    user.permissions.includes('oncall.manage_own_department') ||
+    Boolean(user.managedTeamIds?.length)
+  );
 }
