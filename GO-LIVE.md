@@ -111,23 +111,28 @@ and they cannot be read without it.
 
 ## 4. Create the tunnel
 
-1. Cloudflare dashboard → **Zero Trust** (first time: pick the free plan) →
-   **Networks → Tunnels → Create a tunnel → Cloudflared**. Name it `infraticket`.
-2. **Install the connector:**
-   - **Windows (3A):** download the Windows installer on that page and run it.
-     Then, in an administrator Command Prompt, run the
-     `cloudflared.exe service install <token>` line the page shows. It runs as
-     a Windows service from then on.
+1. Cloudflare dashboard (dash.cloudflare.com) → **Networking → Tunnels** →
+   **Create a tunnel**. Name it `infraticket` → **Create Tunnel**.
+2. **Install the connector:** the next page asks for your operating system.
+   - **Windows (3A):** pick **Windows**, download the installer it links to and
+     run it. Then open **Command Prompt as administrator** and paste the
+     `cloudflared.exe service install eyJ...` line the page shows. It runs as a
+     Windows service from then on, including after a restart.
    - **Docker (3B):** copy only the token, the long `eyJ...` string, into
      `CLOUDFLARE_TUNNEL_TOKEN` in `.env`, then start everything:
      `docker compose --profile tunnel up -d --build`.
 
-   The page shows the connector as **Healthy** within a minute.
-3. **Public hostname → Add:** leave Subdomain empty, Domain
-   `infraticket.co.za`, Type `HTTP`, URL:
-   - Windows: `localhost:8080`
-   - Docker: `app:3000`
-4. Add a second public hostname with Subdomain `www`, same domain, same URL.
+   Within a minute the page shows the connector as connected. Select **Continue**.
+3. On the tunnel's **Routes** tab: **Add route → Published application**.
+   Leave the subdomain empty, choose the domain `infraticket.co.za`, and set the
+   **Service URL** to:
+   - Windows: `http://localhost:8080`
+   - Docker: `http://app:3000`
+
+   Select **Add route**. (If it says a DNS record already exists, delete the old
+   `infraticket.co.za` A/CNAME record under DNS → Records and add the route again.)
+4. Add a second published application with subdomain `www`, same domain, same
+   Service URL.
 
 Cloudflare creates the DNS records for both. Open `https://infraticket.co.za`.
 
@@ -155,8 +160,8 @@ Now that there is a public HTTPS address, the parts that need one start working:
 
 ## 7. Before the team gets the address (recommended)
 
-- **Restrict who can open it while you test:** Zero Trust → **Access →
-  Applications → Add → Self-hosted**, domain `infraticket.co.za`. Add a policy
+- **Restrict who can open it while you test:** Cloudflare dashboard → **Zero
+  Trust → Access → Applications → Add an application → Self-hosted**, domain `infraticket.co.za`. Add a policy
   *Allow, emails ending in @yourcompany.co.za* (or a list of testers). Visitors
   then sign in with a one-time code by email before they see the app. Exclude
   `/api/webhooks/*` and `/api/ingest/*` from the application (add them as
