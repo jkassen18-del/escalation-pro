@@ -59,14 +59,12 @@ that a Docker install imports.
 
    ```ini
    APP_URL=https://infraticket.co.za
-   # The tunnel terminates HTTPS and forwards to this machine. Both are needed:
-   # without TRUST_PROXY the sign-in cookie is refused and every visitor looks
-   # like the same address to the login rate limit.
+   # Marks the sign-in cookie Secure when people come in over HTTPS through
+   # the tunnel; http://localhost:8080 on this PC keeps working too.
    SESSION_COOKIE_SECURE=true
-   TRUST_PROXY=1
-   # Required to create the first admin once it is reachable from the internet,
-   # so a stranger who finds the address first cannot claim it. Use any long
-   # random text, and keep it to yourself.
+   # You make this up: any long random text. The first-run setup page asks for
+   # it, so a stranger who finds the address before you cannot claim the admin
+   # account. Once the admin exists it is never asked for again.
    SETUP_TOKEN=change-me-to-something-long-and-random
    ORGANIZATION_NAME=Gold Media Lab
    ```
@@ -178,7 +176,7 @@ Now that there is a public HTTPS address, the parts that need one start working:
 | --- | --- |
 | Cloudflare *Error 1033* | The tunnel connector is not running. Start the cloudflared service (Windows) or `docker compose --profile tunnel up -d`. |
 | Cloudflare *Error 502* | The tunnel is up but the app is not. Check the console window or `docker compose logs app`, and that the hostname URL matches (`localhost:8080` / `app:3000`). |
-| You sign in, and land back on the sign-in page | `SESSION_COOKIE_SECURE=true` without `TRUST_PROXY=1` (portable). Add it and restart. |
+| You sign in, then see "You are not signed in" | An InfraTicket.exe from before 26 Oct 2026 needs `TRUST_PROXY=1` in `.env` behind the tunnel; newer builds do not. Restart after changing `.env`. |
 | *Too many redirects* | SSL/TLS mode is *Flexible*. Set it to **Full**. |
 | The setup page asks for a token | That is `SETUP_TOKEN` from `.env`. |
 | Links in Slack/Teams point at localhost | Settings → App URL, or `APP_URL` in `.env`. |

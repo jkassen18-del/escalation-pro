@@ -51,10 +51,16 @@ export async function createApp() {
   const app = express();
 
   // Required for correct req.ip and secure cookies behind a reverse proxy.
-  // The portable exe is reached directly, where trusting X-Forwarded-For
-  // would let a client pick its own IP and dodge the per-IP login limit.
-  const trustProxy = process.env.TRUST_PROXY ?? (process.env.INFRATICKET_PORTABLE ? '0' : '1');
-  app.set('trust proxy', /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy === 'true');
+  // The portable exe trusts only a proxy on the same machine ('loopback'): it
+  // listens on 127.0.0.1, so the only proxy that can reach it is a local one -
+  // a Cloudflare Tunnel connector - and a browser connecting directly sends no
+  // forwarded headers to be fooled by. Trusting nothing there meant the
+  // tunnel's HTTPS went unseen and the secure sign-in cookie was never set.
+  const trustProxy = process.env.TRUST_PROXY ?? (process.env.INFRATICKET_PORTABLE ? 'loopback' : '1');
+  app.set(
+    'trust proxy',
+    /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy === 'true' ? true : trustProxy === 'false' ? false : trustProxy,
+  );
   app.disable('x-powered-by');
 
   app.use(
@@ -132,7 +138,11 @@ export async function createApp() {
       cookie: {
         httpOnly: true,
         sameSite: 'lax',
-        secure: config.cookieSecure,
+        // 'auto': Secure whenever the request arrived over HTTPS (directly or via
+        // a trusted proxy), and still usable at http://localhost on the machine
+        // itself. A plain `true` silently dropped the cookie on any request it
+        // could not see as HTTPS, so signing in "worked" and then did not.
+        secure: config.cookieSecure ? 'auto' : false,
         maxAge: config.sessionMaxAgeMs,
       },
     }),

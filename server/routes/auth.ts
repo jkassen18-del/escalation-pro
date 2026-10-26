@@ -194,7 +194,7 @@ authRouter.post(
       });
     }
     req.session.destroy(() => {
-      res.clearCookie(SESSION_COOKIE_NAME, { path: '/', sameSite: 'lax', secure: config.cookieSecure });
+      res.clearCookie(SESSION_COOKIE_NAME, { path: '/', sameSite: 'lax', secure: config.cookieSecure && req.secure });
       res.json({ ok: true });
     });
   }),
