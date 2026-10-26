@@ -40,6 +40,7 @@ import { buildTeamsAppPackage, ManifestError } from '../integrations/teams-manif
 import { packageForDownload, saveTeamsApp, teamsAppState } from '../integrations/teams-app.ts';
 import { catalogueStatus } from '../integrations/catalogue.ts';
 import { integrationSetupRouter } from './integration-setup.ts';
+import { integrationRoutingRouter } from './integration-routing.ts';
 import { getSettings } from '../repositories/settings.ts';
 
 export const integrationsRouter: Router = Router();
@@ -48,18 +49,20 @@ integrationsRouter.use(requireAuth, requirePermission('integrations.manage'));
 
 // Guided one-click setup (Slack app manifest + OAuth, Microsoft admin consent).
 integrationsRouter.use(integrationSetupRouter);
+integrationsRouter.use(integrationRoutingRouter);
 
 /** True once the provider has the minimum fields it needs to send anything. */
 function isConfigured(provider: IntegrationProvider, config: Record<string, unknown>): boolean {
   switch (provider) {
     case 'slack':
-      return config.mode === 'bot' ? Boolean(config.botToken && config.channel) : Boolean(config.webhookUrl);
+      // Bot mode no longer needs one channel: each department picks its own.
+      return config.mode === 'bot' ? Boolean(config.botToken) : Boolean(config.webhookUrl);
     case 'msteams':
       return config.mode === 'bot'
         ? Boolean(config.appId && config.appPassword)
         : Boolean(config.webhookUrl);
     case 'linear':
-      return Boolean(config.apiKey && config.teamId);
+      return Boolean(config.apiKey);
     case 'email':
       return Boolean(config.host && (config.fromEmail || config.username));
     case 'discord':

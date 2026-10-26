@@ -234,7 +234,6 @@ export function IntegrationCard({
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [expanded, setExpanded] = useState(embedded || !integration.configured);
-  const [linearTeams, setLinearTeams] = useState<Array<{ id: string; key: string; name: string }>>([]);
 
   useEffect(() => {
     setConfig(integration.config);
@@ -263,10 +262,6 @@ export function IntegrationCard({
       if (result.ok) onToast.success(`${meta.name} connected`, result.message);
       else onToast.error(`${meta.name} test failed`, result.message);
 
-      // The Linear test returns the visible teams, which populates the picker.
-      if (integration.provider === 'linear' && result.details?.teams) {
-        setLinearTeams(result.details.teams as Array<{ id: string; key: string; name: string }>);
-      }
       await onChanged();
     } catch (caught) {
       onToast.error('Test failed', caught instanceof ApiError ? caught.message : undefined);
@@ -343,9 +338,7 @@ export function IntegrationCard({
         <div className="space-y-4 border-t px-4 py-4">
           {integration.provider === 'slack' && <SlackFields config={config} set={set} />}
           {integration.provider === 'msteams' && <TeamsFields config={config} set={set} />}
-          {integration.provider === 'linear' && (
-            <LinearFields config={config} set={set} teams={linearTeams} setTeams={setLinearTeams} />
-          )}
+          {integration.provider === 'linear' && <LinearFields config={config} set={set} />}
           {integration.provider === 'email' && <EmailFields config={config} set={set} />}
 
           <div>
@@ -416,7 +409,7 @@ function SlackFields({ config, set }: { config: Record<string, unknown>; set: (k
           }}
         >
           <option value="webhook">Incoming webhook — simplest, posts to one channel</option>
-          <option value="bot">Bot token — lets you change channel without a new URL</option>
+          <option value="bot">Bot token — a channel per department</option>
         </Select>
       </Field>
 
@@ -434,24 +427,15 @@ function SlackFields({ config, set }: { config: Record<string, unknown>; set: (k
           />
         </Field>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Bot user OAuth token" hint="Needs the chat:write scope.">
-            <Input
-              type="password"
-              value={(config.botToken as string) ?? ''}
-              onChange={(event) => set('botToken', event.target.value)}
-              placeholder={secretPlaceholder(config, 'botToken', 'xoxb-…')}
-              className="font-mono text-xs"
-            />
-          </Field>
-          <Field label="Channel" hint="Channel ID (C01234ABCDE) or #name.">
-            <Input
-              value={(config.channel as string) ?? ''}
-              onChange={(event) => set('channel', event.target.value)}
-              placeholder="#escalations"
-            />
-          </Field>
-        </div>
+        <Field label="Bot user OAuth token" hint="Needs the chat:write scope. Each department's channel is picked below.">
+          <Input
+            type="password"
+            value={(config.botToken as string) ?? ''}
+            onChange={(event) => set('botToken', event.target.value)}
+            placeholder={secretPlaceholder(config, 'botToken', 'xoxb-…')}
+            className="font-mono text-xs"
+          />
+        </Field>
       )}
 
       {mode === 'bot' && (
@@ -659,20 +643,7 @@ function TeamsFields({ config, set }: { config: Record<string, unknown>; set: (k
   );
 }
 
-function LinearFields({
-  config,
-  set,
-  teams,
-  setTeams,
-}: {
-  config: Record<string, unknown>;
-  set: (k: string, v: unknown) => void;
-  teams: Array<{ id: string; key: string; name: string }>;
-  setTeams: (teams: Array<{ id: string; key: string; name: string }>) => void;
-}) {
-  const toast = useToast();
-  const [loadingTeams, setLoadingTeams] = useState(false);
-
+function LinearFields({ config, set }: { config: Record<string, unknown>; set: (k: string, v: unknown) => void }) {
   return (
     <div className="space-y-3">
       <Field label="API key" hint="Linear → Settings → API → Personal API keys.">
@@ -683,60 +654,6 @@ function LinearFields({
           placeholder={secretPlaceholder(config, 'apiKey', 'lin_api_…')}
           className="font-mono text-xs"
         />
-      </Field>
-
-      <Field label="Linear team" hint="Where mirrored issues are created. Save the API key first, then load teams.">
-        <div className="flex gap-2">
-          <Select
-            value={(config.teamId as string) ?? ''}
-            onChange={(event) => {
-              set('teamId', event.target.value);
-              set('teamKey', teams.find((team) => team.id === event.target.value)?.key ?? '');
-            }}
-            className="flex-1"
-          >
-            <option value="">
-              {config.teamKey ? `Currently: ${config.teamKey}` : 'Select a team…'}
-            </option>
-            {teams.map((team) => (
-              <option key={team.id} value={team.id}>
-                {team.key} · {team.name}
-              </option>
-            ))}
-          </Select>
-          <Button
-            variant="secondary"
-            size="md"
-            loading={loadingTeams}
-            onClick={async () => {
-              setLoadingTeams(true);
-              try {
-                // Send whatever is currently typed, so the key does not have to
-                // be saved before the list can be loaded.
-                const result = await api.integrations.linearTeams((config.apiKey as string) || undefined);
-                setTeams(result.teams);
-                if (result.teams.length === 0) {
-                  toast.error('That key works, but it can see no teams in Linear.');
-                }
-              } catch (caught) {
-                /*
-                 * Say what went wrong. This used to swallow the error on the
-                 * grounds that the test button would explain it, which left
-                 * the button spinning, stopping, and the list still empty with
-                 * nothing said.
-                 */
-                toast.error(
-                  'Could not load teams',
-                  caught instanceof ApiError ? caught.message : 'Linear could not be reached.',
-                );
-              } finally {
-                setLoadingTeams(false);
-              }
-            }}
-          >
-            Load teams
-          </Button>
-        </div>
       </Field>
 
       <div className="grid gap-3 sm:grid-cols-2">

@@ -32,6 +32,9 @@ export async function seedOpsWorkspace(ownerId: string): Promise<void> {
   const monday = new Date();
   monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));
   monday.setUTCHours(7, 0, 0, 0);
+  // Early on a Monday, this week's handover has not happened yet: start from last week's,
+  // or the rotation would not have begun and nobody would be on call until 07:00 UTC.
+  if (monday.getTime() > Date.now()) monday.setUTCDate(monday.getUTCDate() - 7);
   const schedule = await saveSchedule(null, {
     name: 'Operations primary',
     description: 'Weekly rotation, handing over on Mondays at 09:00 SAST.',

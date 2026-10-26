@@ -1,6 +1,9 @@
-import { senderName, type DeliveryResult, type NotificationContext, type TestResult } from './types.ts';
+import { type DeliveryResult, type NotificationContext, type TestResult } from './types.ts';
 import type { IntegrationRecord } from './store.ts';
+import { db } from '../db/index.ts';
 import { findTeamRoute } from '../repositories/team-routing.ts';
+import { templateFor, valuesFor } from './message-format.ts';
+import { fieldPairs, fill, type MessageTemplate, type TemplateValues } from '../../shared/message-template.ts';
 import type { TicketPriority, TicketStatus } from '../../shared/types.ts';
 
 const LINEAR_API = 'https://api.linear.app/graphql';
@@ -66,22 +69,30 @@ export async function testLinear(record: IntegrationRecord): Promise<TestResult>
     }>(config.apiKey, `query { viewer { id name email } teams(first: 50) { nodes { id key name } } }`);
 
     const teams = data.teams.nodes;
-    const selected = teams.find((team) => team.id === config.teamId);
-
-    if (!config.teamId) {
+    /*
+     * Each department has its own Linear team; the integration's own team only
+     * catches the rest. Check every one of them is still visible to this key.
+     */
+    const routed = await db.all<{ target: string; name: string }>(
+      `SELECT r.target, t.name FROM team_routing r JOIN teams t ON t.id = r.team_id WHERE r.provider = 'linear' AND r.target <> ''`,
+    );
+    const wanted = [...routed, ...(config.teamId ? [{ target: config.teamId, name: 'Everything else' }] : [])];
+    if (!wanted.length) {
+      return { ok: false, message: `Key is valid for ${data.viewer.name}, but no department has a Linear team yet.`, details: { teams } };
+    }
+    const missing = wanted.filter((entry) => !teams.some((team) => team.id === entry.target));
+    if (missing.length) {
       return {
         ok: false,
-        message: `Key is valid for ${data.viewer.name}, but no Linear team is selected yet.`,
+        message: `The Linear team for ${missing.map((entry) => entry.name).join(', ')} is no longer visible to this API key.`,
         details: { teams },
       };
     }
-    if (!selected) {
-      return { ok: false, message: 'The selected Linear team is no longer visible to this API key.', details: { teams } };
-    }
 
+    const keys = Array.from(new Set(wanted.map((entry) => teams.find((team) => team.id === entry.target)!.key)));
     return {
       ok: true,
-      message: `Connected to Linear as ${data.viewer.name}. Issues will be created in ${selected.key} · ${selected.name}.`,
+      message: `Connected to Linear as ${data.viewer.name}. Issues go to ${keys.join(', ')} by department.`,
       details: { teams, viewer: data.viewer },
     };
   } catch (error) {
@@ -106,32 +117,42 @@ export interface LinearIssueResult {
   error?: string;
 }
 
+/** The Linear team a department's tickets go to: its own, else the "everything else" team. */
+export async function linearTeamFor(record: IntegrationRecord, departmentId: string | null): Promise<string | null> {
+  const route = await findTeamRoute(departmentId, 'linear');
+  return route?.target || (record.config as LinearConfig).teamId || null;
+}
+
+/** Issue title and Markdown description, laid out by the saved message design. */
+export function linearIssueText(template: MessageTemplate, values: TemplateValues): { title: string; description: string } {
+  const title = fill(template.title, values, 'linear').replace(/\s+/g, ' ').slice(0, 250) || `[${values.reference}] ${values.subject}`;
+  const parts = [
+    fill(template.subtitle, values, 'linear'),
+    fill(template.body, values, 'linear'),
+    fieldPairs(template, values, 'linear').map((pair) => `- **${pair.label}:** ${pair.value}`).join('\n'),
+  ].filter(Boolean);
+  const footer = fill(template.footer, values, 'linear');
+  return { title, description: [...parts, ...(footer ? ['---', footer] : [])].join('\n\n') };
+}
+
 export async function createLinearIssue(
   record: IntegrationRecord,
   ctx: NotificationContext,
+  options: { linearTeamId?: string | null } = {},
 ): Promise<LinearIssueResult> {
   const config = record.config as LinearConfig;
   if (!config.apiKey) return { ok: false, error: 'Linear API key is not configured' };
   /*
-   * A department may mirror into its own Linear team - HR tickets into the HR
-   * team rather than everything landing in one. No override means the
-   * integration's default team, as before.
+   * A department mirrors into its own Linear team - HR tickets into the HR
+   * team rather than everything landing in one. Someone pushing a ticket by
+   * hand may pick another team; with neither, the "everything else" team.
    */
-  const route = await findTeamRoute(ctx.ticket.teamId, 'linear');
-  const targetTeamId = route?.target || config.teamId;
-  if (!targetTeamId) return { ok: false, error: 'No Linear team selected' };
+  const targetTeamId = options.linearTeamId || (await linearTeamFor(record, ctx.ticket.teamId));
+  if (!targetTeamId) {
+    return { ok: false, error: `No Linear team is set for ${ctx.ticket.teamName ?? 'tickets without a department'}. Pick one under Integrations → Linear.` };
+  }
 
-  const sender = await senderName();
-  const description = [
-    ctx.ticket.description,
-    '',
-    '---',
-    `Escalated from **${ctx.ticket.reference}** in ${sender}.`,
-    `- Team: ${ctx.ticket.teamName ?? 'Unassigned'}`,
-    `- Priority: ${ctx.ticket.priority}`,
-    `- Requester: ${ctx.ticket.requesterName ?? 'Unknown'}`,
-    `- [Open in ${sender}](${ctx.ticketUrl})`,
-  ].join('\n');
+  const { title, description } = linearIssueText(await templateFor('linear'), await valuesFor(ctx));
 
   try {
     const data = await graphql<{
@@ -147,7 +168,7 @@ export async function createLinearIssue(
       {
         input: {
           teamId: targetTeamId,
-          title: `[${ctx.ticket.reference}] ${ctx.ticket.subject}`,
+          title,
           description,
           priority: PRIORITY_MAP[ctx.ticket.priority],
         },

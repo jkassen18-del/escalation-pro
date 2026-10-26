@@ -1,71 +1,82 @@
 import { useEffect, useState } from 'react';
-import { api, ApiError } from '@/lib/api';
+import { Link } from 'react-router-dom';
+import { api, ApiError, type RoutedProvider, type RoutingView } from '@/lib/api';
+import { useAuth } from '@/state/auth';
 import { useToast } from '@/components/ui/Toast';
 import { Button } from '@/components/ui/Button';
-import { Field, Input } from '@/components/ui/Field';
-import type { TeamRoute } from '@shared/types';
+import { Field, Input, Select } from '@/components/ui/Field';
+
+const PROVIDERS: Array<{ provider: RoutedProvider; label: string }> = [
+  { provider: 'slack', label: 'Slack channel' },
+  { provider: 'msteams', label: 'Teams channel' },
+  { provider: 'linear', label: 'Linear team' },
+];
 
 /**
- * Where this department's tickets are announced.
- *
- * Every field is optional. Left blank, the team uses whatever the integration
- * is configured with - so a company that wants one channel for everything
- * never has to come here.
+ * Where this department's tickets go, picked from the real channels and Linear
+ * teams. The same choices as the table under Integrations, for one department;
+ * left blank, the department uses "Everything else" there.
  */
-interface Draft {
-  slackChannel: string;
-  slackMention: string;
-  linearTeamId: string;
-  teamsWebhook: string;
-}
-
-const BLANK: Draft = { slackChannel: '', slackMention: '', linearTeamId: '', teamsWebhook: '' };
-
-function toDraft(routes: TeamRoute[]): Draft {
-  const find = (provider: string) => routes.find((route) => route.provider === provider);
-  return {
-    slackChannel: find('slack')?.target ?? '',
-    slackMention: find('slack')?.mention ?? '',
-    linearTeamId: find('linear')?.target ?? '',
-    teamsWebhook: find('msteams')?.target ?? '',
-  };
-}
-
 export function TeamRouting({ teamId, teamName }: { teamId: string; teamName: string }) {
   const toast = useToast();
-  const [draft, setDraft] = useState<Draft | null>(null);
+  const { can } = useAuth();
+  const manage = can('integrations.manage');
+  const [views, setViews] = useState<Partial<Record<RoutedProvider, RoutingView>>>({});
+  const [draft, setDraft] = useState<Record<RoutedProvider, { target: string; mention: string }>>({
+    slack: { target: '', mention: '' },
+    msteams: { target: '', mention: '' },
+    linear: { target: '', mention: '' },
+  });
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    if (!manage) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
-    setDraft(null);
-    void api.teams
-      .routing(teamId)
-      .then((result) => {
-        if (!cancelled) setDraft(toDraft(result.routes));
-      })
-      .catch(() => {
-        if (!cancelled) setDraft({ ...BLANK });
+    setLoading(true);
+    void Promise.allSettled(PROVIDERS.map(({ provider }) => api.integrations.routing(provider))).then((results) => {
+      if (cancelled) return;
+      const next: Partial<Record<RoutedProvider, RoutingView>> = {};
+      const nextDraft = { ...draft };
+      results.forEach((result, index) => {
+        if (result.status !== 'fulfilled') return;
+        const { provider } = PROVIDERS[index];
+        next[provider] = result.value;
+        const row = result.value.departments.find((department) => department.teamId === teamId);
+        nextDraft[provider] = { target: row?.target ?? '', mention: row?.mention ?? '' };
       });
+      setViews(next);
+      setDraft(nextDraft);
+      setLoading(false);
+    });
     return () => {
       cancelled = true;
     };
-  }, [teamId]);
+    // The draft is rebuilt from the server whenever the department changes.
+  }, [teamId, manage]);
 
-  const set = (key: keyof Draft, value: string) =>
-    setDraft((current) => (current ? { ...current, [key]: value } : current));
+  if (!manage) {
+    return (
+      <p className="text-xs text-subtle">
+        An administrator chooses where {teamName} tickets are posted, under Integrations.
+      </p>
+    );
+  }
+  if (loading) return <p className="p-3 text-xs text-subtle">Loading…</p>;
 
   const save = async () => {
-    if (!draft) return;
     setSaving(true);
     try {
-      const result = await api.teams.saveRouting(teamId, [
-        { provider: 'slack', target: draft.slackChannel, mention: draft.slackMention },
-        { provider: 'linear', target: draft.linearTeamId },
-        { provider: 'msteams', target: draft.teamsWebhook },
-      ]);
-      setDraft(toDraft(result.routes));
-      toast.success(`Saved where ${teamName} tickets are announced.`);
+      for (const { provider } of PROVIDERS) {
+        if (!views[provider]) continue;
+        await api.integrations.saveRouting(provider, {
+          departments: [{ teamId, target: draft[provider].target, mention: provider === 'slack' ? draft[provider].mention || null : undefined }],
+        });
+      }
+      toast.success(`Saved where ${teamName} tickets go.`);
     } catch (error) {
       toast.error('Could not save', error instanceof ApiError ? error.message : undefined);
     } finally {
@@ -73,54 +84,58 @@ export function TeamRouting({ teamId, teamName }: { teamId: string; teamName: st
     }
   };
 
-  if (!draft) return <p className="p-3 text-xs text-subtle">Loading…</p>;
+  const set = (provider: RoutedProvider, patch: Partial<{ target: string; mention: string }>) =>
+    setDraft((current) => ({ ...current, [provider]: { ...current[provider], ...patch } }));
 
   return (
     <div className="space-y-3">
       <p className="text-xs text-subtle">
-        Leave anything blank to use the default set up in Integrations. Fill it in and {teamName} tickets go
-        here instead.
+        Left on "Everything else", {teamName} uses the default set in{' '}
+        <Link to="/integrations" className="text-[var(--accent)] hover:underline">
+          Integrations
+        </Link>
+        , where every department's destination is in one table.
       </p>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Slack channel" hint="Channel ID, e.g. C01234ABCDE.">
-          <Input
-            value={draft.slackChannel}
-            onChange={(event) => set('slackChannel', event.target.value)}
-            placeholder="Use the default channel"
-            className="font-mono text-xs"
-          />
-        </Field>
+        {PROVIDERS.map(({ provider, label }) => {
+          const view = views[provider];
+          if (!view) return null;
+          const value = draft[provider].target;
+          return (
+            <Field key={provider} label={label} hint={view.notice ?? undefined}>
+              {view.kind === 'url' ? (
+                <Input
+                  value={value}
+                  onChange={(event) => set(provider, { target: event.target.value })}
+                  placeholder="Same as the default webhook"
+                  className="font-mono text-xs"
+                />
+              ) : (
+                <Select value={value} onChange={(event) => set(provider, { target: event.target.value })} disabled={!view.destinations.length}>
+                  <option value="">Everything else</option>
+                  {view.destinations.map((destination) => (
+                    <option key={destination.id} value={destination.id}>
+                      {destination.name}
+                    </option>
+                  ))}
+                  {value && !view.destinations.some((destination) => destination.id === value) && <option value={value}>{value} (not found)</option>}
+                </Select>
+              )}
+            </Field>
+          );
+        })}
 
-        <Field
-          label="Ping on each ticket"
-          hint="A user group like @hr-team, or @here. Paste the group's ID (S…) to be certain it notifies."
-        >
-          <Input
-            value={draft.slackMention}
-            onChange={(event) => set('slackMention', event.target.value)}
-            placeholder="Nobody"
-            className="font-mono text-xs"
-          />
-        </Field>
-
-        <Field label="Linear team ID" hint="Mirror this department's escalations into its own Linear team.">
-          <Input
-            value={draft.linearTeamId}
-            onChange={(event) => set('linearTeamId', event.target.value)}
-            placeholder="Use the default team"
-            className="font-mono text-xs"
-          />
-        </Field>
-
-        <Field label="Teams webhook URL" hint="A Workflows URL for this department's channel.">
-          <Input
-            value={draft.teamsWebhook}
-            onChange={(event) => set('teamsWebhook', event.target.value)}
-            placeholder="Use the default webhook"
-            className="font-mono text-xs"
-          />
-        </Field>
+        {views.slack && (
+          <Field label="Ping in Slack" hint="@here, @channel, or a user group's ID (S…).">
+            <Input
+              value={draft.slack.mention}
+              onChange={(event) => set('slack', { mention: event.target.value })}
+              placeholder="Nobody"
+              className="font-mono text-xs"
+            />
+          </Field>
+        )}
       </div>
 
       <Button size="sm" variant="primary" loading={saving} onClick={save}>

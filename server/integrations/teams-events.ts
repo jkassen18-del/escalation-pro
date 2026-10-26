@@ -113,11 +113,17 @@ export async function resolveTeamsActor(
 /** The Teams message that started this ticket's thread, if there is one. */
 export async function findTeamsThread(
   ticketId: string,
+  conversationId?: string,
 ): Promise<{ conversationId: string; activityId: string; serviceUrl: string } | null> {
-  const row = await db.get<{ external_id: string; external_key: string; url: string }>(
-    `SELECT external_id, external_key, url FROM ticket_links WHERE provider = 'msteams' AND ticket_id = ?`,
-    [ticketId],
-  );
+  const row = conversationId
+    ? await db.get<{ external_id: string; external_key: string; url: string }>(
+        `SELECT external_id, external_key, url FROM ticket_links WHERE provider = 'msteams' AND ticket_id = ? AND external_key = ? ORDER BY created_at`,
+        [ticketId, conversationId],
+      )
+    : await db.get<{ external_id: string; external_key: string; url: string }>(
+        `SELECT external_id, external_key, url FROM ticket_links WHERE provider = 'msteams' AND ticket_id = ? ORDER BY created_at`,
+        [ticketId],
+      );
   if (!row) return null;
   return { activityId: row.external_id, conversationId: row.external_key, serviceUrl: row.url };
 }

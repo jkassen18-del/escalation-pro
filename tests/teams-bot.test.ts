@@ -494,4 +494,10 @@ test('a notification threads onto the ticket’s existing Teams message', async 
     sent.at(-1)!.url.endsWith(`/activities/${rootActivityId}`),
     `expected a reply to ${rootActivityId}, got ${sent.at(-1)!.url}`,
   );
+  // The attachment is the card itself. It used to be a whole Workflows message
+  // ({ type: 'message', attachments: [...] }) nested inside, which Teams shows as blank.
+  const content = sent.at(-1)!.body.attachments[0].content;
+  assert.equal(content.type, 'AdaptiveCard');
+  assert.equal(content.body[0].type, 'Container', 'the priority colour band holds the title');
+  assert.equal(content.body[0].items[0].text, 'Moved to in progress');
 });

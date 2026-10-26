@@ -10,6 +10,8 @@ import type { CatalogueStatus } from '@shared/types';
 import { GROUPS, TILES, type CatalogueTile } from './catalogue';
 import { SetupDrawer, StatusLine } from './SetupDrawer';
 import { DeveloperSetup, SlackSetup, SourceSetup, TeamsSetup } from './Setups';
+import { DepartmentRouting } from './DepartmentRouting';
+import { MessageDesigner } from './MessageDesigner';
 
 const neutral = 'size-full text-slate-500';
 
@@ -134,9 +136,20 @@ export function IntegrationCatalogue({
       {open && (
         <SetupDrawer title={open.name} icon={<TileIcon tile={open} />} status={status[open.id]} onClose={close}>
           {open.id === 'slack' ? (
-            <SlackSetup result={params} card={renderCard('slack')} onChanged={onChanged} />
+            <>
+              <SlackSetup result={params} card={renderCard('slack')} onChanged={onChanged} />
+              <RoutingAndDesign provider="slack" />
+            </>
           ) : open.id === 'msteams' ? (
-            <TeamsSetup result={params} card={renderCard('msteams')} />
+            <>
+              <TeamsSetup result={params} card={renderCard('msteams')} />
+              <RoutingAndDesign provider="msteams" />
+            </>
+          ) : open.id === 'linear' ? (
+            <>
+              {renderCard('linear')}
+              <RoutingAndDesign provider="linear" />
+            </>
           ) : open.id === 'discord' ? (
             <DiscordIntegrationPanel />
           ) : open.kind === 'chat' ? (
@@ -148,6 +161,18 @@ export function IntegrationCatalogue({
           )}
         </SetupDrawer>
       )}
+    </div>
+  );
+}
+
+/** Per-department destinations and the message design, under a chat or Linear setup. */
+function RoutingAndDesign({ provider }: { provider: 'slack' | 'msteams' | 'linear' }) {
+  return (
+    <div className="mt-6 space-y-6 border-t pt-5">
+      <DepartmentRouting provider={provider} />
+      <div className="border-t pt-5">
+        <MessageDesigner provider={provider} />
+      </div>
     </div>
   );
 }

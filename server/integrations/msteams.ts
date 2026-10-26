@@ -8,6 +8,9 @@ import {
   PRIORITY_HEX,
 } from './types.ts';
 import type { IntegrationRecord } from './store.ts';
+import { templateFor, valuesFor } from './message-format.ts';
+import { PRIORITY_COLORS } from './types.ts';
+import { SAMPLE_VALUES, fieldPairs, fill, type MessageTemplate, type TemplateValues } from '../../shared/message-template.ts';
 
 export interface MsTeamsConfig {
   /**
@@ -31,6 +34,12 @@ export interface MsTeamsConfig {
   tenantId?: string;
   /** Bot mode: what the app is called in Teams. */
   botName?: string;
+  /**
+   * Bot mode: where tickets go when their department has no channel of its
+   * own. A conversation id, 'none' to post nothing, or unset for the channel
+   * the bot was most recently active in.
+   */
+  defaultConversationId?: string;
 }
 
 function readConfig(record: IntegrationRecord): MsTeamsConfig {
@@ -58,83 +67,81 @@ function resolveFormat(config: MsTeamsConfig): 'adaptive' | 'messagecard' {
   return detectFormat(config.webhookUrl ?? '');
 }
 
-function facts(ctx: NotificationContext) {
-  return [
-    { title: 'Reference', value: ctx.ticket.reference },
-    { title: 'Status', value: ctx.ticket.status.replace('_', ' ') },
-    { title: 'Priority', value: ctx.ticket.priority },
-    { title: 'Team', value: ctx.ticket.teamName ?? 'Unassigned' },
-    { title: 'Assignee', value: ctx.ticket.assigneeName ?? 'Unassigned' },
-    { title: 'Updated by', value: ctx.actorName },
-  ];
-}
+/** The Adaptive Card itself, laid out by the saved message design. */
+function cardContent(template: MessageTemplate, values: TemplateValues, priority: string, url: string) {
+  const title = fill(template.title, values, 'msteams');
+  const subtitle = fill(template.subtitle, values, 'msteams');
+  const bodyText = fill(template.body, values, 'msteams');
+  const footer = fill(template.footer, values, 'msteams');
+  const facts = fieldPairs(template, values, 'msteams').map((pair) => ({ title: pair.label, value: pair.value }));
 
-function buildAdaptiveCard(ctx: NotificationContext) {
-  const body: unknown[] = [
+  const header: unknown[] = [
     {
       type: 'TextBlock',
-      text: ctx.headline,
+      text: title,
       weight: 'Bolder',
       size: 'Medium',
       wrap: true,
-      color: ctx.ticket.priority === 'urgent' ? 'Attention' : 'Default',
-    },
-    { type: 'TextBlock', text: ctx.ticket.subject, wrap: true, spacing: 'None' },
-    {
-      type: 'FactSet',
-      facts: facts(ctx).map((fact) => ({ title: fact.title, value: fact.value })),
+      color: priority === 'urgent' ? 'Attention' : 'Default',
     },
   ];
+  if (subtitle) header.push({ type: 'TextBlock', text: subtitle, wrap: true, spacing: 'None' });
 
-  if (ctx.detail) {
-    body.push({ type: 'TextBlock', text: ctx.detail.slice(0, 2000), wrap: true, isSubtle: true, spacing: 'Medium' });
-  }
+  const body: unknown[] = template.priorityColour
+    ? [{ type: 'Container', style: PRIORITY_COLORS[priority] ?? 'default', bleed: true, items: header }]
+    : header;
+  if (facts.length) body.push({ type: 'FactSet', facts });
+  if (bodyText) body.push({ type: 'TextBlock', text: bodyText.slice(0, 2000), wrap: true, spacing: 'Medium' });
+  if (footer) body.push({ type: 'TextBlock', text: footer, wrap: true, isSubtle: true, size: 'Small', spacing: 'Medium' });
 
   return {
-    type: 'message',
-    attachments: [
-      {
-        contentType: 'application/vnd.microsoft.card.adaptive',
-        contentUrl: null,
-        content: {
-          $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
-          type: 'AdaptiveCard',
-          version: '1.4',
-          body,
-          actions: [{ type: 'Action.OpenUrl', title: 'Open ticket', url: ctx.ticketUrl }],
-        },
-      },
-    ],
+    $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+    type: 'AdaptiveCard',
+    version: '1.4',
+    body,
+    ...(template.buttons ? { actions: [{ type: 'Action.OpenUrl', title: 'Open ticket', url }] } : {}),
   };
 }
 
-function buildMessageCard(ctx: NotificationContext) {
+/** Workflows wants the card wrapped in a message; the bot sends `cardContent` as an attachment itself. */
+function buildAdaptiveCard(template: MessageTemplate, values: TemplateValues, priority: string, url: string) {
+  return {
+    type: 'message',
+    attachments: [{ contentType: 'application/vnd.microsoft.card.adaptive', contentUrl: null, content: cardContent(template, values, priority, url) }],
+  };
+}
+
+/** Legacy Office 365 connectors: a MessageCard, laid out by the same design. */
+function buildMessageCard(template: MessageTemplate, values: TemplateValues, priority: string, url: string) {
+  const subtitle = fill(template.subtitle, values, 'msteams');
+  const body = fill(template.body, values, 'msteams');
+  const footer = fill(template.footer, values, 'msteams');
   return {
     '@type': 'MessageCard',
     '@context': 'https://schema.org/extensions',
-    summary: `${ctx.ticket.reference}: ${ctx.ticket.subject}`,
-    themeColor: (PRIORITY_HEX[ctx.ticket.priority] ?? '#667085').replace('#', ''),
-    title: ctx.headline,
+    summary: `${values.reference}: ${values.subject}`,
+    ...(template.priorityColour ? { themeColor: (PRIORITY_HEX[priority] ?? '#667085').replace('#', '') } : {}),
+    title: fill(template.title, values, 'msteams'),
     sections: [
       {
-        activityTitle: ctx.ticket.subject,
-        facts: facts(ctx),
-        text: ctx.detail ? ctx.detail.slice(0, 2000) : undefined,
+        activityTitle: subtitle || undefined,
+        facts: fieldPairs(template, values, 'msteams').map((pair) => ({ name: pair.label, value: pair.value })),
+        text: [body.slice(0, 2000), footer ? `_${footer}_` : ''].filter(Boolean).join('\n\n') || undefined,
         markdown: true,
       },
     ],
-    potentialAction: [
-      {
-        '@type': 'OpenUri',
-        name: 'Open ticket',
-        targets: [{ os: 'default', uri: ctx.ticketUrl }],
-      },
-    ],
+    ...(template.buttons
+      ? { potentialAction: [{ '@type': 'OpenUri', name: 'Open ticket', targets: [{ os: 'default', uri: url }] }] }
+      : {}),
   };
 }
 
-function buildPayload(config: MsTeamsConfig, ctx: NotificationContext) {
-  return resolveFormat(config) === 'messagecard' ? buildMessageCard(ctx) : buildAdaptiveCard(ctx);
+async function buildPayload(config: MsTeamsConfig, ctx: NotificationContext) {
+  const template = await templateFor('msteams');
+  const values = await valuesFor(ctx);
+  return resolveFormat(config) === 'messagecard'
+    ? buildMessageCard(template, values, ctx.ticket.priority, ctx.ticketUrl)
+    : buildAdaptiveCard(template, values, ctx.ticket.priority, ctx.ticketUrl);
 }
 
 /** Workflows returns 202 with an empty body; legacy connectors return 200 "1". */
@@ -152,23 +159,22 @@ export async function testMsTeams(record: IntegrationRecord): Promise<TestResult
 
   const format = resolveFormat(config);
   const sender = await senderName();
-  const testContext = {
+  const url = config.webhookUrl.split('?')[0];
+  const values: TemplateValues = {
+    ...SAMPLE_VALUES,
     headline: `${sender} is connected`,
     detail: `This channel will receive ticket notifications from ${sender}.`,
-    actorName: sender,
-    ticketUrl: config.webhookUrl.split('?')[0],
-    ticket: {
-      reference: 'TEST-0',
-      subject: 'Connection test',
-      status: 'open',
-      priority: 'normal',
-      teamName: '—',
-      assigneeName: '—',
-    },
-  } as unknown as NotificationContext;
+    reference: 'TEST-0',
+    subject: 'Connection test',
+    actor: sender,
+    org: sender,
+    url,
+  };
+  const template = await templateFor('msteams');
 
   try {
-    const payload = format === 'messagecard' ? buildMessageCard(testContext) : buildAdaptiveCard(testContext);
+    const payload =
+      format === 'messagecard' ? buildMessageCard(template, values, 'normal', url) : buildAdaptiveCard(template, values, 'normal', url);
     const { status, text } = await postJson(config.webhookUrl, payload);
     if (isSuccess(status, text)) {
       return {
@@ -245,18 +251,22 @@ async function sendViaBot(config: MsTeamsConfig, ctx: NotificationContext): Prom
   const { defaultConversation, findConversation } = await import('../repositories/teams-conversations.ts');
   const { addLink } = await import('../repositories/tickets.ts');
 
-  const existing = await findTeamsThread(ctx.ticket.id);
-
   /*
-   * A department may post into its own channel. In bot mode the route holds a
+   * A department posts into its own channel. In bot mode the route holds a
    * conversation id rather than a webhook URL, so it has to resolve to a
    * conversation the bot was actually added to - Microsoft refuses a message
-   * to any other.
+   * to any other. With no route, the "everything else" channel if one was
+   * picked, else the channel the bot was most recently active in.
    */
   const route = await findTeamRoute(ctx.ticket.teamId, 'msteams');
-  const conversation = existing
-    ? { conversationId: existing.conversationId, serviceUrl: existing.serviceUrl }
-    : (route?.target ? await findConversation(route.target) : null) ?? (await defaultConversation());
+  const fallback = config.defaultConversationId ? await findConversation(config.defaultConversationId) : null;
+  const target = (route?.target ? await findConversation(route.target) : null) ?? fallback ?? (config.defaultConversationId === 'none' ? null : await defaultConversation());
+  if (!target && config.defaultConversationId === 'none') {
+    return { ok: true, statusCode: null, error: 'Not posted: no Teams channel is set for this department' };
+  }
+  // One thread per ticket per channel; an escalation to another department starts one there.
+  const existing = target ? await findTeamsThread(ctx.ticket.id, target.conversationId) : null;
+  const conversation = existing ? { conversationId: existing.conversationId, serviceUrl: existing.serviceUrl } : target;
 
   if (!conversation) {
     return {
@@ -273,7 +283,14 @@ async function sendViaBot(config: MsTeamsConfig, ctx: NotificationContext): Prom
       conversationId: conversation.conversationId,
       replyToId: existing?.activityId ?? null,
     },
-    { attachments: [{ contentType: 'application/vnd.microsoft.card.adaptive', content: buildAdaptiveCard(ctx) }] },
+    {
+      attachments: [
+        {
+          contentType: 'application/vnd.microsoft.card.adaptive',
+          content: cardContent(await templateFor('msteams'), await valuesFor(ctx), ctx.ticket.priority, ctx.ticketUrl),
+        },
+      ],
+    },
   );
 
   // The first message for a ticket becomes its thread; later ones reply to it.
@@ -295,7 +312,7 @@ export async function sendMsTeams(record: IntegrationRecord, ctx: NotificationCo
   if (!webhookUrl) return { ok: false, statusCode: null, error: 'Webhook URL is not configured' };
 
   try {
-    const { status, text } = await postJson(webhookUrl, buildPayload({ ...config, webhookUrl }, ctx));
+    const { status, text } = await postJson(webhookUrl, await buildPayload({ ...config, webhookUrl }, ctx));
     return {
       ok: isSuccess(status, text),
       statusCode: status,

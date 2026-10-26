@@ -6,7 +6,7 @@ import { opsApi } from '@/lib/ops-api';
 import { setupApi, type SlackSetup, type TeamsConsentState } from '@/lib/integrations-setup-api';
 import { shortDateTime } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
-import { Field, Input, Select } from '@/components/ui/Field';
+import { Field, Input } from '@/components/ui/Field';
 import { useToast } from '@/components/ui/Toast';
 import { CopyField } from '@/components/ops/MonitorShared';
 import { DataSourcePanel } from '@/components/DataSourcePanel';
@@ -46,16 +46,12 @@ function ExternalButton({ href, children }: { href: string; children: ReactNode 
  * three credentials back once, Add to Slack, pick a channel. The manual
  * webhook / bot-token form stays available underneath for anyone who prefers it.
  */
-export function SlackSetup({ result, card, onChanged }: { result: URLSearchParams; card: ReactNode; onChanged: () => void }) {
+export function SlackSetup({ result, card }: { result: URLSearchParams; card: ReactNode; onChanged?: () => void }) {
   const toast = useToast();
   const [setup, setSetup] = useState<SlackSetup | null>(null);
   const [form, setForm] = useState({ clientId: '', clientSecret: '', signingSecret: '', command: '', appName: '' });
   const [saving, setSaving] = useState(false);
   const [installing, setInstalling] = useState(false);
-  const [channels, setChannels] = useState<Array<{ id: string; name: string; isPrivate: boolean; isMember: boolean }> | null>(null);
-  const [channel, setChannel] = useState('');
-  const [testing, setTesting] = useState(false);
-  const [testMessage, setTestMessage] = useState<{ ok: boolean; message: string } | null>(null);
   const [showManual, setShowManual] = useState(false);
 
   const load = useCallback(async () => {
@@ -63,10 +59,6 @@ export function SlackSetup({ result, card, onChanged }: { result: URLSearchParam
       const next = await setupApi.slack.setup();
       setSetup(next);
       setForm((f) => ({ ...f, clientId: next.app.clientId ?? '', command: next.app.command, appName: next.app.appName }));
-      setChannel(next.app.channel ?? '');
-      if (next.app.hasBotToken) {
-        setChannels((await setupApi.slack.channels().catch(() => ({ channels: [] }))).channels);
-      }
     } catch (caught) {
       toast.error('Could not load Slack setup', errorText(caught, ''));
     }
@@ -105,23 +97,9 @@ export function SlackSetup({ result, card, onChanged }: { result: URLSearchParam
     }
   };
 
-  const pickChannel = async () => {
-    setTesting(true);
-    setTestMessage(null);
-    try {
-      const { result: test } = await setupApi.slack.setChannel(channel);
-      setTestMessage(test);
-      onChanged();
-    } catch (caught) {
-      setTestMessage({ ok: false, message: errorText(caught, 'The test failed.') });
-    } finally {
-      setTesting(false);
-    }
-  };
-
   return (
     <div className="space-y-5">
-      {result.get('slack') === 'installed' && <Notice tone="ok">Added to Slack workspace “{result.get('team')}”. Now pick the channel below.</Notice>}
+      {result.get('slack') === 'installed' && <Notice tone="ok">Added to Slack workspace “{result.get('team')}”. Now pick each department's channel below.</Notice>}
       {result.get('slack') === 'error' && <Notice tone="error">{result.get('reason') ?? 'The Slack install did not finish.'}</Notice>}
       {!setup.publicUrl && (
         <Notice tone="warn">
@@ -185,25 +163,11 @@ export function SlackSetup({ result, card, onChanged }: { result: URLSearchParam
           </Button>
         </Step>
 
-        <Step n={4} title="Pick the channel and test" done={Boolean(app.channel) && testMessage?.ok !== false}>
-          <p>Ticket notifications go here. Departments can use their own channels under Teams → routing.</p>
-          <div className="flex gap-2">
-            <Select value={channel} onChange={(e) => setChannel(e.target.value)} disabled={!channels?.length} className="flex-1">
-              <option value="">{channels?.length ? 'Choose a channel…' : app.hasBotToken ? 'No channels visible' : 'Add to Slack first'}</option>
-              {channels?.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.isPrivate ? '🔒 ' : '#'}
-                  {c.name}
-                  {c.isPrivate && !c.isMember ? ' (invite the app first)' : ''}
-                </option>
-              ))}
-            </Select>
-            <Button size="sm" onClick={pickChannel} loading={testing} disabled={!channel}>
-              <Send className="size-3.5" />
-              Save and send a test
-            </Button>
-          </div>
-          {testMessage && <Notice tone={testMessage.ok ? 'ok' : 'error'}>{testMessage.message}</Notice>}
+        <Step n={4} title="Choose each department's channel" done={app.hasBotToken}>
+          <p>
+            Below, under <b>Where each department's tickets go</b>, pick a channel for every department, then send a test to all of them at once. Departments you leave
+            blank use "Everything else", which can also be set to post nothing.
+          </p>
         </Step>
       </Steps>
 

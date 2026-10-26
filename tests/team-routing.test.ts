@@ -151,9 +151,8 @@ test('two departments do not leak into each other', async () => {
   assert.doesNotMatch(String(sent[1].text), /subteam/, 'IT configured no group, so nobody is pinged');
 });
 
-test('once a ticket has a thread, later notices stay in it', async () => {
-  // Moving a ticket between departments must not split its conversation across
-  // two channels - the follow-up belongs with the message people replied to.
+test('a ticket moved to another department starts a thread in that department\'s channel', async () => {
+  // Its news belongs with the team now handling it; within one channel it still threads.
   const id = 'ticket-threaded';
   await seedTicket(id, 'team-hr');
 
@@ -161,10 +160,15 @@ test('once a ticket has a thread, later notices stay in it', async () => {
   await slack.sendSlack(record, ctx('team-hr', id));
   assert.equal(sent[0].channel, 'C_HR');
 
-  const second = captureSlack();
+  const again = captureSlack();
+  await slack.sendSlack(record, ctx('team-hr', id));
+  assert.equal(again[0].channel, 'C_HR');
+  assert.ok(again[0].thread_ts, 'a second notice in the same channel replies in the thread');
+
+  const moved = captureSlack();
   await slack.sendSlack(record, ctx('team-it', id));
-  assert.equal(second[0].channel, 'C_POSTED', 'it follows the thread, not the new department');
-  assert.ok(second[0].thread_ts, 'and it is a reply, not a new message');
+  assert.equal(moved[0].channel, 'C_IT', 'it goes to the new department');
+  assert.equal(moved[0].thread_ts, undefined, 'as a new thread there');
 });
 
 test('what people type as a mention becomes what Slack pings', () => {

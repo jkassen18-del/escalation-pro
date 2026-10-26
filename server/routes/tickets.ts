@@ -33,7 +33,7 @@ import { createTicket, escalateTicketToTeam } from '../services/tickets.ts';
 import { TICKET_EDIT_PERMISSIONS } from '../permissions.ts';
 import { addTicketComment, canSeeTicket, updateTicket, type TicketPatch } from '../services/ticket-actions.ts';
 import { loadIntegration } from '../integrations/store.ts';
-import { createLinearIssue } from '../integrations/linear.ts';
+import { createLinearIssue, linearTeamFor, listLinearTeams } from '../integrations/linear.ts';
 import { notifyUsers } from '../lib/notifications.ts';
 import { notifyOnCall, onCallContactsForTeam } from '../services/oncall-notify.ts';
 import type { ActivityDay } from '../../shared/types.ts';
@@ -390,6 +390,28 @@ ticketsRouter.post(
 );
 
 /** Manually mirrors a ticket into Linear, independent of the auto-create rule. */
+/** The Linear teams a ticket could be pushed to, with the department's own preselected. */
+ticketsRouter.get(
+  '/:id/linear-targets',
+  requirePermission('tickets.push_linear'),
+  asyncRoute(async (req, res) => {
+    const user = (req as AuthedRequest).user;
+    const settings = await getSettings();
+    const ticket = await findTicket(req.params.id, settings.ticketPrefix);
+    if (!ticket) throw notFound('That ticket does not exist.');
+    if (!canSeeTicket(user, ticket)) throw forbidden('You do not have access to this ticket.');
+    const record = await loadIntegration('linear');
+    if (!record.enabled || !record.config.apiKey) throw badRequest('The Linear integration is not enabled.');
+    let teams: Array<{ id: string; key: string; name: string }> = [];
+    try {
+      teams = await listLinearTeams(record.config.apiKey as string);
+    } catch (error) {
+      throw badRequest(error instanceof Error ? error.message : 'Could not reach Linear.');
+    }
+    res.json({ teams, suggested: await linearTeamFor(record, ticket.teamId) });
+  }),
+);
+
 ticketsRouter.post(
   '/:id/push-to-linear',
   requirePermission('tickets.push_linear'),
@@ -406,13 +428,18 @@ ticketsRouter.post(
     const record = await loadIntegration('linear');
     if (!record.enabled) throw badRequest('The Linear integration is not enabled.');
 
-    const result = await createLinearIssue(record, {
-      event: 'ticketEscalated',
-      ticket,
-      actorName: user.name,
-      headline: `Escalated from ${ticket.reference}`,
-      ticketUrl: await buildTicketUrl(ticket, `${req.protocol}://${req.get('host')}`),
-    });
+    // Chosen in the "Create Linear issue" dialog; otherwise the department's own Linear team.
+    const result = await createLinearIssue(
+      record,
+      {
+        event: 'ticketEscalated',
+        ticket,
+        actorName: user.name,
+        headline: `Escalated from ${ticket.reference}`,
+        ticketUrl: await buildTicketUrl(ticket, `${req.protocol}://${req.get('host')}`),
+      },
+      { linearTeamId: optionalString(req.body?.linearTeamId, 100) },
+    );
 
     if (!result.ok || !result.issueId || !result.url) {
       throw badRequest(result.error ?? 'Linear declined to create the issue.');

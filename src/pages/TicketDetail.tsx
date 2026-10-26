@@ -48,6 +48,7 @@ import {
 import { useDocumentTitle } from '@/state/branding';
 import { IncidentPanel, SeverityBadge } from '@/components/ops/IncidentPanel';
 import { EscalateDialog } from '@/components/EscalateDialog';
+import { LinearPushDialog } from '@/components/LinearPushDialog';
 import { NotifyOnCall, useOnCall } from '@/components/NotifyOnCall';
 import { LabelChip, LabelPicker, labelFor, useTeamLabels } from '@/components/Labels';
 
@@ -66,6 +67,7 @@ export function TicketDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [escalateOpen, setEscalateOpen] = useState(false);
+  const [linearOpen, setLinearOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const location = useLocation();
@@ -217,18 +219,7 @@ export function TicketDetailPage() {
                       {
                         label: 'Create Linear issue',
                         icon: ArrowUpRight,
-                        onSelect: async () => {
-                          try {
-                            await api.tickets.pushToLinear(ticket.id);
-                            await load();
-                            toast.success('Linear issue created.');
-                          } catch (caught) {
-                            toast.error(
-                              'Could not create the Linear issue',
-                              caught instanceof ApiError ? caught.message : undefined,
-                            );
-                          }
-                        },
+                        onSelect: () => setLinearOpen(true),
                       },
                     ]
                   : []),
@@ -297,6 +288,18 @@ export function TicketDetailPage() {
           />
         </aside>
       </div>
+
+      <LinearPushDialog
+        open={linearOpen}
+        ticketId={ticket.id}
+        teamName={ticket.teamName}
+        onClose={() => setLinearOpen(false)}
+        onPushed={async () => {
+          setLinearOpen(false);
+          await load();
+          toast.success('Linear issue created.');
+        }}
+      />
 
       <EscalateDialog
         open={escalateOpen}

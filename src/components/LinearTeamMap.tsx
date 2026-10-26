@@ -106,8 +106,8 @@ export function LinearTeamMap({ apiKey }: { apiKey?: string }) {
         <div className="min-w-0">
           <p className="text-xs font-medium">Team mapping</p>
           <p className="mt-0.5 text-2xs text-muted">
-            Link each Linear team to a department here. Issues raised in a linked Linear team become tickets for that department,
-            and the department's tickets are mirrored to its primary Linear team.
+            Link each Linear team to a department here. Issues raised in a linked Linear team become tickets for that department.
+            Saving also points the department's outgoing issues at its primary Linear team, under "Where each department's tickets go".
           </p>
         </div>
         <Button variant="secondary" size="sm" loading={loading} onClick={() => void loadFromLinear()}>

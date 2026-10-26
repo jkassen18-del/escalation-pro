@@ -11,6 +11,8 @@ import { db } from '../db/index.ts';
 import { addLink } from '../repositories/tickets.ts';
 import { findTeamRoute } from '../repositories/team-routing.ts';
 import { ticketActionButtons } from './slack-actions.ts';
+import { templateFor, valuesFor } from './message-format.ts';
+import { fieldPairs, fill, type MessageTemplate, type TemplateValues } from '../../shared/message-template.ts';
 
 export interface SlackConfig {
   /** Incoming webhook URL (https://hooks.slack.com/services/...). */
@@ -45,56 +47,56 @@ function threadPermalink(channel: string, ts: string): string {
 }
 
 /**
- * Block Kit payload. Slack renders `blocks`; `text` is the notification
- * fallback shown in the sidebar and on mobile push.
+ * Block Kit payload, laid out by the message design saved under Integrations.
+ * Slack renders `blocks`; `text` is the notification fallback shown in the
+ * sidebar and on mobile push.
  */
-function buildMessage(ctx: NotificationContext, mention?: string | null) {
+export function buildMessage(
+  ctx: Pick<NotificationContext, 'ticket' | 'ticketUrl'>,
+  template: MessageTemplate,
+  values: TemplateValues,
+  mention?: string | null,
+) {
   const { ticket } = ctx;
   // Slack only notifies when the mention is in the message body, so it leads
   // the headline rather than sitting in a footer nobody is pinged by.
   const lead = mention ? `${mention} ` : '';
-  const fields = [
-    `*Status*\n${ticket.status.replace('_', ' ')}`,
-    `*Priority*\n${ticket.priority}`,
-    `*Team*\n${ticket.teamName ?? 'Unassigned'}`,
-    `*Assignee*\n${ticket.assigneeName ?? 'Unassigned'}`,
-  ];
+  const title = fill(template.title, values, 'slack');
+  const subtitle = fill(template.subtitle, values, 'slack');
+  const body = fill(template.body, values, 'slack');
+  const footer = fill(template.footer, values, 'slack');
+  const fields = fieldPairs(template, values, 'slack');
 
   const blocks: unknown[] = [
     {
       type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: `${lead}*${ctx.headline}*\n<${ctx.ticketUrl}|${ticket.reference}> · ${ticket.subject}`,
-      },
+      text: { type: 'mrkdwn', text: `${lead}*${title}*${subtitle ? `\n${subtitle}` : ''}` },
     },
-    { type: 'section', fields: fields.map((text) => ({ type: 'mrkdwn', text })) },
   ];
-
-  if (ctx.detail) {
+  // Slack allows ten fields to a section.
+  for (let i = 0; i < fields.length; i += 10) {
     blocks.push({
       type: 'section',
-      text: { type: 'mrkdwn', text: ctx.detail.length > 2800 ? `${ctx.detail.slice(0, 2800)}…` : ctx.detail },
+      fields: fields.slice(i, i + 10).map((field) => ({ type: 'mrkdwn', text: `*${field.label}*\n${field.value}` })),
     });
   }
-
-  blocks.push({
-    type: 'context',
-    elements: [{ type: 'mrkdwn', text: `Updated by ${ctx.actorName} · ${new Date().toUTCString()}` }],
-  });
+  if (body) {
+    blocks.push({ type: 'section', text: { type: 'mrkdwn', text: body.length > 2900 ? `${body.slice(0, 2900)}…` : body } });
+  }
+  if (footer) blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: footer.slice(0, 2900) }] });
 
   /*
    * Resolve/Close/Reopen alongside the link. Whether a click is honoured is
    * decided when it arrives, not here: the buttons are visible to everyone
    * who can see the channel.
    */
-  blocks.push(ticketActionButtons(ticket, ctx.ticketUrl));
+  if (template.buttons) blocks.push(ticketActionButtons(ticket, ctx.ticketUrl));
 
   return {
     // Also the push-notification line, so a phone shows who is being asked.
-    text: `${lead}${ctx.headline}: ${ticket.reference} ${ticket.subject}`,
+    text: `${lead}${values.headline}: ${ticket.reference} ${ticket.subject}`,
     blocks,
-    attachments: [{ color: PRIORITY_HEX[ticket.priority] ?? '#667085', blocks: [] }],
+    ...(template.priorityColour ? { attachments: [{ color: PRIORITY_HEX[ticket.priority] ?? '#667085', blocks: [] }] } : {}),
   };
 }
 
@@ -117,7 +119,16 @@ export async function testSlack(record: IntegrationRecord): Promise<TestResult> 
       return { ok: false, message: `Slack rejected the token: ${body.error ?? 'unknown error'}` };
     }
     if (!config.channel) {
-      return { ok: false, message: `Token is valid for workspace "${body.team}", but no channel is set.` };
+      // Departments have their own channels; "Send a test to every channel" under routing checks those.
+      let routed: { n: number | string } | undefined;
+      try {
+        routed = await db.get<{ n: number | string }>(`SELECT COUNT(*) AS n FROM team_routing WHERE provider = 'slack' AND target <> ''`);
+      } catch {
+        routed = undefined;
+      }
+      return Number(routed?.n ?? 0) > 0
+        ? { ok: true, message: `Connected to "${body.team}" as ${body.user}. Tickets go to each department's own channel.`, details: { team: body.team, user: body.user } }
+        : { ok: false, message: `Token is valid for workspace "${body.team}", but no channel is picked for any department yet. Pick them under "Where each department's tickets go".` };
     }
 
     /*
@@ -203,12 +214,18 @@ export async function testSlack(record: IntegrationRecord): Promise<TestResult> 
  * and a deployment whose tables were created by another database user cannot
  * add columns anyway.
  */
-export async function findSlackThread(ticketId: string): Promise<{ ts: string; channel: string | null } | null> {
-  const row = await db.get<{ external_id: string; external_key: string | null }>(
-    `SELECT external_id, external_key FROM ticket_links
-     WHERE ticket_id = ? AND provider = 'slack' ORDER BY created_at LIMIT 1`,
-    [ticketId],
-  );
+export async function findSlackThread(ticketId: string, channel?: string): Promise<{ ts: string; channel: string | null } | null> {
+  const row = channel
+    ? await db.get<{ external_id: string; external_key: string | null }>(
+        `SELECT external_id, external_key FROM ticket_links
+         WHERE ticket_id = ? AND provider = 'slack' AND external_key = ? ORDER BY created_at LIMIT 1`,
+        [ticketId, channel],
+      )
+    : await db.get<{ external_id: string; external_key: string | null }>(
+        `SELECT external_id, external_key FROM ticket_links
+         WHERE ticket_id = ? AND provider = 'slack' ORDER BY created_at LIMIT 1`,
+        [ticketId],
+      );
   return row ? { ts: row.external_id, channel: row.external_key } : null;
 }
 
@@ -231,29 +248,31 @@ export async function sendSlack(record: IntegrationRecord, ctx: NotificationCont
    * a deployment that wants one channel for everything.
    */
   const route = await findTeamRoute(ctx.ticket.teamId, 'slack');
-  const message = buildMessage(ctx, route?.mention);
+  const message = buildMessage(ctx, await templateFor('slack'), await valuesFor(ctx), route?.mention);
 
   try {
     if (config.mode === 'bot') {
-      if (!config.botToken || !config.channel) {
-        return { ok: false, statusCode: null, error: 'Bot token or channel is not configured' };
-      }
+      if (!config.botToken) return { ok: false, statusCode: null, error: 'Bot token is not configured' };
 
       /*
-       * One thread per ticket.
+       * The department's channel, else the "everything else" channel. When
+       * neither is set this department is deliberately not announced.
+       * `||` not `??`: a route may exist purely to set a mention, leaving the
+       * channel empty. An empty string is "no override", not "send nowhere".
+       */
+      const channel = route?.target || config.channel || '';
+      if (!channel) return { ok: true, statusCode: null, error: 'Not posted: no Slack channel is set for this department' };
+
+      /*
+       * One thread per ticket per channel.
        *
        * The first notification starts a thread in the channel; everything
        * afterwards replies inside it. That keeps a ticket's history together
-       * instead of scattering it down the channel, and - the reason it is
-       * done here - it gives people somewhere to reply that can be traced
-       * back to the ticket.
+       * and gives people somewhere to reply that can be traced back to it.
+       * A ticket escalated to another department starts a fresh thread in that
+       * department's channel, rather than its news staying with the old team.
        */
-      const existing = await findSlackThread(ctx.ticket.id);
-      // The thread wins over routing: once a ticket's conversation lives in a
-      // channel, later notifications must not split off into another one.
-      // `||` not `??`: a route may exist purely to set a mention, leaving the
-      // channel empty. An empty string is "no override", not "send nowhere".
-      const channel = existing?.channel || route?.target || config.channel;
+      const existing = await findSlackThread(ctx.ticket.id, channel);
 
       const response = await fetch('https://slack.com/api/chat.postMessage', {
         method: 'POST',
@@ -272,8 +291,10 @@ export async function sendSlack(record: IntegrationRecord, ctx: NotificationCont
       if (body.ok && body.ts && !existing) {
         // Remember the root message so replies to it can find this ticket.
         // Recorded best-effort: losing the thread must not fail the delivery.
+        // Keyed by the channel as configured, so the next lookup matches even when
+        // an older setup named it (#escalations) and Slack answered with an id.
         const posted = body.channel ?? channel;
-        await addLink(ctx.ticket.id, 'slack', body.ts, posted, threadPermalink(posted, body.ts)).catch(
+        await addLink(ctx.ticket.id, 'slack', body.ts, channel, threadPermalink(posted, body.ts)).catch(
           () => undefined,
         );
       }

@@ -24,6 +24,20 @@ import type {
   OnCallContact,
   ActivityDay,
 } from '@shared/types';
+import type { MessageTemplate, TemplateProvider } from '@shared/message-template';
+
+export type RoutedProvider = 'slack' | 'msteams' | 'linear';
+
+/** Where each department's tickets go for one provider; mirrors server/routes/integration-routing.ts. */
+export interface RoutingView {
+  provider: RoutedProvider;
+  kind: 'pick' | 'url';
+  departments: Array<{ teamId: string; teamName: string; target: string; mention: string | null }>;
+  fallback: string;
+  fallbackOptions: Array<{ id: string; name: string }>;
+  destinations: Array<{ id: string; name: string; warning?: string | null }>;
+  notice: string | null;
+}
 
 export class ApiError extends Error {
   constructor(
@@ -126,7 +140,10 @@ export const api = {
     escalate: (id: string, body: { reason: string; teamId?: string; priority?: string }) =>
       post<{ ticket: Ticket }>(`/tickets/${id}/escalate`, body),
     watch: (id: string, watch: boolean) => post<{ ticket: Ticket }>(`/tickets/${id}/watch`, { watch }),
-    pushToLinear: (id: string) => post<{ ticket: Ticket }>(`/tickets/${id}/push-to-linear`),
+    pushToLinear: (id: string, linearTeamId?: string) =>
+      post<{ ticket: Ticket }>(`/tickets/${id}/push-to-linear`, linearTeamId ? { linearTeamId } : {}),
+    linearTargets: (id: string) =>
+      get<{ teams: Array<{ id: string; key: string; name: string }>; suggested: string | null }>(`/tickets/${id}/linear-targets`),
     upload: (id: string, files: File[], commentId?: string | null) => {
       const form = new FormData();
       // Before the files: multer only sees fields that arrive ahead of them.
@@ -271,6 +288,19 @@ export const api = {
 
   integrations: {
     list: () => get<{ integrations: IntegrationSummary[] }>('/integrations'),
+    routing: (provider: RoutedProvider) => get<RoutingView>(`/integrations/routing/${provider}`),
+    saveRouting: (
+      provider: RoutedProvider,
+      body: { departments: Array<{ teamId: string; target: string; mention?: string | null }>; fallback?: string },
+    ) => put<RoutingView>(`/integrations/routing/${provider}`, body),
+    testRouting: (provider: 'slack' | 'msteams') =>
+      post<{ results: Array<{ target: string; name: string; departments: string[]; ok: boolean; error: string | null }> }>(
+        `/integrations/routing/${provider}/test`,
+      ),
+    template: (provider: TemplateProvider) =>
+      get<{ template: MessageTemplate; defaults: MessageTemplate }>(`/integrations/templates/${provider}`),
+    saveTemplate: (provider: TemplateProvider, template: MessageTemplate | null) =>
+      put<{ template: MessageTemplate; defaults: MessageTemplate }>(`/integrations/templates/${provider}`, { template }),
     update: (
       provider: IntegrationProvider,
       body: { enabled?: boolean; config?: Record<string, unknown>; events?: Record<string, boolean> },
