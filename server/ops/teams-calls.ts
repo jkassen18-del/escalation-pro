@@ -142,6 +142,7 @@ async function getGraphToken(config: MsTeamsConfig): Promise<string> {
   const key = `${config.tenantId}:${config.appId}`;
   if (graphToken && graphToken.key === key && graphToken.expiresAt - 5 * 60_000 > Date.now()) return graphToken.token;
   const response = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(config.tenantId!)}/oauth2/v2.0/token`, {
+    signal: AbortSignal.timeout(10_000),
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -350,6 +351,16 @@ export async function handleCallingNotifications(body: unknown, attemptHint: str
 async function handleTone(attempt: AttemptRow, tone: string, callId: string): Promise<void> {
   // Imported here: the pager imports this module to place calls.
   const { acknowledgePage, escalateNow } = await import('./pager.ts');
+  if (tone !== 'tone1' && tone !== 'tone2') return;
+  /*
+   * Microsoft can deliver a notification twice, and people press keys twice.
+   * Claim the attempt with a marker only this delivery knows; whichever
+   * delivery's marker is still there afterwards is the one that acts.
+   */
+  const claim = `tone:${crypto.randomUUID()}`;
+  await db.run(`UPDATE notification_attempts SET status = ? WHERE id = ? AND status IN ('sent', 'answered')`, [claim, attempt.id]);
+  const claimed = await db.get<{ status: string }>(`SELECT status FROM notification_attempts WHERE id = ?`, [attempt.id]);
+  if (claimed?.status !== claim) return;
   const user = await findUserById(attempt.user_id);
   if (tone === 'tone1') {
     if (attempt.page_id && user) await acknowledgePage(attempt.page_id, user, 'msteams');

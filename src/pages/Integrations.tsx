@@ -43,6 +43,12 @@ const PROVIDER_META: Record<
     docsUrl: 'https://discord.com/developers/applications',
     docsLabel: 'Discord developer portal',
   },
+  github: {
+    name: 'GitHub',
+    blurb: 'Open GitHub issues from tickets, each department into its own repository, and keep them in step: closing the issue resolves the ticket.',
+    docsUrl: 'https://github.com/settings/personal-access-tokens/new',
+    docsLabel: 'Create a fine-grained token',
+  },
   email: {
     name: 'Email (SMTP)',
     blurb: 'Email assignees, requesters, and watchers whenever a ticket they follow changes.',
@@ -340,6 +346,7 @@ export function IntegrationCard({
           {integration.provider === 'msteams' && <TeamsFields config={config} set={set} />}
           {integration.provider === 'linear' && <LinearFields config={config} set={set} />}
           {integration.provider === 'email' && <EmailFields config={config} set={set} />}
+          {integration.provider === 'github' && <GitHubFields config={config} set={set} />}
 
           <div>
             <p className="mb-2 text-xs font-medium">Send a notification when…</p>
@@ -695,6 +702,66 @@ function LinearFields({ config, set }: { config: Record<string, unknown>; set: (
           and subscribe to issue events.
         </p>
       ) : null}
+    </div>
+  );
+}
+
+function GitHubFields({ config, set }: { config: Record<string, unknown>; set: (k: string, v: unknown) => void }) {
+  return (
+    <div className="space-y-3">
+      <Field
+        label="Access token"
+        hint="GitHub → Settings → Developer settings → Fine-grained tokens. Repository access: the repositories to use. Permissions: Issues read and write, Metadata read."
+      >
+        <Input
+          type="password"
+          value={(config.token as string) ?? ''}
+          onChange={(event) => set('token', event.target.value)}
+          placeholder={secretPlaceholder(config, 'token', 'github_pat_…')}
+          className="font-mono text-xs"
+          autoComplete="off"
+        />
+      </Field>
+
+      <div className="space-y-3 rounded-sm border border-dashed p-3">
+        <div>
+          <p className="text-xs font-medium">Updates from GitHub</p>
+          <p className="mt-0.5 text-2xs text-muted">
+            In each repository (or the organisation): Settings → Webhooks → Add webhook. Paste the URL below, choose a secret and paste it here too, and pick
+            "Issues", "Issue comments" and "Pull requests".
+          </p>
+        </div>
+        <Field label="Payload URL">
+          <Input readOnly value={`${window.location.origin}/api/webhooks/github`} onFocus={(event) => event.currentTarget.select()} className="font-mono text-xs" />
+        </Field>
+        <Field label="Webhook secret" hint="Any long random text; the same on both sides. Deliveries without the right signature are refused.">
+          <Input
+            type="password"
+            value={(config.webhookSecret as string) ?? ''}
+            onChange={(event) => set('webhookSecret', event.target.value)}
+            placeholder={secretPlaceholder(config, 'webhookSecret', 'A long random secret')}
+            className="font-mono text-xs"
+            autoComplete="off"
+          />
+        </Field>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Raise a ticket for issues labelled" hint="An issue opened or labelled with this becomes a ticket for the repository's department. Blank turns it off.">
+            <Input value={(config.ticketLabel as string) ?? ''} onChange={(event) => set('ticketLabel', event.target.value)} placeholder="support" />
+          </Field>
+          <div className="pt-5">
+            <Checkbox
+              checked={config.syncStatus !== false}
+              onChange={(event) => set('syncStatus', event.target.checked)}
+              label="Closing the issue resolves the ticket"
+              hint="And reopening it reopens the ticket."
+            />
+          </div>
+        </div>
+        <p className="text-2xs text-muted">
+          A pull request whose title, description or branch mentions a ticket (e.g. fix/ESC-1042) is linked to it, and its merge is noted on the ticket. Failed
+          Actions runs, deployments and security alerts are set up separately, as a GitHub alert source under Monitoring.
+        </p>
+      </div>
     </div>
   );
 }

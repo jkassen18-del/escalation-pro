@@ -108,6 +108,7 @@ export async function testSlack(record: IntegrationRecord): Promise<TestResult> 
   if (useBot) {
     if (!config.botToken) return { ok: false, message: 'A bot token is required when using bot mode.' };
     const response = await fetch('https://slack.com/api/auth.test', {
+      signal: AbortSignal.timeout(10_000),
       method: 'POST',
       headers: {
         Authorization: `Bearer ${config.botToken}`,
@@ -141,6 +142,7 @@ export async function testSlack(record: IntegrationRecord): Promise<TestResult> 
      * notification was refused - which is worse than no test at all.
      */
     const posted = await fetch('https://slack.com/api/chat.postMessage', {
+      signal: AbortSignal.timeout(10_000),
       method: 'POST',
       headers: {
         Authorization: `Bearer ${config.botToken}`,
@@ -275,6 +277,7 @@ export async function sendSlack(record: IntegrationRecord, ctx: NotificationCont
       const existing = await findSlackThread(ctx.ticket.id, channel);
 
       const response = await fetch('https://slack.com/api/chat.postMessage', {
+        signal: AbortSignal.timeout(10_000),
         method: 'POST',
         headers: {
           Authorization: `Bearer ${config.botToken}`,

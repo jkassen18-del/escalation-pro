@@ -54,13 +54,14 @@ import type { MsTeamsConfig } from '../integrations/msteams.ts';
 import { buildTicketModal, readSubmission, TEAM_ACTION, TICKET_MODAL_CALLBACK } from '../integrations/slack-modal.ts';
 import { listTeams } from '../repositories/teams.ts';
 import { listTeamFields } from '../repositories/form-fields.ts';
-import { createTicket } from '../services/tickets.ts';
+import { SYSTEM_ACTOR, createTicket } from '../services/tickets.ts';
 import { dispatch, buildTicketUrl } from '../integrations/dispatcher.ts';
 import { addLink, findTicket, recordEvent } from '../repositories/tickets.ts';
 import { TERMINAL_STATUSES, type Ticket, type TicketPriority, type TicketStatus } from '../../shared/types.ts';
 import { getSettings } from '../repositories/settings.ts';
 import { RESOLVE_REACTIONS, saysResolved } from '../integrations/resolve-intent.ts';
 import { randomId } from '../lib/crypto.ts';
+import { OWN_COMMENT_MARKER, departmentForRepo, ticketReferences, verifyGitHubSignature, type GitHubConfig } from '../integrations/github.ts';
 
 export const webhooksRouter: Router = Router();
 
@@ -100,7 +101,7 @@ async function announceStatusChange(
   next: TicketStatus,
   from: TicketStatus,
   actor: { id: string; name: string },
-  source: 'Slack' | 'Linear',
+  source: 'Slack' | 'Linear' | 'GitHub',
   how = '',
 ): Promise<void> {
   const label = (status: string) => status.replace('_', ' ');
@@ -139,6 +140,161 @@ async function announceStatusChange(
   }
 }
 
+/* --------------------------------- GitHub --------------------------------- */
+
+interface GitHubPayload {
+  action?: string;
+  repository?: { full_name?: string };
+  sender?: { login?: string; type?: string };
+  issue?: { number?: number; title?: string; body?: string | null; html_url?: string; user?: { login?: string }; labels?: Array<{ name?: string }>; pull_request?: unknown };
+  label?: { name?: string };
+  comment?: { id?: number; body?: string; user?: { login?: string; type?: string }; html_url?: string };
+  pull_request?: { number?: number; title?: string; body?: string | null; html_url?: string; merged?: boolean; head?: { ref?: string }; user?: { login?: string } };
+}
+
+async function githubLinkedTicket(repo: string, number: number): Promise<Ticket | null> {
+  const link = await db.get<{ ticket_id: string }>(
+    `SELECT ticket_id FROM ticket_links WHERE provider = 'github' AND LOWER(external_id) = LOWER(?)`,
+    [`${repo}#${number}`],
+  );
+  if (!link) return null;
+  const settings = await getSettings();
+  return findTicket(link.ticket_id, settings.ticketPrefix);
+}
+
+async function githubSystemNote(ticketId: string, body: string): Promise<void> {
+  const now = new Date().toISOString();
+  await db.run(
+    `INSERT INTO ticket_comments (id, ticket_id, author_id, body, body_format, is_internal, is_system, created_at, updated_at)
+     VALUES (?, ?, NULL, ?, 'text', 1, 1, ?, ?)`,
+    [randomId(), ticketId, body, now, now],
+  );
+}
+
+/**
+ * Inbound GitHub events, from a repository or organisation webhook with the
+ * secret set under Integrations → GitHub:
+ * - issues: closing a linked issue resolves the ticket, reopening reopens it;
+ *   an issue opened or labelled with the ticket label raises a ticket.
+ * - issue_comment: a comment on a linked issue becomes a comment on the ticket.
+ * - pull_request: a PR mentioning ESC-1042 is linked to that ticket, and its
+ *   merge is noted on the timeline.
+ */
+webhooksRouter.post(
+  '/github',
+  asyncRoute(async (req, res) => {
+    const record = await loadIntegration('github');
+    const config = record.config as GitHubConfig;
+    if (!record.enabled || !config.webhookSecret) return res.status(404).json({ error: 'GitHub is not connected' });
+    if (!verifyGitHubSignature(req, config.webhookSecret)) return res.status(401).json({ error: 'Invalid signature' });
+
+    const event = req.header('x-github-event') ?? '';
+    // GitHub's default content type is form-encoded, with the JSON in a "payload" field.
+    let payload = (req.body ?? {}) as GitHubPayload & { payload?: unknown };
+    if (typeof payload.payload === 'string') {
+      try {
+        payload = JSON.parse(payload.payload) as GitHubPayload;
+      } catch {
+        return res.status(400).json({ error: 'Unreadable payload' });
+      }
+    }
+    const repo = payload.repository?.full_name ?? '';
+    if (event === 'ping') return res.json({ ok: true, pong: true });
+    // This app's own actions come back as events too; they are already recorded.
+    if (config.login && payload.sender?.login === config.login && event !== 'pull_request') return res.json({ ok: true, ignored: true });
+
+    const settings = await getSettings();
+    const system = { id: '', name: `${payload.sender?.login ?? 'Someone'} (GitHub)` };
+
+    if (event === 'issues' && payload.issue?.number && repo) {
+      const issue = payload.issue;
+      const linked = await githubLinkedTicket(repo, issue.number!);
+
+      if (linked && (payload.action === 'closed' || payload.action === 'reopened') && config.syncStatus !== false) {
+        const next: TicketStatus = payload.action === 'closed' ? 'resolved' : 'open';
+        const change = await applyStatus(linked.id, next, null);
+        if (change?.changed) {
+          await recordEvent(linked.id, null, 'synced', 'status', change.from, next);
+          await announceStatusChange(linked, next, change.from, system, 'GitHub', `issue ${repo}#${issue.number} ${payload.action}`);
+        }
+        return res.json({ ok: true, status: next });
+      }
+
+      const label = config.ticketLabel?.trim().toLowerCase();
+      const hasLabel = Boolean(label) && (issue.labels ?? []).some((item) => item.name?.toLowerCase() === label);
+      const raises = !linked && hasLabel && (payload.action === 'opened' || (payload.action === 'labeled' && payload.label?.name?.toLowerCase() === label));
+      if (raises && !issue.pull_request) {
+        const teamId = (await departmentForRepo(repo)) ?? settings.defaultTeamId;
+        const ticket = await createTicket(
+          {
+            subject: (issue.title ?? `GitHub issue ${repo}#${issue.number}`).slice(0, 200),
+            description: [String(issue.body ?? '').slice(0, 19_000), '', `Raised on GitHub as ${repo}#${issue.number} by ${issue.user?.login ?? 'someone'}: ${issue.html_url ?? ''}`]
+              .join('\n')
+              .trim(),
+            descriptionFormat: 'text',
+            teamId,
+            source: 'github',
+            tags: ['github'],
+          },
+          { actor: SYSTEM_ACTOR },
+        );
+        const key = `${repo}#${issue.number}`;
+        await addLink(ticket.id, 'github', key, key, issue.html_url ?? '');
+        await recordAudit({ actorId: null, actorName: 'GitHub', entityType: 'ticket', entityId: ticket.id, action: 'ticket_created_from_github', summary: `${key} on GitHub raised ${ticket.reference}` });
+        return res.json({ ok: true, ticket: ticket.reference });
+      }
+      return res.json({ ok: true, ignored: true });
+    }
+
+    if (event === 'issue_comment' && payload.action === 'created' && payload.issue?.number && repo) {
+      const body = String(payload.comment?.body ?? '').trim();
+      if (!body || body.includes(OWN_COMMENT_MARKER) || payload.comment?.user?.type === 'Bot') return res.json({ ok: true, ignored: true });
+      const ticket = await githubLinkedTicket(repo, payload.issue.number);
+      if (!ticket) return res.json({ ok: true, ignored: true });
+      const seen = await db.get<{ id: string }>(`SELECT id FROM ticket_links WHERE provider = 'github_comment' AND external_id = ?`, [String(payload.comment?.id)]);
+      if (seen) return res.json({ ok: true, ignored: true });
+
+      const author = payload.comment?.user?.login ?? 'someone';
+      const now = new Date().toISOString();
+      const commentId = randomId();
+      await db.run(
+        `INSERT INTO ticket_comments (id, ticket_id, author_id, body, body_format, is_internal, created_at, updated_at)
+         VALUES (?, ?, NULL, ?, 'text', 0, ?, ?)`,
+        [commentId, ticket.id, `${author} commented on GitHub:\n\n${body.slice(0, 19_000)}`, now, now],
+      );
+      await addLink(ticket.id, 'github_comment', String(payload.comment?.id), commentId, payload.comment?.html_url ?? '');
+      await recordEvent(ticket.id, null, 'commented', 'source', null, 'github');
+      const recipients = [ticket.requesterId, ticket.assigneeId, ...ticket.watcherIds].filter((id): id is string => Boolean(id));
+      await notifyUsers(recipients, { ticketId: ticket.id, type: 'comment', title: `${author} replied to ${ticket.reference} on GitHub`, body: body.slice(0, 280) });
+      return res.json({ ok: true });
+    }
+
+    if (event === 'pull_request' && payload.pull_request?.number && repo) {
+      const pr = payload.pull_request;
+      const numbers = ticketReferences(settings.ticketPrefix, pr.title, pr.body, pr.head?.ref);
+      const key = `${repo}#${pr.number}`;
+      const noted: string[] = [];
+      for (const number of numbers) {
+        const ticket = await findTicket(String(number), settings.ticketPrefix);
+        if (!ticket) continue;
+        const already = await db.get<{ id: string }>(`SELECT id FROM ticket_links WHERE ticket_id = ? AND provider = 'github_pr' AND external_id = ?`, [ticket.id, key]);
+        if (!already && (payload.action === 'opened' || payload.action === 'edited' || payload.action === 'reopened' || payload.action === 'ready_for_review')) {
+          await addLink(ticket.id, 'github_pr', key, `PR ${key}`, pr.html_url ?? '');
+          await githubSystemNote(ticket.id, `Pull request ${key} "${pr.title ?? ''}" by ${pr.user?.login ?? 'someone'} references this ticket: ${pr.html_url ?? ''}`);
+          noted.push(ticket.reference);
+        } else if (payload.action === 'closed' && pr.merged) {
+          if (!already) await addLink(ticket.id, 'github_pr', key, `PR ${key}`, pr.html_url ?? '');
+          await githubSystemNote(ticket.id, `Pull request ${key} was merged. If it fixes this ticket, it can be resolved.`);
+          noted.push(ticket.reference);
+        }
+      }
+      return res.json({ ok: true, linked: noted });
+    }
+
+    return res.json({ ok: true, ignored: true });
+  }),
+);
+
 /**
  * Inbound Linear events. Keeps a mirrored ticket's status in step when the
  * issue is moved on the Linear side.
@@ -153,6 +309,11 @@ webhooksRouter.post(
     if (!config.webhookSecret) return res.status(400).json({ error: 'No webhook secret configured' });
     if (!verifyLinearSignature(req, config.webhookSecret)) {
       return res.status(401).json({ error: 'Invalid signature' });
+    }
+    // Linear stamps every delivery; one more than a minute old is a replay of a captured request.
+    const stamp = Number((req.body as { webhookTimestamp?: unknown } | undefined)?.webhookTimestamp);
+    if (Number.isFinite(stamp) && stamp > 0 && Math.abs(Date.now() - stamp) > 60_000) {
+      return res.status(401).json({ error: 'Stale delivery' });
     }
 
     const payload = req.body as {
@@ -884,7 +1045,7 @@ webhooksRouter.post(
     // A single-tenant deployment says so, and activities from anywhere else
     // are refused even though Microsoft signed them.
     const tenant = activity?.channelData?.tenant?.id;
-    if (config.tenantId && tenant && tenant !== config.tenantId) {
+    if (config.tenantId && tenant !== config.tenantId) {
       return res.status(403).json({ error: 'That tenant is not allowed to use this bot' });
     }
 
@@ -1178,7 +1339,8 @@ async function createTicketFromLinearIssue(
       descriptionFormat: 'text',
       teamId,
       priority: priorityFromLinear(issue.priority),
-      source: 'api',
+      // 'linear', not 'api': it is how the Linear mirror knows not to create the issue a second time.
+      source: 'linear',
     },
     { actor },
   );

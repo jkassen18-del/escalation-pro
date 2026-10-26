@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { BellRing, Copy, Mail, Phone, PhoneCall, X } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
@@ -22,21 +22,27 @@ export function useOnCall(ticketId: string, teamId: string | null): OnCallState 
   const [contacts, setContacts] = useState<OnCallContact[] | null>(null);
   const [teamsConnected, setTeamsConnected] = useState(false);
 
+  const latest = useRef(0);
   const reload = useCallback(async () => {
+    const request = ++latest.current;
     if (!teamId) {
       setContacts([]);
       return;
     }
     try {
       const result = await api.tickets.onCall(ticketId);
+      // A change of team while this was in flight makes it someone else's answer.
+      if (request !== latest.current) return;
       setContacts(result.contacts);
       setTeamsConnected(result.teamsConnected);
     } catch {
-      setContacts([]);
+      if (request === latest.current) setContacts([]);
     }
   }, [ticketId, teamId]);
 
   useEffect(() => {
+    // Not the previous department's people while the new answer loads.
+    setContacts(null);
     void reload();
   }, [reload]);
 
@@ -72,10 +78,16 @@ export function NotifyOnCall({
   const { can } = useAuth();
   const [composing, setComposing] = useState(false);
   const [note, setNote] = useState('');
-  const [chosen, setChosen] = useState<string[]>([]);
+  // Who the notification goes to; null until contacts load, then everyone on call.
+  const [chosen, setChosen] = useState<string[] | null>(null);
   const [sending, setSending] = useState(false);
 
   const contacts = state.contacts;
+  const contactKey = (contacts ?? []).map((contact) => contact.userId).join(',');
+  useEffect(() => {
+    // A new set of people on call starts with all of them selected.
+    setChosen(null);
+  }, [contactKey]);
   if (contacts === null) return null;
   const banner = variant === 'banner';
 
@@ -101,7 +113,7 @@ export function NotifyOnCall({
   }
 
   const unique = contacts.filter((contact, index) => contacts.findIndex((other) => other.userId === contact.userId) === index);
-  const targets = chosen.length ? chosen : unique.map((contact) => contact.userId);
+  const targets = (chosen ?? unique.map((contact) => contact.userId)).filter((id) => unique.some((contact) => contact.userId === id));
 
   const send = async () => {
     setSending(true);

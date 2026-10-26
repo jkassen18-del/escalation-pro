@@ -12,7 +12,7 @@ export type TicketPriority = (typeof TICKET_PRIORITIES)[number];
 export const TICKET_TYPES = ['incident', 'request', 'question', 'problem', 'escalation'] as const;
 export type TicketType = (typeof TICKET_TYPES)[number];
 
-export const TICKET_SOURCES = ['web', 'email', 'slack', 'msteams', 'api', 'phone', 'linear', 'monitor', 'webhook', 'discord', 'claude'] as const;
+export const TICKET_SOURCES = ['web', 'email', 'slack', 'msteams', 'api', 'phone', 'linear', 'monitor', 'webhook', 'discord', 'claude', 'github'] as const;
 export type TicketSource = (typeof TICKET_SOURCES)[number];
 
 export const USER_ROLES = ['admin', 'manager', 'agent', 'viewer'] as const;
@@ -24,7 +24,7 @@ export type UserStatus = (typeof USER_STATUSES)[number];
 export const AUTO_ASSIGN_MODES = ['none', 'round_robin', 'least_busy'] as const;
 export type AutoAssignMode = (typeof AUTO_ASSIGN_MODES)[number];
 
-export const INTEGRATION_PROVIDERS = ['slack', 'msteams', 'linear', 'email', 'discord'] as const;
+export const INTEGRATION_PROVIDERS = ['slack', 'msteams', 'linear', 'email', 'discord', 'github'] as const;
 export type IntegrationProvider = (typeof INTEGRATION_PROVIDERS)[number];
 
 /** Statuses that stop the SLA clock. */

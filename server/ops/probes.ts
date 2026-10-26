@@ -3,6 +3,7 @@ import dns from 'node:dns/promises';
 import net from 'node:net';
 import tls from 'node:tls';
 import type { MonitorConfig, MonitorKind } from '../../shared/ops.ts';
+import { callApi } from './api-probe.ts';
 
 /**
  * One check, of one target. Each probe resolves with a result and never
@@ -24,60 +25,12 @@ function fail(message: string, latencyMs: number | null = null): ProbeResult {
   return { ok: false, latencyMs, message };
 }
 
-/** "200-299", "200,204,301" or "2xx". Empty means any 2xx or 3xx. */
-export function statusMatches(status: number, expected?: string): boolean {
-  const spec = (expected || '200-399').replace(/\s/g, '');
-  return spec.split(',').some((part) => {
-    if (/^\dxx$/i.test(part)) return Math.floor(status / 100) === Number(part[0]);
-    if (part.includes('-')) {
-      const [lo, hi] = part.split('-').map(Number);
-      return status >= lo && status <= hi;
-    }
-    return status === Number(part);
-  });
-}
+export { statusMatches } from './api-probe.ts';
 
+/** HTTP and API checks share one request runner with "Send request" in the editor. */
 async function probeHttp(target: string, config: MonitorConfig): Promise<ProbeResult> {
-  let url: URL;
-  try {
-    url = new URL(target);
-  } catch {
-    return fail(`"${target}" is not a URL`);
-  }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') return fail('Only http:// and https:// URLs can be checked');
-
-  const started = Date.now();
-  try {
-    const method = config.method || 'GET';
-    const response = await fetch(url, {
-      method,
-      headers: { 'User-Agent': 'InfraTicket-Monitor/2.0', ...(config.headers ?? {}) },
-      body: method === 'POST' || method === 'PUT' ? config.body : undefined,
-      redirect: 'follow',
-      signal: AbortSignal.timeout(config.timeoutMs || DEFAULT_TIMEOUT_MS),
-    });
-    const text = config.keyword ? await response.text() : (await response.arrayBuffer(), '');
-    const latencyMs = Date.now() - started;
-
-    if (!statusMatches(response.status, config.expectedStatus)) {
-      return fail(`HTTP ${response.status} ${response.statusText}`.trim(), latencyMs);
-    }
-    if (config.keyword) {
-      const found = text.includes(config.keyword);
-      if (found === Boolean(config.keywordInverted)) {
-        return fail(config.keywordInverted ? `Response contains "${config.keyword}"` : `"${config.keyword}" not found in the response`, latencyMs);
-      }
-    }
-    if (config.maxResponseMs && latencyMs > config.maxResponseMs) {
-      return fail(`Responded in ${latencyMs} ms, over the ${config.maxResponseMs} ms limit`, latencyMs);
-    }
-    return { ok: true, latencyMs, message: `HTTP ${response.status} in ${latencyMs} ms` };
-  } catch (error) {
-    const latencyMs = Date.now() - started;
-    const cause = (error as { cause?: { code?: string; message?: string } }).cause;
-    if ((error as Error).name === 'TimeoutError') return fail(`No response within ${(config.timeoutMs || DEFAULT_TIMEOUT_MS) / 1000}s`, latencyMs);
-    return fail(cause?.code ? `${cause.code}: ${cause.message ?? ''}`.trim() : (error as Error).message, latencyMs);
-  }
+  const result = await callApi(target, config);
+  return { ok: result.ok, latencyMs: result.latencyMs, message: result.message };
 }
 
 function splitHostPort(target: string, defaultPort?: number): { host: string; port: number } | null {

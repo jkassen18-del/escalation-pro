@@ -1,4 +1,5 @@
 import type { Ticket } from '../../shared/types.ts';
+import { assertResolvesSafely } from './url-guard.ts';
 import { getSettings } from '../repositories/settings.ts';
 
 /**
@@ -72,11 +73,15 @@ export async function postJson(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 10_000);
   try {
+    // Checked at send time too: a name can be re-pointed at an internal address after it was saved.
+    await assertResolvesSafely(url);
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(options.headers ?? {}) },
       body: JSON.stringify(body),
       signal: controller.signal,
+      // A webhook that passed the checks must not bounce the request somewhere that would not.
+      redirect: 'manual',
     });
     const text = await response.text();
     return { status: response.status, text };

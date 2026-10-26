@@ -271,6 +271,87 @@ function jenkins(payload: Record<string, unknown>, source: AlertSource): Normali
   };
 }
 
+/**
+ * GitHub webhooks, recognised by their shape (the event name is in a header
+ * the normaliser never sees):
+ * - workflow_run: a failed Actions run on the default branch fires; the next
+ *   successful run of the same workflow resolves it. Branches and pull
+ *   requests are ignored - a red PR is the author's business, not an incident.
+ * - deployment_status: a failed or errored deployment fires; a success resolves.
+ * - code scanning, Dependabot and secret scanning alerts: created fires, fixed
+ *   or dismissed resolves. A leaked secret is always the most severe.
+ */
+function githubEvent(payload: Record<string, unknown>, source: AlertSource): Normalised | null {
+  const repo = String((payload.repository as { full_name?: string } | undefined)?.full_name ?? 'repository');
+  const defaultBranch = (payload.repository as { default_branch?: string } | undefined)?.default_branch;
+  const action = String(payload.action ?? '');
+
+  const run = payload.workflow_run as Record<string, unknown> | undefined;
+  if (run) {
+    if (action !== 'completed') return null;
+    const branch = String(run.head_branch ?? '');
+    if (defaultBranch && branch !== defaultBranch) return null;
+    const conclusion = String(run.conclusion ?? '');
+    const failed = ['failure', 'timed_out', 'startup_failure'].includes(conclusion);
+    if (!failed && conclusion !== 'success') return null; // cancelled, skipped, neutral say nothing about health
+    const name = String(run.name ?? 'workflow');
+    return {
+      title: `GitHub Actions: ${name} ${failed ? `${conclusion.replace('_', ' ')}` : 'recovered'} on ${repo}@${branch}`,
+      summary: [run.html_url, run.display_title ? `Commit: ${run.display_title}` : '', (run.actor as { login?: string } | undefined)?.login ? `By ${(run.actor as { login: string }).login}` : '']
+        .filter(Boolean)
+        .map(String)
+        .join('\n'),
+      severity: source.defaultSeverity,
+      status: failed ? 'firing' : 'resolved',
+      dedupKey: `github:${repo}:workflow:${name}:${branch}`,
+      payload,
+    };
+  }
+
+  const deployment = payload.deployment_status as Record<string, unknown> | undefined;
+  if (deployment) {
+    const state = String(deployment.state ?? '');
+    if (!['failure', 'error', 'success'].includes(state)) return null;
+    const environment = String(deployment.environment ?? (payload.deployment as { environment?: string } | undefined)?.environment ?? 'an environment');
+    return {
+      title: `GitHub: deployment to ${environment} ${state === 'success' ? 'succeeded' : 'failed'} (${repo})`,
+      summary: String(deployment.description ?? deployment.target_url ?? deployment.log_url ?? ''),
+      severity: source.defaultSeverity,
+      status: state === 'success' ? 'resolved' : 'firing',
+      dedupKey: `github:${repo}:deploy:${environment}`,
+      payload,
+    };
+  }
+
+  const alert = payload.alert as Record<string, unknown> | undefined;
+  if (alert && alert.number !== undefined) {
+    const kind = alert.secret_type ? 'secret' : alert.security_advisory || alert.dependency ? 'dependabot' : 'code-scanning';
+    const opened = ['created', 'reopened', 'reopened_by_user', 'appeared_in_branch'].includes(action);
+    const closed = ['fixed', 'dismissed', 'resolved', 'closed_by_user', 'auto_dismissed'].includes(action);
+    if (!opened && !closed) return null;
+    const advisory = alert.security_advisory as { summary?: string; severity?: string } | undefined;
+    const rule = alert.rule as { description?: string; security_severity_level?: string; severity?: string } | undefined;
+    const level = kind === 'secret' ? 'critical' : (advisory?.severity ?? rule?.security_severity_level ?? rule?.severity ?? '');
+    const what =
+      kind === 'secret'
+        ? `secret exposed (${alert.secret_type_display_name ?? alert.secret_type})`
+        : kind === 'dependabot'
+          ? `vulnerable dependency: ${advisory?.summary ?? (alert.dependency as { package?: { name?: string } } | undefined)?.package?.name ?? 'a package'}`
+          : `code scanning: ${rule?.description ?? 'an issue'}`;
+    return {
+      title: `GitHub ${what} in ${repo}`,
+      summary: String(alert.html_url ?? ''),
+      severity: severityFrom(level, source.defaultSeverity),
+      status: closed ? 'resolved' : 'firing',
+      dedupKey: `github:${repo}:${kind}:${alert.number}`,
+      payload,
+    };
+  }
+
+  // ping, push and everything else: nothing to page about.
+  return null;
+}
+
 /** "unhealthy" and "not recovered" contain the healthy words; they are not recoveries. */
 function cloudflareResolved(text: string): boolean {
   if (/\b(unhealthy|not\s+(?:healthy|recovered|resolved))\b/i.test(text)) return false;
@@ -321,6 +402,10 @@ export function normalise(source: AlertSource, payload: Record<string, unknown>)
     }
     case 'cloudflare':
       return [cloudflare(payload, source)];
+    case 'github': {
+      const event = githubEvent(payload, source);
+      return event ? [event] : [];
+    }
     case 'grafana':
       return alertmanager(payload, source);
     default:

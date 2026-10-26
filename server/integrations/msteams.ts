@@ -312,7 +312,11 @@ export async function sendMsTeams(record: IntegrationRecord, ctx: NotificationCo
   if (!webhookUrl) return { ok: false, statusCode: null, error: 'Webhook URL is not configured' };
 
   try {
-    const { status, text } = await postJson(webhookUrl, await buildPayload({ ...config, webhookUrl }, ctx));
+    const { status, text } = await postJson(
+      webhookUrl,
+      // A department's own URL picks its format from the URL: the global setting describes the default webhook.
+      await buildPayload({ ...config, webhookUrl, format: route?.target ? 'auto' : config.format }, ctx),
+    );
     return {
       ok: isSuccess(status, text),
       statusCode: status,

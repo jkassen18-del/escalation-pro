@@ -126,6 +126,10 @@ async function maybeMirrorToLinear(ctx: NotificationContext): Promise<void> {
     if (!record.enabled) return;
     if (!shouldMirror(record.config as LinearConfig, ctx.ticket.priority)) return;
     if (ctx.ticket.links.some((link) => link.provider === 'linear')) return;
+    // Raised from a Linear issue: it already has one, and its link is only
+    // recorded after this runs. Mirroring it would create a duplicate, whose
+    // own webhook could raise another ticket.
+    if (ctx.ticket.source === 'linear') return;
 
     const result = await createLinearIssue(record, ctx);
     await logDelivery('linear', ctx.event, ctx.ticket.id, {

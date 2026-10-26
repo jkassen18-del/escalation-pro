@@ -20,7 +20,7 @@ export const MONITOR_KINDS = ['http', 'tcp', 'ping', 'dns', 'ssl', 'heartbeat', 
 export type MonitorKind = (typeof MONITOR_KINDS)[number];
 
 export const MONITOR_KIND_LABELS: Record<MonitorKind, string> = {
-  http: 'HTTP(S)',
+  http: 'HTTP(S) / API',
   tcp: 'TCP port',
   ping: 'Ping (ICMP)',
   dns: 'DNS record',
@@ -34,9 +34,19 @@ export type MonitorState = 'pending' | 'up' | 'down' | 'paused';
 /** Kind-specific settings. Every field is optional; defaults are applied server-side. */
 export interface MonitorConfig {
   /* http */
-  method?: 'GET' | 'HEAD' | 'POST' | 'PUT';
+  method?: HttpMethod;
   headers?: Record<string, string>;
   body?: string;
+  /** How `body` is sent; sets the Content-Type unless a header already does. */
+  bodyType?: 'none' | 'json' | 'text' | 'form';
+  /** Added to the URL's query string. */
+  query?: Record<string, string>;
+  /** Credentials. Secrets are encrypted at rest and never sent back to the browser. */
+  auth?: ApiAuth;
+  /** What the response must satisfy, beyond the expected status. All must pass. */
+  assertions?: ApiAssertion[];
+  /** Follow redirects (the default) or judge the redirect itself. */
+  followRedirects?: boolean;
   /** e.g. "200-299" or "200,204". Defaults to 200-399. */
   expectedStatus?: string;
   /** Response must contain this text. */
@@ -53,6 +63,82 @@ export interface MonitorConfig {
   warnDays?: number;
   /* database: the database connector (a backup job) whose connection is checked */
   databaseId?: string;
+}
+
+export const HTTP_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] as const;
+export type HttpMethod = (typeof HTTP_METHODS)[number];
+
+export interface ApiAuth {
+  type: 'none' | 'bearer' | 'basic' | 'apikey';
+  /** bearer */
+  token?: string;
+  /** basic */
+  username?: string;
+  password?: string;
+  /** apikey: the header or query parameter name, e.g. X-API-Key */
+  keyName?: string;
+  keyValue?: string;
+  keyIn?: 'header' | 'query';
+  /** Set by the server on read: a secret is stored, so a blank field means "keep it". */
+  secretSet?: boolean;
+}
+
+export const ASSERTION_SOURCES = ['status', 'latency', 'json', 'header', 'body'] as const;
+export type AssertionSource = (typeof ASSERTION_SOURCES)[number];
+
+export const ASSERTION_OPS = ['eq', 'neq', 'contains', 'not_contains', 'gt', 'gte', 'lt', 'lte', 'exists', 'not_exists', 'matches'] as const;
+export type AssertionOp = (typeof ASSERTION_OPS)[number];
+
+export const ASSERTION_OP_LABELS: Record<AssertionOp, string> = {
+  eq: 'equals',
+  neq: 'does not equal',
+  contains: 'contains',
+  not_contains: 'does not contain',
+  gt: 'is greater than',
+  gte: 'is at least',
+  lt: 'is less than',
+  lte: 'is at most',
+  exists: 'exists',
+  not_exists: 'does not exist',
+  matches: 'matches regex',
+};
+
+/**
+ * One thing to watch in an API response: `json` reads a path such as
+ * data.items[0].status or items.length; `header` reads a header by name.
+ */
+export interface ApiAssertion {
+  source: AssertionSource;
+  path?: string;
+  op: AssertionOp;
+  value?: string;
+}
+
+export interface AssertionResult {
+  assertion: ApiAssertion;
+  ok: boolean;
+  /** What was actually found, as text; null when the path was missing. */
+  actual: string | null;
+  message: string;
+}
+
+/** What "Send request" shows: the real response, and how each check fared. */
+export interface ApiTryResult {
+  ok: boolean;
+  message: string;
+  status: number | null;
+  statusText: string;
+  latencyMs: number | null;
+  headers: Record<string, string>;
+  contentType: string | null;
+  /** The body as text, cut at 64 KB. */
+  body: string;
+  truncated: boolean;
+  /** The body parsed, when it is JSON. */
+  json: unknown;
+  assertions: AssertionResult[];
+  /** The final URL after redirects and query parameters. */
+  url: string;
 }
 
 export interface Monitor {
@@ -112,6 +198,7 @@ export const ALERT_SOURCE_KINDS = [
   'azure_monitor',
   'cloudflare',
   'jenkins',
+  'github',
   'grafana',
   'digitalocean',
   'entra_id',
@@ -125,6 +212,7 @@ export const ALERT_SOURCE_LABELS: Record<AlertSourceKind, string> = {
   azure_monitor: 'Azure Monitor (common alert schema)',
   cloudflare: 'Cloudflare Notifications',
   jenkins: 'Jenkins',
+  github: 'GitHub (Actions, deployments, security alerts)',
   grafana: 'Grafana / Prometheus Alertmanager',
   digitalocean: 'DigitalOcean (webhook)',
   entra_id: 'Entra ID / Microsoft 365 (webhook)',

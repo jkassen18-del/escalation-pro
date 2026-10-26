@@ -8,6 +8,7 @@ import { ingestSignal } from './alerts.ts';
 import { activeOccurrences, maintenanceFor, scopeCovers, scopeOf } from './maintenance.ts';
 import { checkDatabaseHealth } from './db-health.ts';
 import { runProbe, type ProbeResult } from './probes.ts';
+import { maskAuth, sealAuth, validateApiConfig } from './api-probe.ts';
 
 /**
  * Built-in monitors and the loop that runs them.
@@ -60,7 +61,10 @@ function mapMonitor(row: MonitorRow, base: string, maintenance: Monitor['mainten
     name: row.name,
     kind: row.kind,
     target: row.target,
-    config: parseJson<MonitorConfig>(row.config, {}),
+    config: (() => {
+      const config = parseJson<MonitorConfig>(row.config, {});
+      return config.auth ? { ...config, auth: maskAuth(config.auth) } : config;
+    })(),
     intervalSecs: Number(row.interval_secs),
     graceSecs: Number(row.grace_secs),
     failureThreshold: Number(row.failure_threshold),
@@ -167,8 +171,8 @@ export function validateMonitor(body: Record<string, unknown>): MonitorInput {
     kind,
     target,
     config: {
-      ...config,
-      headers: config.headers && typeof config.headers === 'object' ? config.headers : undefined,
+      ...(kind === 'http' ? validateApiConfig(config) : config),
+      headers: config.headers && typeof config.headers === 'object' ? (kind === 'http' ? validateApiConfig(config).headers : config.headers) : undefined,
       timeoutMs: config.timeoutMs ? Math.min(60_000, Math.max(1000, Number(config.timeoutMs))) : undefined,
     },
     intervalSecs,
@@ -183,6 +187,10 @@ export function validateMonitor(body: Record<string, unknown>): MonitorInput {
 
 export async function saveMonitor(id: string | null, input: MonitorInput): Promise<Monitor> {
   const now = new Date().toISOString();
+  // Credentials are encrypted; a blank secret from the editor keeps the stored one.
+  const previous = id ? await db.get<{ config: string }>(`SELECT config FROM monitors WHERE id = ?`, [id]) : undefined;
+  input = { ...input, config: { ...input.config, auth: sealAuth(input.config.auth, previous ? parseJson<MonitorConfig>(previous.config, {}).auth : undefined) } };
+  if (!input.config.auth) delete input.config.auth;
   if (id) {
     await db.run(
       `UPDATE monitors SET name = ?, kind = ?, target = ?, config = ?, interval_secs = ?, grace_secs = ?, failure_threshold = ?,
@@ -356,13 +364,19 @@ export async function runDueMonitors(concurrency = 8): Promise<number> {
   let index = 0;
   const worker = async () => {
     while (index < due.length) {
-      const row = due[index++];
+      const listed = due[index++];
       try {
         // Claim it first so a slow check is not started twice by the next tick.
-        await db.run(`UPDATE monitors SET next_check_at = ? WHERE id = ?`, [new Date(Date.now() + Number(row.interval_secs) * 1000).toISOString(), row.id]);
-        await recordResult(row, await runCheck(row));
+        await db.run(`UPDATE monitors SET next_check_at = ? WHERE id = ?`, [new Date(Date.now() + Number(listed.interval_secs) * 1000).toISOString(), listed.id]);
+        // Read afresh: the batch may be minutes old by now, and a heartbeat ping
+        // (or an edit, or a pause) since then must not be judged on stale data.
+        const row = await db.get<MonitorRow>(`SELECT * FROM monitors WHERE id = ? AND enabled = 1`, [listed.id]);
+        if (!row) continue;
+        const result = await runCheck(row);
+        const latest = (await db.get<MonitorRow>(`SELECT * FROM monitors WHERE id = ?`, [row.id])) ?? row;
+        await recordResult(latest, result);
       } catch (error) {
-        console.error(`[monitor] ${row.name} failed to run`, error);
+        console.error(`[monitor] ${listed.name} failed to run`, error);
       }
     }
   };

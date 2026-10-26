@@ -19,7 +19,9 @@ import {
 
 type TextKey = 'title' | 'subtitle' | 'body' | 'footer';
 
-const APP: Record<TemplateProvider, string> = { slack: 'Slack', msteams: 'Microsoft Teams', linear: 'Linear' };
+const APP: Record<TemplateProvider, string> = { slack: 'Slack', msteams: 'Microsoft Teams', linear: 'Linear', github: 'GitHub' };
+/** Linear and GitHub make issues: a title and a Markdown description, no buttons or colour. */
+const isIssue = (provider: TemplateProvider) => provider === 'linear' || provider === 'github';
 const PRIORITY_EDGE = '#175cd3';
 
 /**
@@ -35,8 +37,12 @@ export function MessageDesigner({ provider }: { provider: TemplateProvider }) {
   const [focus, setFocus] = useState<TextKey>('body');
   const inputs = useRef<Partial<Record<TextKey, HTMLInputElement | HTMLTextAreaElement | null>>>({});
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+
   useEffect(() => {
     let cancelled = false;
+    setLoadError(null);
     void api.integrations
       .template(provider)
       .then((result) => {
@@ -45,12 +51,22 @@ export function MessageDesigner({ provider }: { provider: TemplateProvider }) {
         setDefaults(result.defaults);
         setDraft(result.template);
       })
-      .catch(() => undefined);
+      .catch((caught) => !cancelled && setLoadError(caught instanceof ApiError ? caught.message : 'Could not load the message design.'));
     return () => {
       cancelled = true;
     };
-  }, [provider]);
+  }, [provider, attempt]);
 
+  if (loadError) {
+    return (
+      <p className="text-xs text-[var(--priority-urgent)]">
+        {loadError}{' '}
+        <button type="button" className="text-[var(--accent)] hover:underline" onClick={() => setAttempt((n) => n + 1)}>
+          Try again
+        </button>
+      </p>
+    );
+  }
   if (!draft || !saved || !defaults) return <p className="text-xs text-subtle">Loading the message design…</p>;
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
@@ -115,7 +131,7 @@ export function MessageDesigner({ provider }: { provider: TemplateProvider }) {
   return (
     <div className="space-y-3">
       <div>
-        <p className="text-sm font-semibold">How {APP[provider]} {provider === 'linear' ? 'issues' : 'messages'} look</p>
+        <p className="text-sm font-semibold">How {APP[provider]} {isIssue(provider) ? 'issues' : 'messages'} look</p>
         <p className="mt-0.5 text-xs text-muted">
           Type <code className="font-mono">{'{{'}</code>placeholders<code className="font-mono">{'}}'}</code> where ticket details go. Click one below to add it where your cursor is.
           {provider === 'slack' && ' Slack formatting works: *bold*, _italic_.'}
@@ -125,8 +141,8 @@ export function MessageDesigner({ provider }: { provider: TemplateProvider }) {
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="min-w-0 space-y-3">
-          {text('title', provider === 'linear' ? 'Issue title' : 'Title', 'Bold, first line.')}
-          {provider !== 'linear' && text('subtitle', 'Second line', 'Under the title. Leave blank to skip.')}
+          {text('title', isIssue(provider) ? 'Issue title' : 'Title', 'Bold, first line.')}
+          {!isIssue(provider) && text('subtitle', 'Second line', 'Under the title. Leave blank to skip.')}
           <div>
             <p className="mb-1 text-xs font-medium">Details shown</p>
             <div className="flex flex-wrap gap-1">
@@ -153,9 +169,9 @@ export function MessageDesigner({ provider }: { provider: TemplateProvider }) {
             </div>
             <p className="mt-1 text-2xs text-subtle">Shown in the order you pick them.</p>
           </div>
-          {text('body', provider === 'linear' ? 'Description' : 'Message', 'Below the details. {{detail}} is what changed: the comment, the new status, the reason.', true)}
+          {text('body', isIssue(provider) ? 'Description' : 'Message', 'Below the details. {{detail}} is what changed: the comment, the new status, the reason.', true)}
           {text('footer', 'Small print', 'At the bottom. Leave blank to skip.')}
-          {provider !== 'linear' && (
+          {!isIssue(provider) && (
             <div className="grid gap-2 sm:grid-cols-2">
               <Checkbox
                 checked={draft.buttons}
@@ -358,7 +374,7 @@ function Preview({ provider, template }: { provider: TemplateProvider; template:
 
   return (
     <div className="rounded-md border border-[#2a2b30] bg-[#18191b] p-4 text-[13px] leading-relaxed text-[#d2d3e0]">
-      <p className="text-[11px] text-[#858699]">FIN-128</p>
+      <p className="text-[11px] text-[#858699]">{provider === 'github' ? 'acme/finance-app · Issue #128' : 'FIN-128'}</p>
       <p className="mt-1 text-base font-semibold break-words text-[#eeeffc]">{title.replace(/\s+/g, ' ')}</p>
       <div className="mt-3 space-y-2">
         {body && (

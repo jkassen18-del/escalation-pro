@@ -16,7 +16,6 @@ const METRIC_HUES: Record<Metric, string> = {
 };
 const STEPS = [0, 30, 55, 78, 100];
 const WEEKS = 53;
-const DAY_MS = 86_400_000;
 
 /** yyyy-mm-dd of a local date, matching the server's tzOffset bucketing. */
 function localKey(date: Date): string {
@@ -155,9 +154,13 @@ export function ActivityHeatmap() {
                     onFocus={(event) => showTip(event.currentTarget, cell.key)}
                     onBlur={() => setHover(null)}
                     onClick={() => {
+                      // Midnight to midnight on the calendar, which is not always 24 hours.
                       const from = new Date(cell.date);
-                      const to = new Date(from.getTime() + DAY_MS);
-                      navigate(`/tickets?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`);
+                      const to = new Date(from);
+                      to.setDate(to.getDate() + 1);
+                      const range = `=${encodeURIComponent(from.toISOString())}`;
+                      const end = `=${encodeURIComponent(to.toISOString())}`;
+                      navigate(metric === 'resolved' ? `/tickets?resolvedFrom${range}&resolvedTo${end}` : `/tickets?from${range}&to${end}`);
                     }}
                     className="aspect-square w-full rounded-[2px] outline-offset-1 hover:outline hover:outline-1 hover:outline-[var(--fg-muted)]"
                     style={{ background: cellColor(metric, stepOf(valueOf(cell.key))) }}

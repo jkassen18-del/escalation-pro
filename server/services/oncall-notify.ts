@@ -72,8 +72,11 @@ export async function notifyOnCall(
   );
   if (recent) throw badRequest('On-call was notified about this ticket in the last two minutes. Give them a moment, or phone them.');
 
+  // Claimed before anything is sent, so a double-click's second request sees it and stops.
   const note = input.note?.trim() || null;
   const names = targets.map((contact) => contact.name).join(', ');
+  await recordEvent(ticket.id, actor.id, 'oncall_notified', 'oncall', null, note ? `${names}: ${note.slice(0, 300)}` : names);
+
   const ticketUrl = await buildTicketUrl(ticket, origin);
   const results: NotifyResult[] = [];
 
@@ -119,8 +122,6 @@ export async function notifyOnCall(
     });
   }
 
-  // The note rides on the timeline event, so the trail shows why they were called.
-  await recordEvent(ticket.id, actor.id, 'oncall_notified', 'oncall', null, note ? `${names}: ${note.slice(0, 300)}` : names);
 
   return { results, notified: targets };
 }

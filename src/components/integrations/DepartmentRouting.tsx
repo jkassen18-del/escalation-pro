@@ -10,7 +10,11 @@ const NOUN: Record<RoutedProvider, { thing: string; things: string; app: string 
   slack: { thing: 'channel', things: 'channels', app: 'Slack' },
   msteams: { thing: 'channel', things: 'channels', app: 'Teams' },
   linear: { thing: 'Linear team', things: 'Linear teams', app: 'Linear' },
+  github: { thing: 'repository', things: 'repositories', app: 'GitHub' },
 };
+
+/** Linear and GitHub create issues rather than post messages. */
+const makesIssues = (provider: RoutedProvider) => provider === 'linear' || provider === 'github';
 
 /** Stands for "post nothing" in the selects; the server stores it as an empty target. */
 const NONE = 'none';
@@ -60,7 +64,7 @@ export function DepartmentRouting({ provider }: { provider: RoutedProvider }) {
     (!urlMode && fallback !== (view.fallback === '' && provider !== 'msteams' ? NONE : view.fallback));
 
   const nameOf = (id: string) => view.destinations.find((destination) => destination.id === id)?.name ?? id;
-  const nothing = provider === 'linear' ? 'no issue created' : 'not posted';
+  const nothing = makesIssues(provider) ? 'no issue created' : 'not posted';
   const fallbackLabel =
     fallback === NONE
       ? nothing
@@ -104,7 +108,7 @@ export function DepartmentRouting({ provider }: { provider: RoutedProvider }) {
   };
 
   const destinationSelect = (value: string, onChange: (next: string) => void, blankLabel: string, extra: Array<{ id: string; name: string }> = []) => (
-    <Select value={value} onChange={(event) => onChange(event.target.value)} disabled={!canPick} className="min-w-0">
+    <Select value={value} onChange={(event) => onChange(event.target.value)} disabled={!canPick && (!value || value === NONE)} className="min-w-0">
       <option value="">{blankLabel}</option>
       {extra.map((option) => (
         <option key={`x-${option.id}`} value={option.id}>
@@ -130,7 +134,9 @@ export function DepartmentRouting({ provider }: { provider: RoutedProvider }) {
         <div>
           <p className="text-sm font-semibold">Where each department's tickets go</p>
           <p className="mt-0.5 text-xs text-muted">
-            {provider === 'linear'
+            {provider === 'github'
+              ? "A ticket pushed to GitHub becomes an issue in its department's repository, and issues labelled for tickets there come back to that department."
+              : provider === 'linear'
               ? 'Pushing a ticket to Linear, by hand or automatically, creates the issue in its department\'s Linear team.'
               : `Each department posts into its own ${noun.thing}. A ticket escalated to another department carries on in that department's ${noun.thing}.`}
           </p>
@@ -147,7 +153,7 @@ export function DepartmentRouting({ provider }: { provider: RoutedProvider }) {
           <thead>
             <tr className="border-b surface-2 text-left">
               <th className="eyebrow w-[35%] px-3 py-2 font-medium">Department</th>
-              <th className="eyebrow px-3 py-2 font-medium">{provider === 'linear' ? 'Linear team' : urlMode ? 'Workflows webhook URL' : 'Channel'}</th>
+              <th className="eyebrow px-3 py-2 font-medium">{provider === 'linear' ? 'Linear team' : provider === 'github' ? 'Repository' : urlMode ? 'Workflows webhook URL' : 'Channel'}</th>
               {provider === 'slack' && <th className="eyebrow w-40 px-3 py-2 font-medium">Ping</th>}
             </tr>
           </thead>
@@ -196,7 +202,7 @@ export function DepartmentRouting({ provider }: { provider: RoutedProvider }) {
                   {destinationSelect(
                     fallback,
                     setFallback,
-                    provider === 'msteams' ? 'The channel the bot was last active in' : provider === 'linear' ? "Don't create an issue" : "Don't post",
+                    provider === 'msteams' ? 'The channel the bot was last active in' : makesIssues(provider) ? "Don't create an issue" : "Don't post",
                     provider === 'msteams' ? [{ id: NONE, name: "Don't post" }] : [],
                   )}
                 </td>
@@ -209,7 +215,7 @@ export function DepartmentRouting({ provider }: { provider: RoutedProvider }) {
       {view.departments.length === 0 && <p className="text-xs text-subtle">No departments yet. Create them under Teams.</p>}
 
       <div className="flex flex-wrap items-center justify-end gap-2">
-        {provider !== 'linear' && (
+        {!makesIssues(provider) && (
           <Button variant="secondary" size="sm" loading={testing} disabled={dirty} onClick={() => void test()} title={dirty ? 'Save first' : undefined}>
             <Send className="size-3.5" />
             Send a test to every {noun.thing}

@@ -21,6 +21,7 @@ export const SECRET_FIELDS: Record<IntegrationProvider, string[]> = {
   linear: ['apiKey', 'webhookSecret'],
   email: ['password'],
   discord: ['botToken'],
+  github: ['token', 'webhookSecret'],
 };
 
 export interface IntegrationRecord {

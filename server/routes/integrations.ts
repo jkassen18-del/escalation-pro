@@ -41,6 +41,7 @@ import { packageForDownload, saveTeamsApp, teamsAppState } from '../integrations
 import { catalogueStatus } from '../integrations/catalogue.ts';
 import { integrationSetupRouter } from './integration-setup.ts';
 import { integrationRoutingRouter } from './integration-routing.ts';
+import { testGitHub } from '../integrations/github.ts';
 import { getSettings } from '../repositories/settings.ts';
 
 export const integrationsRouter: Router = Router();
@@ -67,6 +68,8 @@ function isConfigured(provider: IntegrationProvider, config: Record<string, unkn
       return Boolean(config.host && (config.fromEmail || config.username));
     case 'discord':
       return Boolean(config.applicationId && config.botToken);
+    case 'github':
+      return Boolean(config.token);
     default:
       return false;
   }
@@ -333,6 +336,10 @@ integrationsRouter.post(
         break;
       case 'discord':
         result = await testDiscord(record);
+        break;
+      case 'github':
+        result = await testGitHub(record);
+        if (result.ok && result.details?.login) await saveIntegration('github', { config: { login: result.details.login } });
         break;
     }
 

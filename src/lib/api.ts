@@ -26,7 +26,7 @@ import type {
 } from '@shared/types';
 import type { MessageTemplate, TemplateProvider } from '@shared/message-template';
 
-export type RoutedProvider = 'slack' | 'msteams' | 'linear';
+export type RoutedProvider = 'slack' | 'msteams' | 'linear' | 'github';
 
 /** Where each department's tickets go for one provider; mirrors server/routes/integration-routing.ts. */
 export interface RoutingView {
@@ -142,6 +142,8 @@ export const api = {
     watch: (id: string, watch: boolean) => post<{ ticket: Ticket }>(`/tickets/${id}/watch`, { watch }),
     pushToLinear: (id: string, linearTeamId?: string) =>
       post<{ ticket: Ticket }>(`/tickets/${id}/push-to-linear`, linearTeamId ? { linearTeamId } : {}),
+    githubTargets: (id: string) => get<{ repos: Array<{ id: string; name: string }>; suggested: string | null }>(`/tickets/${id}/github-targets`),
+    pushToGitHub: (id: string, repo?: string) => post<{ ticket: Ticket }>(`/tickets/${id}/push-to-github`, repo ? { repo } : {}),
     linearTargets: (id: string) =>
       get<{ teams: Array<{ id: string; key: string; name: string }>; suggested: string | null }>(`/tickets/${id}/linear-targets`),
     upload: (id: string, files: File[], commentId?: string | null) => {

@@ -31,12 +31,14 @@ export const TILES: CatalogueTile[] = [
   { id: 'msteams', name: 'Microsoft Teams', group: 'chat', kind: 'chat', blurb: 'InfraBot posts cards, takes replies and raises tickets; can ring on-call people.', keywords: 'chat bot microsoft calls' },
   { id: 'discord', name: 'Discord', group: 'chat', kind: 'chat', blurb: 'Raise tickets from Discord and follow them in a channel.', keywords: 'chat bot server' },
   { id: 'linear', name: 'Linear', group: 'chat', kind: 'chat', blurb: 'Mirror tickets as Linear issues, each department into its own Linear team.', keywords: 'issues engineering' },
+  { id: 'github', name: 'GitHub', group: 'chat', kind: 'chat', blurb: 'Turn tickets into GitHub issues per department; closing the issue resolves the ticket, and PRs that mention it are linked.', keywords: 'issues git pull request code' },
   { id: 'email', name: 'Email (SMTP)', group: 'chat', kind: 'chat', blurb: 'Email assignees, requesters and watchers when a ticket changes.', keywords: 'smtp mail outlook exchange' },
 
   { id: 'source:aws_sns', name: 'AWS CloudWatch', group: 'monitoring', kind: 'source', sourceKind: 'aws_sns', blurb: 'CloudWatch alarms and AWS Health events via SNS.', keywords: 'amazon sns eventbridge' },
   { id: 'source:azure_monitor', name: 'Azure Monitor', group: 'monitoring', kind: 'source', sourceKind: 'azure_monitor', blurb: 'Action group webhooks with the common alert schema.', keywords: 'microsoft' },
   { id: 'source:grafana', name: 'Grafana / Alertmanager', group: 'monitoring', kind: 'source', sourceKind: 'grafana', blurb: 'Contact points and Prometheus Alertmanager receivers.', keywords: 'prometheus' },
   { id: 'source:jenkins', name: 'Jenkins', group: 'monitoring', kind: 'source', sourceKind: 'jenkins', blurb: 'Failed builds open an incident; the next green build resolves it.', keywords: 'ci build' },
+  { id: 'source:github', name: 'GitHub Actions & alerts', group: 'monitoring', kind: 'source', sourceKind: 'github', blurb: 'A failed workflow on the main branch opens an incident; the next green run resolves it. Also deployments and security alerts.', keywords: 'ci actions workflow dependabot deploy' },
   { id: 'source:cloudflare', name: 'Cloudflare', group: 'monitoring', kind: 'source', sourceKind: 'cloudflare', blurb: 'Notifications for origins, tunnels, health checks and DDoS.', keywords: 'dns tunnel' },
   { id: 'source:digitalocean', name: 'DigitalOcean', group: 'monitoring', kind: 'source', sourceKind: 'digitalocean', blurb: 'Monitoring alert policies forwarded as JSON.', keywords: 'droplet' },
   { id: 'source:entra_id', name: 'Entra ID / Microsoft 365', group: 'monitoring', kind: 'source', sourceKind: 'entra_id', blurb: 'Service health and sign-in alerts forwarded by a Logic App or flow.', keywords: 'azure ad microsoft' },
@@ -70,6 +72,11 @@ export const SOURCE_STEPS: Record<AlertSourceKind, string[]> = {
   jenkins: [
     'Install the Notification plugin (free) and add an endpoint: Format JSON, Protocol HTTP, Event "Job Finalized", URL below.',
     'Or add a post-build step: curl -X POST -H "Content-Type: application/json" -d \'{"name":"$JOB_NAME","build":{"status":"FAILURE","full_url":"$BUILD_URL"}}\' <URL>.',
+  ],
+  github: [
+    'In the repository (or organisation): Settings → Webhooks → Add webhook. Paste the URL below as the Payload URL, content type application/json.',
+    'Choose "Let me select individual events": Workflow runs, Deployment statuses, and any of Code scanning alerts, Dependabot alerts, Secret scanning alerts.',
+    'Only runs on the default branch count, so a failing pull request never pages anyone. The next successful run of the same workflow resolves the incident.',
   ],
   cloudflare: [
     'In the Cloudflare dashboard: Notifications → Destinations → Webhooks → Create, paste the URL below and save.',

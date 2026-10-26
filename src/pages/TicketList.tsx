@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Download, Inbox, Paperclip, Search, SlidersHorizontal, X } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
@@ -53,6 +53,8 @@ export function TicketListPage() {
       tag: searchParams.get('tag') ?? undefined,
       from: searchParams.get('from') ?? undefined,
       to: searchParams.get('to') ?? undefined,
+      resolvedFrom: searchParams.get('resolvedFrom') ?? undefined,
+      resolvedTo: searchParams.get('resolvedTo') ?? undefined,
       overdue: searchParams.get('overdue') === 'true' || undefined,
       unassigned: searchParams.get('unassigned') === 'true' || undefined,
       sort: searchParams.get('sort') ?? 'newest',
@@ -62,19 +64,31 @@ export function TicketListPage() {
     [searchParams, offset],
   );
 
+  // Only the newest request may update the list: a slow answer for "pay"
+  // must not land under a search box that now says "payments".
+  const latest = useRef(0);
   const load = useCallback(async () => {
+    const request = ++latest.current;
     setLoading(true);
     setError(null);
     try {
       const result = await api.tickets.list(query);
+      if (request !== latest.current) return;
       setTickets(result.tickets);
       setTotal(result.total);
     } catch (caught) {
+      if (request !== latest.current) return;
       setError(caught instanceof ApiError ? caught.message : 'Could not load tickets.');
     } finally {
-      setLoading(false);
+      if (request === latest.current) setLoading(false);
     }
   }, [query]);
+
+  // The box follows the URL when something else changes it, such as a sidebar link.
+  const urlSearch = searchParams.get('search') ?? '';
+  useEffect(() => {
+    setSearchDraft(urlSearch);
+  }, [urlSearch]);
 
   useEffect(() => {
     void load();
@@ -103,7 +117,7 @@ export function TicketListPage() {
     setSearchParams(next, { replace: true });
   };
 
-  const activeFilterCount = ['status', 'priority', 'type', 'teamId', 'assignee', 'overdue', 'unassigned', 'tag', 'from'].filter(
+  const activeFilterCount = ['status', 'priority', 'type', 'teamId', 'assignee', 'overdue', 'unassigned', 'tag', 'from', 'resolvedFrom'].filter(
     (key) => searchParams.get(key),
   ).length;
 
@@ -180,7 +194,7 @@ export function TicketListPage() {
         </div>
 
         {/* Filters that arrive from links (a label, a heatmap day) have no control of their own. */}
-        {(searchParams.get('tag') || searchParams.get('from')) && (
+        {(searchParams.get('tag') || searchParams.get('from') || searchParams.get('resolvedFrom')) && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
             {searchParams.get('tag') && (
               <button
@@ -188,6 +202,21 @@ export function TicketListPage() {
                 className="inline-flex items-center gap-1 rounded-[3px] border px-1.5 py-0.5 surface-2 hover:border-[var(--border-strong)]"
               >
                 Label: {searchParams.get('tag')}
+                <X className="size-3" />
+              </button>
+            )}
+            {searchParams.get('resolvedFrom') && (
+              <button
+                onClick={() => {
+                  const next = new URLSearchParams(searchParams);
+                  next.delete('resolvedFrom');
+                  next.delete('resolvedTo');
+                  next.delete('offset');
+                  setSearchParams(next, { replace: true });
+                }}
+                className="inline-flex items-center gap-1 rounded-[3px] border px-1.5 py-0.5 surface-2 hover:border-[var(--border-strong)]"
+              >
+                Resolved {new Date(searchParams.get('resolvedFrom')!).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
                 <X className="size-3" />
               </button>
             )}

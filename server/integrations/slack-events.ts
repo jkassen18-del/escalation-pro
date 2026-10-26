@@ -113,6 +113,7 @@ export async function resolveSlackAuthor(
 
   try {
     const response = await fetch(`https://slack.com/api/users.info?user=${encodeURIComponent(slackUserId)}`, {
+      signal: AbortSignal.timeout(10_000),
       headers: { Authorization: `Bearer ${botToken}` },
     });
     const body = (await response.json()) as {

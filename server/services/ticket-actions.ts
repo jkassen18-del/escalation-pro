@@ -1,3 +1,5 @@
+import { commentOnGitHubIssue } from '../integrations/github.ts';
+import { lengthWithoutInlineImages } from '../lib/inline-images.ts';
 import crypto from 'node:crypto';
 import { db } from '../db/index.ts';
 import { randomId } from '../lib/crypto.ts';
@@ -100,7 +102,12 @@ export async function updateTicket(before: Ticket, patch: TicketPatch, ctx: Acti
   }
 
   if (patch.description !== undefined) {
-    let description = optionalString(patch.description, 20_000) ?? '';
+    // Refused rather than cut: slicing used to land in the middle of a pasted image.
+    let description = typeof patch.description === 'string' ? patch.description.trim() : '';
+    const limit = before.descriptionFormat === 'html' ? 400_000 : 20_000;
+    if ((before.descriptionFormat === 'html' ? lengthWithoutInlineImages(description) : description.length) > limit) {
+      throw badRequest(`Description must be ${limit.toLocaleString('en')} characters or fewer`, { Description: 'Too long' });
+    }
     // An HTML description is rendered as markup, so an edit goes through the
     // same sanitiser and inline-image extraction as a new ticket's.
     if (before.descriptionFormat === 'html') {
@@ -164,6 +171,7 @@ export async function updateTicket(before: Ticket, patch: TicketPatch, ctx: Acti
     if (!can(user, 'tickets.assign')) throw forbidden('You cannot reassign tickets.');
     const assigneeId = optionalString(patch.assigneeId, 60);
     if (assigneeId !== before.assigneeId) {
+      if (assigneeId && !(await findUserById(assigneeId))) throw badRequest('That person no longer exists.');
       push('assignee_id', assigneeId);
       changes.push({ field: 'assignee', from: before.assigneeName, to: assigneeId });
       if (assigneeId) await addWatcher(before.id, assigneeId);
@@ -191,16 +199,20 @@ export async function updateTicket(before: Ticket, patch: TicketPatch, ctx: Acti
 
   if (patch.dueAt !== undefined) {
     const dueAt = optionalDate(patch.dueAt, 'Due date');
-    if (dueAt !== before.dueAt) needs('tickets.update', 'edit ticket details');
-    push('due_at', dueAt);
-    changes.push({ field: 'dueAt', from: before.dueAt, to: dueAt });
+    if (dueAt !== before.dueAt) {
+      needs('tickets.update', 'edit ticket details');
+      push('due_at', dueAt);
+      changes.push({ field: 'dueAt', from: before.dueAt, to: dueAt });
+    }
   }
 
   if (patch.tags !== undefined) {
     const tags = toStringArray(patch.tags, 20).map((tag) => tag.toLowerCase());
-    if (tags.join(',') !== before.tags.join(',')) needs('tickets.update', 'edit ticket details');
-    push('tags', JSON.stringify(tags));
-    changes.push({ field: 'tags', from: before.tags.join(', '), to: tags.join(', ') });
+    if (tags.join(',') !== before.tags.join(',')) {
+      needs('tickets.update', 'edit ticket details');
+      push('tags', JSON.stringify(tags));
+      changes.push({ field: 'tags', from: before.tags.join(', '), to: tags.join(', ') });
+    }
   }
 
   if (!updates.length) return before;
@@ -336,8 +348,15 @@ export async function addTicketComment(ticket: Ticket, input: CommentInput, ctx:
     });
   }
 
+  // An internal note only reaches watchers who may read internal notes; anyone
+  // can watch a ticket they can see, and the bell shows the note's text.
+  let recipients = after.watcherIds.filter((id) => id !== user.id);
+  if (isInternal) {
+    const allowed = await Promise.all(recipients.map(async (id) => (await findUserById(id))?.permissions.includes('tickets.comment_internal') ?? false));
+    recipients = recipients.filter((_, index) => allowed[index]);
+  }
   await notifyUsers(
-    after.watcherIds.filter((id) => id !== user.id),
+    recipients,
     {
       ticketId: after.id,
       type: 'comment',
@@ -372,6 +391,13 @@ export async function addTicketComment(ticket: Ticket, input: CommentInput, ctx:
         linearCommentId,
       );
     }
+  }
+
+  // And onto a linked GitHub issue. Marked as ours, so GitHub's echo of it is ignored.
+  const githubLink = after.links.find((link) => link.provider === 'github');
+  if (githubLink && !isInternal) {
+    const record = await loadIntegration('github');
+    if (record.enabled) void commentOnGitHubIssue(record, githubLink.externalId, `**${user.name}** (${settings.organizationName}):\n\n${body}`);
   }
 
   return after;

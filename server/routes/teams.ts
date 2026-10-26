@@ -15,7 +15,7 @@ import {
 import { clientIp, recordAudit } from '../lib/audit.ts';
 import { requireAuth, requirePermission, type AuthedRequest } from '../middleware/auth.ts';
 import { listAllFields, listTeamFields, replaceTeamForm } from '../repositories/form-fields.ts';
-import { listTeamRoutes, setTeamRoute } from '../repositories/team-routing.ts';
+import { listTeamRoutes, setTeamRoute, validateRouteTarget } from '../repositories/team-routing.ts';
 import { createTeam, findTeamById, keyInUse, listTeams, setTeamMembers } from '../repositories/teams.ts';
 import { findUserById, setDepartmentRole } from '../repositories/users.ts';
 import { AUTO_ASSIGN_MODES, DEPARTMENT_ROLES, INTEGRATION_PROVIDERS, TICKET_PRIORITIES } from '../../shared/types.ts';
@@ -268,13 +268,13 @@ teamsRouter.put(
 /* ------------------------- notification routing --------------------------- */
 
 /**
- * Where this team's tickets are announced.
- *
- * Readable by any signed-in user so the team screen can show it; only a
- * channel name or team id, never a credential.
+ * Where this team's tickets are announced. Limited to people who manage
+ * departments or integrations: a Teams destination is a signed webhook URL,
+ * and anyone holding it can post into that channel.
  */
 teamsRouter.get(
   '/:id/routing',
+  requirePermission('teams.manage', 'integrations.manage'),
   asyncRoute(async (req, res) => {
     res.json({ routes: await listTeamRoutes(req.params.id) });
   }),
@@ -293,7 +293,7 @@ teamsRouter.put(
       const provider = requireEnum(route?.provider, INTEGRATION_PROVIDERS, 'Provider');
       // Email has no per-team destination: it goes to the ticket's own people.
       if (provider === 'email') continue;
-      await setTeamRoute(team.id, provider, String(route?.target ?? ''), route?.mention ?? null);
+      await setTeamRoute(team.id, provider, validateRouteTarget(provider, String(route?.target ?? '')), route?.mention ?? null);
     }
 
     const routes = await listTeamRoutes(team.id);

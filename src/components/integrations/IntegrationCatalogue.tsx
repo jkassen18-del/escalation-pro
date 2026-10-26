@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Code2, Database, HeartPulse, Search, Server, TextSearch, Webhook } from 'lucide-react';
-import { DiscordIcon, EmailIcon, LinearIcon, MicrosoftIcon, SlackIcon, TeamsIcon } from '@/components/BrandIcons';
+import { DiscordIcon, EmailIcon, LinearIcon, GitHubIcon, MicrosoftIcon, SlackIcon, TeamsIcon } from '@/components/BrandIcons';
 import { hasSourceLogo, LogoTile, SourceKindLogo } from '@/components/BrandLogo';
 import { DiscordIntegrationPanel } from '@/components/DiscordIntegrationPanel';
 import { Input } from '@/components/ui/Field';
@@ -28,6 +28,9 @@ function TileIcon({ tile, className }: { tile: CatalogueTile; className?: string
       return <TeamsIcon className={cls} />;
     case 'linear':
       return <LinearIcon className={cls} />;
+    case 'github':
+    case 'source:github':
+      return <GitHubIcon className={cls} />;
     case 'email':
       return <EmailIcon className={cls} />;
     case 'discord':
@@ -145,10 +148,10 @@ export function IntegrationCatalogue({
               <TeamsSetup result={params} card={renderCard('msteams')} />
               <RoutingAndDesign provider="msteams" />
             </>
-          ) : open.id === 'linear' ? (
+          ) : open.id === 'linear' || open.id === 'github' ? (
             <>
-              {renderCard('linear')}
-              <RoutingAndDesign provider="linear" />
+              {renderCard(open.id)}
+              <RoutingAndDesign provider={open.id} />
             </>
           ) : open.id === 'discord' ? (
             <DiscordIntegrationPanel />
@@ -166,7 +169,7 @@ export function IntegrationCatalogue({
 }
 
 /** Per-department destinations and the message design, under a chat or Linear setup. */
-function RoutingAndDesign({ provider }: { provider: 'slack' | 'msteams' | 'linear' }) {
+function RoutingAndDesign({ provider }: { provider: 'slack' | 'msteams' | 'linear' | 'github' }) {
   return (
     <div className="mt-6 space-y-6 border-t pt-5">
       <DepartmentRouting provider={provider} />

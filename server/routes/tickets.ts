@@ -34,7 +34,9 @@ import { TICKET_EDIT_PERMISSIONS } from '../permissions.ts';
 import { addTicketComment, canSeeTicket, updateTicket, type TicketPatch } from '../services/ticket-actions.ts';
 import { loadIntegration } from '../integrations/store.ts';
 import { createLinearIssue, linearTeamFor, listLinearTeams } from '../integrations/linear.ts';
+import { createGitHubIssue, githubRepoFor, listGitHubRepos } from '../integrations/github.ts';
 import { notifyUsers } from '../lib/notifications.ts';
+import { findUserById } from '../repositories/users.ts';
 import { notifyOnCall, onCallContactsForTeam } from '../services/oncall-notify.ts';
 import type { ActivityDay } from '../../shared/types.ts';
 import {
@@ -100,6 +102,8 @@ ticketsRouter.get(
       unassignedOnly: q.unassigned === 'true',
       createdFrom: optionalString(q.from, 40) ?? undefined,
       createdTo: optionalString(q.to, 40) ?? undefined,
+      resolvedFrom: optionalString(q.resolvedFrom, 40) ?? undefined,
+      resolvedTo: optionalString(q.resolvedTo, 40) ?? undefined,
       visibleTeamIds: visibleTeamIds(user),
       viewerId: user.id,
       sort: (optionalEnum(q.sort, ['newest', 'oldest', 'priority', 'due', 'updated'] as const) ?? 'newest'),
@@ -221,6 +225,18 @@ ticketsRouter.post(
      */
     const isHtml = req.body?.descriptionFormat === 'html';
 
+    // Filing for someone else, or choosing who works it, is assigning: it needs tickets.assign.
+    const askedRequester = optionalString(req.body?.requesterId, 60);
+    const askedAssignee = optionalString(req.body?.assigneeId, 60);
+    const mayAssign = can(user, 'tickets.assign');
+    if (askedRequester && askedRequester !== user.id && !mayAssign) throw forbidden('You can only raise tickets as yourself.');
+    if (askedAssignee && !mayAssign) throw forbidden('You cannot choose who a ticket is assigned to.');
+    for (const id of [askedRequester, askedAssignee]) {
+      if (id && id !== user.id && !(await findUserById(id))) throw badRequest('That person no longer exists.');
+    }
+    const requesterId = askedRequester ?? user.id;
+    const assigneeId = askedAssignee;
+
     const ticket = await createTicket(
       {
         subject: requireString(req.body?.subject, 'Subject', { max: 200 }),
@@ -228,8 +244,8 @@ ticketsRouter.post(
         description: richTextBody(req.body?.description, isHtml, 'Description') ?? '',
         descriptionFormat: isHtml ? 'html' : 'text',
         teamId: optionalString(req.body?.teamId, 60) ?? settings.defaultTeamId,
-        requesterId: optionalString(req.body?.requesterId, 60) ?? user.id,
-        assigneeId: optionalString(req.body?.assigneeId, 60),
+        requesterId,
+        assigneeId,
         priority: requireEnum(req.body?.priority ?? settings.defaultPriority, TICKET_PRIORITIES, 'Priority'),
         type: requireEnum(req.body?.type ?? 'request', TICKET_TYPES, 'Type'),
         source: requireEnum(req.body?.source ?? 'web', TICKET_SOURCES, 'Source'),
@@ -452,6 +468,63 @@ ticketsRouter.post(
   }),
 );
 
+/** The repositories a ticket could become an issue in, with the department's own preselected. */
+ticketsRouter.get(
+  '/:id/github-targets',
+  requirePermission('tickets.push_linear'),
+  asyncRoute(async (req, res) => {
+    const user = (req as AuthedRequest).user;
+    const settings = await getSettings();
+    const ticket = await findTicket(req.params.id, settings.ticketPrefix);
+    if (!ticket) throw notFound('That ticket does not exist.');
+    if (!canSeeTicket(user, ticket)) throw forbidden('You do not have access to this ticket.');
+    const record = await loadIntegration('github');
+    if (!record.enabled || !record.config.token) throw badRequest('The GitHub integration is not enabled.');
+    let repos: Array<{ id: string; name: string }> = [];
+    try {
+      repos = await listGitHubRepos(record.config.token as string);
+    } catch (error) {
+      throw badRequest((error as Error).message);
+    }
+    res.json({ repos, suggested: await githubRepoFor(record, ticket.teamId) });
+  }),
+);
+
+/** Opens a GitHub issue for the ticket and links the two. Uses the same permission as pushing to Linear. */
+ticketsRouter.post(
+  '/:id/push-to-github',
+  requirePermission('tickets.push_linear'),
+  asyncRoute(async (req, res) => {
+    const user = (req as AuthedRequest).user;
+    const settings = await getSettings();
+    const ticket = await findTicket(req.params.id, settings.ticketPrefix);
+    if (!ticket) throw notFound('That ticket does not exist.');
+    if (!canSeeTicket(user, ticket)) throw forbidden('You do not have access to this ticket.');
+    const existing = ticket.links.find((link) => link.provider === 'github');
+    if (existing) throw badRequest(`This ticket is already linked to ${existing.externalKey ?? 'a GitHub issue'}.`);
+
+    const record = await loadIntegration('github');
+    if (!record.enabled) throw badRequest('The GitHub integration is not enabled.');
+    const result = await createGitHubIssue(
+      record,
+      {
+        event: 'ticketEscalated',
+        ticket,
+        actorName: user.name,
+        headline: `Raised from ${ticket.reference}`,
+        ticketUrl: await buildTicketUrl(ticket, `${req.protocol}://${req.get('host')}`),
+      },
+      { repo: optionalString(req.body?.repo, 200) },
+    );
+    if (!result.ok) throw badRequest(result.error);
+
+    const key = `${result.repo}#${result.number}`;
+    await addLink(ticket.id, 'github', key, key, result.url);
+    await recordEvent(ticket.id, user.id, 'linked', 'github', null, key);
+    res.json({ ticket: await findTicket(ticket.id, settings.ticketPrefix) });
+  }),
+);
+
 ticketsRouter.post(
   '/:id/watch',
   asyncRoute(async (req, res) => {
@@ -476,6 +549,7 @@ ticketsRouter.delete(
     const settings = await getSettings();
     const ticket = await findTicket(req.params.id, settings.ticketPrefix);
     if (!ticket) throw notFound('That ticket does not exist.');
+    if (!canSeeTicket(user, ticket)) throw forbidden('You do not have access to this ticket.');
 
     await db.run(`DELETE FROM tickets WHERE id = ?`, [ticket.id]);
     await recordAudit({

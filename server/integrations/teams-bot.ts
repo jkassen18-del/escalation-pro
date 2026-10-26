@@ -65,6 +65,7 @@ export async function sendActivity(
 
   try {
     const response = await fetch(url, {
+      signal: AbortSignal.timeout(10_000),
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'message', ...activity }),

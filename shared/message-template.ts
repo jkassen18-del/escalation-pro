@@ -6,7 +6,7 @@
  * sample ticket for its live preview, so what is previewed is what is sent.
  */
 
-export const TEMPLATE_PROVIDERS = ['slack', 'msteams', 'linear'] as const;
+export const TEMPLATE_PROVIDERS = ['slack', 'msteams', 'linear', 'github'] as const;
 export type TemplateProvider = (typeof TEMPLATE_PROVIDERS)[number];
 
 /** The facts that can be shown as label/value pairs under the title. */
@@ -94,6 +94,15 @@ export const DEFAULT_TEMPLATES: Record<TemplateProvider, MessageTemplate> = {
     buttons: false,
     priorityColour: false,
   },
+  github: {
+    title: '[{{reference}}] {{subject}}',
+    subtitle: '',
+    fields: ['team', 'priority', 'type', 'requester'],
+    body: '{{description}}',
+    footer: 'Raised from {{ticket_link}} in {{org}}. Close this issue to resolve the ticket.',
+    buttons: false,
+    priorityColour: false,
+  },
 };
 
 const LIMITS = { title: 200, subtitle: 300, body: 2000, footer: 300 };
@@ -149,6 +158,7 @@ export const DIALECTS: Record<TemplateProvider, { link: (text: string, url: stri
   },
   msteams: { link: (text, url) => `[${text}](${url})`, escape: (text) => text },
   linear: { link: (text, url) => `[${text}](${url})`, escape: (text) => text },
+  github: { link: (text, url) => `[${text}](${url})`, escape: (text) => text },
 };
 
 /**

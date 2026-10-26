@@ -1,4 +1,6 @@
 import { db } from '../db/index.ts';
+import { badRequest } from '../lib/http.ts';
+import { assertSafeWebhookUrl } from '../integrations/url-guard.ts';
 import type { IntegrationProvider } from '../../shared/types.ts';
 
 /**
@@ -68,6 +70,27 @@ export async function findTeamRoute(
   return { provider, target: row.target, mention: row.mention };
 }
 
+/** Longest destination kept; a Workflows URL with its signature fits comfortably. */
+export const MAX_ROUTE_TARGET = 1000;
+
+/**
+ * Checks a destination before it is stored. A Teams target that is a URL is
+ * posted to on every ticket, so it must pass the same guard as any webhook
+ * (no private or metadata addresses); everything else is an id.
+ */
+export function validateRouteTarget(provider: IntegrationProvider, target: string): string {
+  const value = String(target ?? '').trim();
+  if (!value) return '';
+  if (value.length > MAX_ROUTE_TARGET) throw badRequest('That destination is too long.');
+  if (/^https?:/i.test(value)) {
+    if (provider !== 'msteams') throw badRequest('Only Microsoft Teams takes a webhook URL as a destination.');
+    return assertSafeWebhookUrl(value, 'Teams webhook URL');
+  }
+  if (provider === 'slack' && !/^[CG][A-Z0-9]{6,}$/.test(value)) throw badRequest(`"${value}" is not a Slack channel id. Pick one from the list.`);
+  if (provider === 'github' && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value)) throw badRequest(`"${value}" is not an owner/repository name.`);
+  return value;
+}
+
 export async function setTeamRoute(
   teamId: string,
   provider: IntegrationProvider,
@@ -88,6 +111,6 @@ export async function setTeamRoute(
     `INSERT INTO team_routing (team_id, provider, target, mention, updated_at) VALUES (?, ?, ?, ?, ?)
      ON CONFLICT (team_id, provider) DO UPDATE SET target = excluded.target, mention = excluded.mention,
        updated_at = excluded.updated_at`,
-    [teamId, provider, cleanTarget.slice(0, 500), cleanMention, new Date().toISOString()],
+    [teamId, provider, cleanTarget.slice(0, MAX_ROUTE_TARGET), cleanMention, new Date().toISOString()],
   );
 }

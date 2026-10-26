@@ -48,7 +48,7 @@ export async function resolveTeamsAuthor(
     const base = serviceUrl.replace(/\/+$/, '');
     const response = await fetch(
       `${base}/v3/conversations/${encodeURIComponent(conversationId)}/members/${encodeURIComponent(userId)}`,
-      { headers: { Authorization: `Bearer ${token}` } },
+      { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) },
     );
     if (!response.ok) return { userId: null, displayName };
 

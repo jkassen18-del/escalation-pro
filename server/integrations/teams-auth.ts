@@ -58,10 +58,10 @@ async function loadKeys(now: number, configUrl = OPENID_CONFIG): Promise<Jwk[]> 
   const cached = jwksCache.get(configUrl);
   if (cached && now - cached.fetchedAt < JWKS_TTL_MS) return cached.keys;
 
-  const config = (await (await fetch(configUrl)).json()) as { jwks_uri?: string };
+  const config = (await (await fetch(configUrl, { signal: AbortSignal.timeout(10_000) })).json()) as { jwks_uri?: string };
   if (!config.jwks_uri) throw new Error('Microsoft did not advertise a JWKS endpoint');
 
-  const jwks = (await (await fetch(config.jwks_uri)).json()) as { keys?: Jwk[] };
+  const jwks = (await (await fetch(config.jwks_uri, { signal: AbortSignal.timeout(10_000) })).json()) as { keys?: Jwk[] };
   const entry = { keys: jwks.keys ?? [], fetchedAt: now };
   jwksCache.set(configUrl, entry);
   return entry.keys;
@@ -87,7 +87,9 @@ export async function verifyTeamsRequest(
   serviceUrl: string | undefined,
   now = Date.now(),
 ): Promise<TeamsVerifyResult> {
-  return verifyMicrosoftJwt(authorization, appId, { serviceUrl, now });
+  // Bot Framework message tokens always come from this issuer; requiring it stops
+  // any other Microsoft-signed token addressed to this app id being replayed here.
+  return verifyMicrosoftJwt(authorization, appId, { serviceUrl, now, issuer: 'https://api.botframework.com', requireServiceUrl: true });
 }
 
 /**
@@ -101,7 +103,13 @@ export async function verifyCallingRequest(authorization: string | undefined, ap
 async function verifyMicrosoftJwt(
   authorization: string | undefined,
   appId: string,
-  { serviceUrl, now = Date.now(), configUrl = OPENID_CONFIG, issuer }: { serviceUrl?: string; now?: number; configUrl?: string; issuer?: string },
+  {
+    serviceUrl,
+    now = Date.now(),
+    configUrl = OPENID_CONFIG,
+    issuer,
+    requireServiceUrl = false,
+  }: { serviceUrl?: string; now?: number; configUrl?: string; issuer?: string; requireServiceUrl?: boolean },
 ): Promise<TeamsVerifyResult> {
   if (!appId) return { ok: false, reason: 'No Microsoft app id configured' };
 
@@ -132,7 +140,15 @@ async function verifyMicrosoftJwt(
   if (!Number.isFinite(exp) || exp < now) return { ok: false, reason: 'Token has expired' };
   if (Number.isFinite(nbf) && nbf > now + 60_000) return { ok: false, reason: 'Token is not valid yet' };
 
-  if (serviceUrl && typeof claims.serviceurl === 'string' && claims.serviceurl !== serviceUrl) {
+  /*
+   * The activity's serviceUrl is where this bot sends its own access token when
+   * it replies, so it must be the one Microsoft signed - not merely unchallenged
+   * when the claim happens to be missing.
+   */
+  if (requireServiceUrl && (!serviceUrl || typeof claims.serviceurl !== 'string')) {
+    return { ok: false, reason: 'Token does not name the service URL of this activity' };
+  }
+  if (serviceUrl && typeof claims.serviceurl === 'string' && claims.serviceurl.replace(/\/+$/, '') !== serviceUrl.replace(/\/+$/, '')) {
     return { ok: false, reason: 'Token does not match the service URL of this activity' };
   }
 
@@ -178,6 +194,7 @@ export async function getTeamsAccessToken(
   }
 
   const response = await fetch(TOKEN_ENDPOINT, {
+    signal: AbortSignal.timeout(10_000),
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({

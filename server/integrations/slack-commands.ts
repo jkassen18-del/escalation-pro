@@ -71,6 +71,7 @@ export async function slackApi<T = Record<string, unknown>>(
   payload: unknown,
 ): Promise<T & { ok: boolean; error?: string }> {
   const response = await fetch(`https://slack.com/api/${method}`, {
+    signal: AbortSignal.timeout(10_000),
     method: 'POST',
     headers: {
       Authorization: `Bearer ${botToken}`,

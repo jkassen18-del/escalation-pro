@@ -465,7 +465,7 @@ function TeamDialog({
           </div>
         )}
 
-        {team && can('teams.forms') && (
+        {team && (can('teams.manage') || can('teams.forms')) && (
           <div>
             <p className="mb-0.5 text-xs font-medium">Labels</p>
             <p className="mb-2 text-xs text-muted">Picked from on this department's tickets instead of typing free-text tags.</p>

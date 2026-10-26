@@ -107,6 +107,19 @@ function assertCanManage(actor: PublicUser, target: PublicUser): void {
 }
 
 /**
+ * Resetting a password, or changing the email or username someone signs in
+ * with, lets the actor sign in as that account. So it is refused for an
+ * account holding permissions the actor could not grant: a manager could
+ * otherwise become an "Integrations admin". Taking permissions away is still
+ * allowed - it only lowers what the account can do.
+ */
+function assertCanTakeOver(actor: PublicUser, target: PublicUser): void {
+  if (actor.id !== target.id && ungrantablePermissions(actor, target.permissions).length) {
+    throw forbidden('That account can do things you cannot, so only someone with at least its permissions can change how it signs in.');
+  }
+}
+
+/**
  * The role a request asks for: `roleId`, or the older `role` tier name, which
  * means that tier's built-in role. Undefined when neither is given.
  */
@@ -226,6 +239,7 @@ usersRouter.patch(
 
     if (req.body?.email !== undefined) {
       const email = requireString(req.body.email, 'Email', { max: 160 }).toLowerCase();
+      if (email !== target.email) assertCanTakeOver(actor, target);
       if (!isValidEmail(email)) throw badRequest('Enter a valid email address.', { email: 'Invalid' });
       if (await emailInUse(email, target.id)) throw conflict('Another account already uses that email.');
       push('email', email);
@@ -233,6 +247,7 @@ usersRouter.patch(
 
     if (req.body?.username !== undefined) {
       const username = requireString(req.body.username, 'Username', { max: 60 }).replace(/[^a-zA-Z0-9._-]/g, '');
+      if (username !== target.username) assertCanTakeOver(actor, target);
       if (await usernameInUse(username, target.id)) throw conflict('That username is already taken.');
       push('username', username);
     }
@@ -313,6 +328,7 @@ usersRouter.post(
     const target = await findUserById(req.params.id);
     if (!target) throw notFound('That user does not exist.');
     assertCanManage(actor, target);
+    assertCanTakeOver(actor, target);
 
     const generated = !req.body?.password;
     const password = generated

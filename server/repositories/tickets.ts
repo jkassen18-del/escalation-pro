@@ -130,6 +130,9 @@ export interface TicketQuery {
   unassignedOnly?: boolean;
   createdFrom?: string;
   createdTo?: string;
+  /** Resolved within [resolvedFrom, resolvedTo). */
+  resolvedFrom?: string;
+  resolvedTo?: string;
   /** Restricts results to these teams plus tickets the user owns or raised. */
   visibleTeamIds?: string[] | null;
   viewerId?: string;
@@ -172,6 +175,14 @@ function buildWhere(query: TicketQuery): { clause: string; params: Array<string 
   if (query.overdueOnly) {
     conditions.push(`t.due_at IS NOT NULL AND t.due_at < ? AND t.status NOT IN ('resolved', 'closed')`);
     params.push(new Date().toISOString());
+  }
+  if (query.resolvedFrom) {
+    conditions.push(`t.resolved_at >= ?`);
+    params.push(query.resolvedFrom);
+  }
+  if (query.resolvedTo) {
+    conditions.push(`t.resolved_at < ?`);
+    params.push(query.resolvedTo);
   }
   if (query.createdFrom) {
     conditions.push(`t.created_at >= ?`);

@@ -1,3 +1,4 @@
+import { ApiMonitorEditor } from '@/components/ops/ApiMonitorEditor';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Activity, BellRing, MoreHorizontal, Pause, Play, Plus, RefreshCw, Send, Trash2, Webhook } from 'lucide-react';
@@ -11,7 +12,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState, ErrorPane, LoadingPane } from '@/components/ui/Feedback';
-import { Checkbox, Field, Input, Select, SegmentedControl, Textarea } from '@/components/ui/Field';
+import { Checkbox, Field, Input, Select, SegmentedControl } from '@/components/ui/Field';
 import { Menu } from '@/components/ui/Menu';
 import { ConfirmDialog, Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
@@ -328,31 +329,12 @@ const HEARTBEAT_PERIODS = [
 ];
 
 const TARGET_LABELS: Partial<Record<MonitorKind, { label: string; placeholder: string; hint?: string }>> = {
-  http: { label: 'URL', placeholder: 'https://shop.example.com/health' },
+  http: { label: 'URL', placeholder: 'https://api.example.com/v1/health', hint: 'Query parameters can go here or below. Or paste a cURL command below.' },
   tcp: { label: 'Host and port', placeholder: 'db.internal:5432' },
   ping: { label: 'Host', placeholder: 'gateway.internal or 10.0.0.1' },
   dns: { label: 'Hostname', placeholder: 'example.com' },
   ssl: { label: 'Hostname', placeholder: 'example.com or example.com:8443', hint: 'The certificate served on port 443 unless you give another.' },
 };
-
-function headersToText(headers: Record<string, string> | undefined): string {
-  return Object.entries(headers ?? {})
-    .map(([key, value]) => `${key}: ${value}`)
-    .join('\n');
-}
-
-function textToHeaders(text: string): Record<string, string> | undefined {
-  const entries = text
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const index = line.indexOf(':');
-      return index > 0 ? ([line.slice(0, index).trim(), line.slice(index + 1).trim()] as const) : null;
-    })
-    .filter((entry): entry is readonly [string, string] => Boolean(entry));
-  return entries.length ? Object.fromEntries(entries) : undefined;
-}
 
 function MonitorDialog({
   monitor,
@@ -384,7 +366,6 @@ function MonitorDialog({
           enabled: true,
         },
   );
-  const [headersText, setHeadersText] = useState(headersToText(monitor?.config.headers));
   const [databases, setDatabases] = useState<BackupJob[] | null>(null);
   const [databaseError, setDatabaseError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -417,7 +398,7 @@ function MonitorDialog({
     const input: MonitorInput = {
       ...form,
       target: form.kind === 'heartbeat' || form.kind === 'database' ? '' : form.target.trim(),
-      config: { ...form.config, headers: form.kind === 'http' ? textToHeaders(headersText) : undefined },
+      config: form.kind === 'http' ? form.config : { ...form.config, headers: undefined },
     };
     try {
       const result = monitor ? await opsApi.monitors.update(monitor.id, input) : await opsApi.monitors.create(input);
@@ -476,47 +457,12 @@ function MonitorDialog({
         )}
 
         {form.kind === 'http' && (
-          <div className="space-y-4 rounded-md border p-3 surface-2">
-            <div className="grid gap-4 sm:grid-cols-3">
-              <Field label="Method">
-                <Select value={form.config.method ?? 'GET'} onChange={(e) => setConfig('method', e.target.value as MonitorConfig['method'])}>
-                  {['GET', 'HEAD', 'POST', 'PUT'].map((m) => (
-                    <option key={m}>{m}</option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label="Expected status" hint="e.g. 200-299 or 200,204">
-                <Input value={form.config.expectedStatus ?? ''} onChange={(e) => setConfig('expectedStatus', e.target.value || undefined)} placeholder="200-399" />
-              </Field>
-              <Field label="Slower than (ms) fails">
-                <Input
-                  type="number"
-                  min={0}
-                  value={form.config.maxResponseMs ?? ''}
-                  onChange={(e) => setConfig('maxResponseMs', e.target.value ? Number(e.target.value) : undefined)}
-                  placeholder="No limit"
-                />
-              </Field>
-            </div>
-            <Field label="Response must contain" hint="Optional text the page has to include.">
-              <Input value={form.config.keyword ?? ''} onChange={(e) => setConfig('keyword', e.target.value || undefined)} placeholder='"status":"ok"' />
-            </Field>
-            {form.config.keyword && (
-              <Checkbox
-                label="Fail when the text is present instead"
-                checked={Boolean(form.config.keywordInverted)}
-                onChange={(e) => setConfig('keywordInverted', e.target.checked)}
-              />
-            )}
-            <Field label="Request headers" hint="One per line, as Name: value. Use this for bearer tokens or API keys.">
-              <Textarea rows={2} value={headersText} onChange={(e) => setHeadersText(e.target.value)} placeholder="Authorization: Bearer …" className="font-mono text-xs" />
-            </Field>
-            {(form.config.method === 'POST' || form.config.method === 'PUT') && (
-              <Field label="Request body">
-                <Textarea rows={3} value={form.config.body ?? ''} onChange={(e) => setConfig('body', e.target.value || undefined)} className="font-mono text-xs" />
-              </Field>
-            )}
-          </div>
+          <ApiMonitorEditor
+            target={form.target}
+            config={form.config}
+            monitorId={monitor?.id}
+            onChange={(next) => setForm((current) => ({ ...current, ...(next.target !== undefined ? { target: next.target } : {}), config: next.config }))}
+          />
         )}
 
         {form.kind === 'dns' && (
@@ -731,6 +677,8 @@ export const SOURCE_HINTS: Record<AlertSourceKind, string> = {
   azure_monitor: 'In an Azure Monitor action group, add a Webhook action with this URL and turn on "Enable the common alert schema". Resolved alerts close the incident.',
   cloudflare: 'In Cloudflare: Notifications → Destinations → Webhooks → Create, paste this URL, then attach it to the notifications you want.',
   jenkins: 'Use the Notification plugin (JSON, HTTP) or a post-build "curl -X POST -H \'Content-Type: application/json\' -d \'{"name":"$JOB_NAME","build":{"status":"FAILURE"}}\'" step. A SUCCESS build resolves the incident.',
+  github:
+    'In the repository: Settings → Webhooks → Add webhook, this URL, content type application/json, events: Workflow runs, Deployment statuses and the security alerts you want. A failed run on the default branch opens an incident; the next green run resolves it.',
   grafana: 'Add a webhook contact point (Grafana) or a webhook_configs receiver (Prometheus Alertmanager) pointing at this URL. Each alert in a batch is tracked separately by fingerprint.',
   digitalocean: 'DigitalOcean has no native webhook for every product; use a Monitoring alert policy with a Slack-compatible webhook or a small forwarder posting JSON here.',
   entra_id: 'Forward Microsoft 365 service health or Entra ID alerts (e.g. via a Logic App or Power Automate flow) as JSON to this URL.',

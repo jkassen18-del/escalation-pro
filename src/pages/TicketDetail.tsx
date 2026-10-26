@@ -68,7 +68,9 @@ export function TicketDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [escalateOpen, setEscalateOpen] = useState(false);
   const [linearOpen, setLinearOpen] = useState(false);
+  const [githubOpen, setGithubOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [busy, setBusy] = useState(false);
   const location = useLocation();
   // Set by the new-ticket forms, so the on-call prompt shows once, right after raising it.
@@ -115,8 +117,10 @@ export function TicketDetailPage() {
     }
   };
 
-  if (loading) return <LoadingPane label="Loading ticket" />;
-  if (error) return <ErrorPane message={error} retry={load} />;
+  // Only the first load blanks the page: later refreshes happen behind it, so a
+  // reply being typed, or files being attached, survive a label or status change.
+  if (loading && !ticket) return <LoadingPane label="Loading ticket" />;
+  if (error && !ticket) return <ErrorPane message={error} retry={load} />;
   if (!ticket) return null;
 
   const isTerminal = TERMINAL_STATUSES.includes(ticket.status);
@@ -127,6 +131,7 @@ export function TicketDetailPage() {
   const canResolve = can(statusPermission(ticket.status, isTerminal ? 'open' : 'resolved'));
   const canCloseOrReopen = can(statusPermission(ticket.status, ticket.status === 'closed' ? 'open' : 'closed'));
   const linearLink = ticket.links.find((link) => link.provider === 'linear');
+  const githubLink = ticket.links.find((link) => link.provider === 'github');
 
   return (
     <div className="mx-auto max-w-[80rem]">
@@ -176,8 +181,12 @@ export function TicketDetailPage() {
               variant="ghost"
               size="sm"
               onClick={async () => {
-                await api.tickets.watch(ticket.id, !watching);
-                await load();
+                try {
+                  await api.tickets.watch(ticket.id, !watching);
+                  await load();
+                } catch (caught) {
+                  toast.error(watching ? 'Could not stop watching' : 'Could not watch', caught instanceof ApiError ? caught.message : undefined);
+                }
               }}
             >
               {watching ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
@@ -222,6 +231,9 @@ export function TicketDetailPage() {
                         onSelect: () => setLinearOpen(true),
                       },
                     ]
+                  : []),
+                ...(can('tickets.push_linear') && !githubLink
+                  ? [{ label: 'Create GitHub issue', icon: ArrowUpRight, onSelect: () => setGithubOpen(true) }]
                   : []),
                 ...(canCloseOrReopen
                   ? [
@@ -301,6 +313,19 @@ export function TicketDetailPage() {
         }}
       />
 
+      <LinearPushDialog
+        kind="github"
+        open={githubOpen}
+        ticketId={ticket.id}
+        teamName={ticket.teamName}
+        onClose={() => setGithubOpen(false)}
+        onPushed={async () => {
+          setGithubOpen(false);
+          await load();
+          toast.success('GitHub issue created.');
+        }}
+      />
+
       <EscalateDialog
         open={escalateOpen}
         onClose={() => setEscalateOpen(false)}
@@ -330,10 +355,17 @@ export function TicketDetailPage() {
         message={`${ticket.reference} and its entire history will be permanently removed. This cannot be undone.`}
         confirmLabel="Delete permanently"
         destructive
+        loading={deleting}
         onConfirm={async () => {
-          await api.tickets.remove(ticket.id);
-          toast.success('Ticket deleted.');
-          navigate('/tickets');
+          setDeleting(true);
+          try {
+            await api.tickets.remove(ticket.id);
+            toast.success('Ticket deleted.');
+            navigate('/tickets');
+          } catch (caught) {
+            toast.error('Could not delete', caught instanceof ApiError ? caught.message : undefined);
+            setDeleting(false);
+          }
         }}
       />
     </div>

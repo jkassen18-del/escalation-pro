@@ -12,12 +12,14 @@ import { QuickTicketGrid } from '@/components/quick/QuickTicketGrid';
 import { LabelPicker, useTeamLabels } from '@/components/Labels';
 import { TICKET_PRIORITIES, TICKET_TYPES, type Team } from '@shared/types';
 import { useDocumentTitle } from '@/state/branding';
+import { useAuth } from '@/state/auth';
 import type { TeamFormField } from '@shared/types';
 
 export function NewTicketPage() {
   useDocumentTitle('New ticket');
   const navigate = useNavigate();
   const toast = useToast();
+  const { can } = useAuth();
 
   const [teams, setTeams] = useState<Team[]>([]);
   const [directory, setDirectory] = useState<Awaited<ReturnType<typeof api.users.directory>>['users']>([]);
@@ -96,7 +98,7 @@ export function NewTicketPage() {
         // The editor always produces HTML; the server decides what to store.
         descriptionFormat: 'html',
         teamId: form.teamId || null,
-        assigneeId: form.assigneeId || null,
+        assigneeId: can('tickets.assign') ? form.assigneeId || null : null,
         priority: form.priority,
         customFields: customValues,
         type: form.type,
@@ -161,7 +163,15 @@ export function NewTicketPage() {
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Team" htmlFor="teamId" hint={selectedTeam?.description ?? undefined}>
-            <Select id="teamId" value={form.teamId} onChange={set('teamId')}>
+            <Select
+              id="teamId"
+              value={form.teamId}
+              onChange={(event) => {
+                // The old team's assignee and labels do not belong to the new one.
+                setForm((current) => ({ ...current, teamId: event.target.value, assigneeId: '' }));
+                setTags([]);
+              }}
+            >
               <option value="">No team</option>
               {teams.map((team) => (
                 <option key={team.id} value={team.id}>
@@ -171,6 +181,7 @@ export function NewTicketPage() {
             </Select>
           </Field>
 
+          {can('tickets.assign') && (
           <Field
             label="Assignee"
             htmlFor="assigneeId"
@@ -189,6 +200,7 @@ export function NewTicketPage() {
               ))}
             </Select>
           </Field>
+          )}
 
           <Field label="Priority" htmlFor="priority" hint="Urgent and high shorten the SLA clock.">
             <Select id="priority" value={form.priority} onChange={set('priority')}>

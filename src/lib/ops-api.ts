@@ -106,6 +106,8 @@ export const opsApi = {
     update: (id: string, input: MonitorInput) => put<{ monitor: Monitor }>(`/monitors/${id}`, input),
     remove: (id: string) => del(`/monitors/${id}`),
     check: (id: string) => post<{ monitor: Monitor; checks: MonitorCheck[] }>(`/monitors/${id}/check`),
+    tryRequest: (body: { target: string; config: Monitor['config']; monitorId?: string }) =>
+      post<{ result: import('@shared/ops').ApiTryResult }>('/monitors/try', body),
   },
 
   alerts: {

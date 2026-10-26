@@ -123,6 +123,9 @@ attachmentsRouter.post(
       // No-op on disk; moves the bytes into the database when there is no
       // persistent filesystem to keep them on.
       await putAttachment(attachmentId, file.filename, await fs.promises.readFile(file.path));
+      // In database mode multer wrote to a temp directory, not the uploads folder;
+      // remove that copy here or every upload is left behind in /tmp.
+      if (storeMode() === 'database') await fs.promises.rm(file.path, { force: true }).catch(() => undefined);
       await recordEvent(ticket.id, user.id, 'attached', 'attachment', null, file.originalname);
     }
 

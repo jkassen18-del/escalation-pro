@@ -149,14 +149,33 @@ export async function acknowledgePage(pageId: string, user: Pick<PublicUser, 'id
   return 'acknowledged';
 }
 
+/**
+ * One page is worked on by one caller at a time. The tick, "Escalate" on the
+ * web, an SMS reply and a key press in a call can all arrive together; run in
+ * parallel, each would see the same undelivered level and notify it again, or
+ * advance it twice.
+ */
+const pageLocks = new Map<string, Promise<unknown>>();
+function withPageLock<T>(pageId: string, fn: () => Promise<T>): Promise<T> {
+  const previous = pageLocks.get(pageId) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(fn);
+  pageLocks.set(pageId, next);
+  void next.finally(() => {
+    if (pageLocks.get(pageId) === next) pageLocks.delete(pageId);
+  }).catch(() => undefined);
+  return next;
+}
+
 /** Skip the wait: move to the next level now. */
-export async function escalateNow(pageId: string, actorName: string): Promise<boolean> {
-  const page = await loadPageRow(pageId);
-  if (!page || page.status !== 'triggered') return false;
-  await addTimelineComment(page.ticket_id, `${actorName} escalated to the next level.`);
-  await advanceLevel(page);
-  await processPage(pageId);
-  return true;
+export function escalateNow(pageId: string, actorName: string): Promise<boolean> {
+  return withPageLock(pageId, async () => {
+    const page = await loadPageRow(pageId);
+    if (!page || page.status !== 'triggered') return false;
+    await addTimelineComment(page.ticket_id, `${actorName} escalated to the next level.`);
+    await advanceLevel(page);
+    await processPageUnlocked(pageId);
+    return true;
+  });
 }
 
 async function advanceLevel(page: PageRow): Promise<void> {
@@ -313,7 +332,11 @@ async function deliver(
   }
 }
 
-export async function processPage(pageId: string): Promise<void> {
+export function processPage(pageId: string): Promise<void> {
+  return withPageLock(pageId, () => processPageUnlocked(pageId));
+}
+
+async function processPageUnlocked(pageId: string): Promise<void> {
   const page = await loadPageRow(pageId);
   if (!page || page.status !== 'triggered') return;
 
@@ -336,7 +359,7 @@ export async function processPage(pageId: string): Promise<void> {
   if (now - levelStart >= level.delayMins * 60_000) {
     await advanceLevel(page);
     // The next level starts right away.
-    return processPage(pageId);
+    return processPageUnlocked(pageId);
   }
 
   const telephony = await loadTelephony();

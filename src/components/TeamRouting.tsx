@@ -10,6 +10,7 @@ const PROVIDERS: Array<{ provider: RoutedProvider; label: string }> = [
   { provider: 'slack', label: 'Slack channel' },
   { provider: 'msteams', label: 'Teams channel' },
   { provider: 'linear', label: 'Linear team' },
+  { provider: 'github', label: 'GitHub repository' },
 ];
 
 /**
@@ -26,8 +27,10 @@ export function TeamRouting({ teamId, teamName }: { teamId: string; teamName: st
     slack: { target: '', mention: '' },
     msteams: { target: '', mention: '' },
     linear: { target: '', mention: '' },
+    github: { target: '', mention: '' },
   });
   const [loading, setLoading] = useState(true);
+  const [initial, setInitial] = useState<typeof draft | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -50,6 +53,7 @@ export function TeamRouting({ teamId, teamName }: { teamId: string; teamName: st
       });
       setViews(next);
       setDraft(nextDraft);
+      setInitial(nextDraft);
       setLoading(false);
     });
     return () => {
@@ -69,19 +73,23 @@ export function TeamRouting({ teamId, teamName }: { teamId: string; teamName: st
 
   const save = async () => {
     setSaving(true);
-    try {
-      for (const { provider } of PROVIDERS) {
-        if (!views[provider]) continue;
+    // Only what changed is sent, and each app on its own: an old Slack value the
+    // server now refuses must not stop the Teams and Linear choices saving.
+    const changed = PROVIDERS.filter(({ provider }) => views[provider] && JSON.stringify(draft[provider]) !== JSON.stringify(initial?.[provider]));
+    const failed: string[] = [];
+    for (const { provider, label } of changed) {
+      try {
         await api.integrations.saveRouting(provider, {
           departments: [{ teamId, target: draft[provider].target, mention: provider === 'slack' ? draft[provider].mention || null : undefined }],
         });
+        setInitial((current) => (current ? { ...current, [provider]: draft[provider] } : current));
+      } catch (error) {
+        failed.push(`${label}: ${error instanceof ApiError ? error.message : 'could not save'}`);
       }
-      toast.success(`Saved where ${teamName} tickets go.`);
-    } catch (error) {
-      toast.error('Could not save', error instanceof ApiError ? error.message : undefined);
-    } finally {
-      setSaving(false);
     }
+    setSaving(false);
+    if (failed.length) toast.error('Some of it was not saved', failed.join(' · '));
+    else if (changed.length) toast.success(`Saved where ${teamName} tickets go.`);
   };
 
   const set = (provider: RoutedProvider, patch: Partial<{ target: string; mention: string }>) =>
@@ -112,7 +120,12 @@ export function TeamRouting({ teamId, teamName }: { teamId: string; teamName: st
                   className="font-mono text-xs"
                 />
               ) : (
-                <Select value={value} onChange={(event) => set(provider, { target: event.target.value })} disabled={!view.destinations.length}>
+                <Select
+                  value={value}
+                  onChange={(event) => set(provider, { target: event.target.value })}
+                  // Left usable while an unrecognised old value is set, so it can be cleared.
+                  disabled={!view.destinations.length && !value}
+                >
                   <option value="">Everything else</option>
                   {view.destinations.map((destination) => (
                     <option key={destination.id} value={destination.id}>

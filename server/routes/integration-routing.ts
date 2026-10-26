@@ -3,11 +3,12 @@ import { db } from '../db/index.ts';
 import { clientIp, recordAudit } from '../lib/audit.ts';
 import { asyncRoute, badRequest, requireEnum } from '../lib/http.ts';
 import type { AuthedRequest } from '../middleware/auth.ts';
-import { listTeamRoutes, setTeamRoute } from '../repositories/team-routing.ts';
+import { listTeamRoutes, setTeamRoute, validateRouteTarget } from '../repositories/team-routing.ts';
 import { listConversations, findConversation } from '../repositories/teams-conversations.ts';
 import { loadIntegration, saveIntegration } from '../integrations/store.ts';
 import { listSlackChannels } from '../integrations/slack-install.ts';
 import { listLinearTeams } from '../integrations/linear.ts';
+import { listGitHubRepos } from '../integrations/github.ts';
 import { senderName, postJson } from '../integrations/types.ts';
 import { DEFAULT_TEMPLATES, TEMPLATE_PROVIDERS, normaliseTemplate, type TemplateProvider } from '../../shared/message-template.ts';
 import type { IntegrationProvider } from '../../shared/types.ts';
@@ -20,7 +21,7 @@ import type { IntegrationProvider } from '../../shared/types.ts';
  */
 export const integrationRoutingRouter: Router = Router();
 
-const ROUTED = ['slack', 'msteams', 'linear'] as const;
+const ROUTED = ['slack', 'msteams', 'linear', 'github'] as const;
 type Routed = (typeof ROUTED)[number];
 
 export interface Destination {
@@ -111,6 +112,15 @@ async function view(provider: Routed): Promise<RoutingView> {
     };
   }
 
+  if (provider === 'github') {
+    if (!config.token) return { ...base, kind: 'pick', fallback: config.repo ?? '', destinations: [], notice: 'Add a GitHub token above first.' };
+    try {
+      return { ...base, kind: 'pick', fallback: config.repo ?? '', destinations: await listGitHubRepos(config.token), notice: null };
+    } catch (error) {
+      return { ...base, kind: 'pick', fallback: config.repo ?? '', destinations: [], notice: `Could not list repositories: ${(error as Error).message}` };
+    }
+  }
+
   if (!config.apiKey) return { ...base, kind: 'pick', fallback: config.teamId ?? '', destinations: [], notice: 'Add a Linear API key first.' };
   try {
     const teams = await listLinearTeams(config.apiKey);
@@ -123,18 +133,8 @@ async function view(provider: Routed): Promise<RoutingView> {
 function validTarget(provider: Routed, kind: RoutingView['kind'], target: string): string {
   const value = target.trim();
   if (!value || value === 'none') return value;
-  if (provider === 'slack' && !/^[CG][A-Z0-9]{6,}$/.test(value)) throw badRequest(`"${value}" is not a Slack channel. Pick one from the list.`);
-  if (kind === 'url') {
-    let url: URL;
-    try {
-      url = new URL(value);
-    } catch {
-      throw badRequest('A Teams webhook must be a full https:// address.');
-    }
-    if (url.protocol !== 'https:') throw badRequest('A Teams webhook must be a full https:// address.');
-  }
-  if (value.length > 1000) throw badRequest('That destination is too long.');
-  return value;
+  if (kind === 'url' && !/^https:\/\//i.test(value)) throw badRequest('A Teams webhook must be a full https:// address.');
+  return validateRouteTarget(provider as IntegrationProvider, value);
 }
 
 async function audit(req: Request, action: string, summary: string) {
@@ -160,7 +160,9 @@ integrationRoutingRouter.put(
     for (const entry of submitted) {
       const teamId = String(entry.teamId ?? '');
       if (!known.has(teamId)) continue;
-      let target = validTarget(provider, current.kind, String(entry.target ?? ''));
+      const submittedTarget = String(entry.target ?? '').trim();
+      // A value saved before these checks existed (#support) is left alone; only new values are checked.
+      let target = submittedTarget === known.get(teamId)!.target ? submittedTarget : validTarget(provider, current.kind, submittedTarget);
       if (target === 'none') target = '';
       if (provider === 'msteams' && current.kind === 'pick' && target && !(await findConversation(target))) {
         throw badRequest('That Teams channel is not one the bot has been added to.');
@@ -171,14 +173,14 @@ integrationRoutingRouter.put(
 
     if (typeof req.body?.fallback === 'string') {
       const fallback = validTarget(provider, current.kind, req.body.fallback);
-      const key = provider === 'slack' ? 'channel' : provider === 'linear' ? 'teamId' : current.kind === 'url' ? 'webhookUrl' : 'defaultConversationId';
+      const key = provider === 'slack' ? 'channel' : provider === 'linear' ? 'teamId' : provider === 'github' ? 'repo' : current.kind === 'url' ? 'webhookUrl' : 'defaultConversationId';
       // Slack and Linear store "don't post" as empty; Teams bot needs 'none', since empty there means "last active channel".
       const stored = fallback === 'none' && key !== 'defaultConversationId' ? '' : fallback;
       if (key === 'webhookUrl' && !stored) throw badRequest('Webhook mode needs a default webhook URL; switch to the bot to leave some departments out.');
       await saveIntegration(provider, { config: { [key]: stored } });
     }
 
-    await audit(req, 'routing_updated', `Updated where each department's tickets go in ${provider === 'msteams' ? 'Microsoft Teams' : provider === 'slack' ? 'Slack' : 'Linear'}`);
+    await audit(req, 'routing_updated', `Updated where each department's tickets go in ${{ msteams: 'Microsoft Teams', slack: 'Slack', linear: 'Linear', github: 'GitHub' }[provider]}`);
     res.json(await view(provider));
   }),
 );
@@ -214,6 +216,7 @@ integrationRoutingRouter.post(
       try {
         if (provider === 'slack') {
           const response = await fetch('https://slack.com/api/chat.postMessage', {
+            signal: AbortSignal.timeout(10_000),
             method: 'POST',
             headers: { Authorization: `Bearer ${config.botToken}`, 'Content-Type': 'application/json; charset=utf-8' },
             body: JSON.stringify({ channel: target, text }),
@@ -270,7 +273,7 @@ integrationRoutingRouter.put(
     // `null` restores the default design.
     const template = req.body?.template === null ? null : normaliseTemplate(provider, req.body?.template);
     await saveIntegration(provider, { config: { messageTemplate: template } });
-    await audit(req, 'message_template_updated', `${template ? 'Changed' : 'Reset'} how ${provider === 'msteams' ? 'Microsoft Teams' : provider === 'slack' ? 'Slack' : 'Linear'} messages look`);
+    await audit(req, 'message_template_updated', `${template ? 'Changed' : 'Reset'} how ${{ msteams: 'Microsoft Teams', slack: 'Slack', linear: 'Linear', github: 'GitHub' }[provider]} messages look`);
     res.json({ template: normaliseTemplate(provider, template), defaults: DEFAULT_TEMPLATES[provider] });
   }),
 );

@@ -1,5 +1,5 @@
 import express, { Router, type NextFunction, type Request, type Response } from 'express';
-import { db } from '../db/index.ts';
+import { db, parseJson } from '../db/index.ts';
 import { clientIp, recordAudit, type AuditInput } from '../lib/audit.ts';
 import { asyncRoute, badRequest, forbidden, notFound, optionalString, requireString } from '../lib/http.ts';
 import { randomId } from '../lib/crypto.ts';
@@ -8,7 +8,7 @@ import { getSettings } from '../repositories/settings.ts';
 import { findTicket } from '../repositories/tickets.ts';
 import { findTeamById } from '../repositories/teams.ts';
 import { TERMINAL_STATUSES } from '../../shared/types.ts';
-import { SEVERITIES, STATUS_UPDATE_STATES, type Severity, type StatusUpdateState } from '../../shared/ops.ts';
+import { SEVERITIES, STATUS_UPDATE_STATES, type MonitorConfig, type Severity, type StatusUpdateState } from '../../shared/ops.ts';
 import { ingestSignal, listAlerts } from '../ops/alerts.ts';
 import {
   activeOccurrences,
@@ -25,6 +25,7 @@ import {
 import { deleteJob, getJob, jobConnection, listJobs, listRuns, openDecryptedBackup, runBackup, saveJob, validateJob } from '../ops/backups.ts';
 import { canActOnPage, canManageAnyOnCall, canManageOnCallFor, filterToVisibleTickets, redactMonitor, redactSource } from '../ops/access.ts';
 import { checkDatabaseHealth } from '../ops/db-health.ts';
+import { callApi, sealAuth, validateApiConfig } from '../ops/api-probe.ts';
 import { checkMonitorNow, deleteMonitor, getMonitor, listMonitors, monitorChecks, monitorDays, saveMonitor, validateMonitor } from '../ops/monitors.ts';
 import {
   addOverride,
@@ -136,6 +137,25 @@ opsRouter.delete(
     await deleteMonitor(monitor.id);
     await audit(req, { entityType: 'monitor', entityId: monitor.id, action: 'monitor_deleted', summary: `Deleted monitor "${monitor.name}"` });
     res.status(204).end();
+  }),
+);
+
+/**
+ * "Send request" in the editor: runs an API call as configured, unsaved, and
+ * returns the real response so the person can pick what to monitor from it.
+ * With monitorId, credentials left blank in the editor use the stored ones.
+ */
+opsRouter.post(
+  '/monitors/try',
+  requirePermission('monitors.manage'),
+  asyncRoute(async (req, res) => {
+    const target = String(req.body?.target ?? '').trim();
+    if (!/^https?:\/\//i.test(target)) throw badRequest('Give a URL starting with http:// or https://', { target: 'Must be a URL' });
+    const config = validateApiConfig((req.body?.config ?? {}) as MonitorConfig);
+    const monitorId = optionalString(req.body?.monitorId, 60);
+    const stored = monitorId ? await db.get<{ config: string }>(`SELECT config FROM monitors WHERE id = ?`, [monitorId]) : undefined;
+    const auth = sealAuth(config.auth, stored ? parseJson<MonitorConfig>(stored.config, {}).auth : undefined);
+    res.json({ result: await callApi(target, { ...config, auth }) });
   }),
 );
 

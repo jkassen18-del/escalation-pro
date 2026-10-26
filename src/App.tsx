@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useParams } from 'react-router-dom';
 import { useAuth } from '@/state/auth';
 import { AppShell } from '@/components/AppShell';
 import { Spinner } from '@/components/ui/Feedback';
@@ -55,7 +55,7 @@ export function App() {
         <Route path="/tickets/new" element={<Guard permission="tickets.create"><NewTicketPage /></Guard>} />
         <Route path="/tickets/quick/:id" element={<Guard permission="tickets.create"><QuickTicketPage /></Guard>} />
         <Route path="/quick-tickets" element={<Guard permission="templates.manage"><QuickTicketsPage /></Guard>} />
-        <Route path="/tickets/:id" element={<TicketDetailPage />} />
+        <Route path="/tickets/:id" element={<KeyedTicketDetail />} />
         <Route path="/people" element={<Guard permission="users.view"><PeoplePage /></Guard>} />
         <Route path="/teams" element={<Guard permission={['teams.manage', 'teams.forms', 'teams.links']}><TeamsPage /></Guard>} />
         <Route path="/reports" element={<Guard permission="reports.view"><ReportsPage /></Guard>} />
@@ -79,6 +79,16 @@ export function App() {
       </Routes>
     </AppShell>
   );
+}
+
+/**
+ * A fresh ticket page per ticket: moving from one ticket to another (a
+ * notification, a link) must not carry over the last one's state, banners or
+ * an answer that arrives late.
+ */
+function KeyedTicketDetail() {
+  const { id } = useParams();
+  return <TicketDetailPage key={id} />;
 }
 
 /** Route-level permission check. The API enforces the same rules server-side. */
