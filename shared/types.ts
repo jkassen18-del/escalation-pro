@@ -473,6 +473,7 @@ export const PERMISSIONS = [
   'ops.view',
   'monitors.manage',
   'alerts.routing',
+  'flows.manage',
   'maintenance.manage',
   'oncall.manage',
   'oncall.manage_own_department',

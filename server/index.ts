@@ -33,6 +33,7 @@ import { labelsRouter } from './routes/labels.ts';
 import { shiftsRouter } from './routes/shifts.ts';
 import { approvalsRouter } from './routes/approvals.ts';
 import { connectionsRouter } from './routes/connections.ts';
+import { flowsRouter } from './routes/flows.ts';
 import { webhooksRouter } from './routes/webhooks.ts';
 import { cronRouter } from './routes/cron.ts';
 import { opsRouter } from './routes/ops.ts';
@@ -212,6 +213,7 @@ export async function createApp() {
   app.use('/api/shifts', shiftsRouter);
   app.use('/api/approvals', approvalsRouter);
   app.use('/api/connections', connectionsRouter);
+  app.use('/api/flows', flowsRouter);
   app.use('/api/ops', opsRouter);
   app.use('/api/discord', discordRouter);
   app.use('/api/connector', connectorRouter);

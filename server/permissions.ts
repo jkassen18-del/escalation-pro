@@ -81,6 +81,7 @@ export const PERMISSION_GROUPS: Array<{ label: string; permissions: PermissionIn
       { key: 'ops.view', label: 'View operations', hint: 'Monitors, alerts, maintenance, on-call schedules and status pages', everyone: true },
       { key: 'monitors.manage', label: 'Manage monitoring', hint: 'Create monitors and alert sources' },
       { key: 'alerts.routing', label: 'Manage alert routing', hint: 'Rules that send alerts to departments and policies', impliedBy: 'monitors.manage' },
+      { key: 'flows.manage', label: 'Build flows', hint: 'Draw alert and escalation flows for any department (department managers can build their own)', impliedBy: 'alerts.routing' },
       { key: 'maintenance.manage', label: 'Manage maintenance', hint: 'Schedule, extend and end maintenance windows', impliedBy: 'monitors.manage' },
       { key: 'oncall.manage', label: 'Manage all on-call', hint: 'Every department’s schedules and overrides, escalation policies and telephony' },
       { key: 'oncall.manage_own_department', label: 'Manage own department’s on-call', hint: 'Schedules, rosters and overrides for the departments they belong to' },

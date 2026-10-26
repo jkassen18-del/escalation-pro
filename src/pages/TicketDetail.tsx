@@ -613,6 +613,14 @@ function describeEvent(event: TicketDetailType['events'][number]): string {
       return `acknowledged the page via ${event.toValue}`;
     case 'oncall_notified':
       return `notified on-call (${event.toValue})`;
+    case 'approval_requested':
+      return `asked for approval: ${event.toValue}`;
+    case 'approval_approved':
+      return `approved "${event.fromValue}"${event.toValue ? `: ${event.toValue}` : ''}`;
+    case 'approval_rejected':
+      return `rejected "${event.fromValue}"${event.toValue ? `: ${event.toValue}` : ''}`;
+    case 'approval_cancelled':
+      return `withdrew the approval request "${event.fromValue}"`;
     case 'alert_grouped':
       return `grouped another alert into this incident: ${event.toValue}`;
     case 'routed':

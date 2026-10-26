@@ -27,6 +27,9 @@ import type {
 import type { MessageTemplate, TemplateProvider } from '@shared/message-template';
 import type { ApprovalMode, ApprovalRule, TicketApproval } from '@shared/approvals';
 import type { Connection, ConnectionKind, ConnectionRequest } from '@shared/connections';
+import type { Flow, FlowRun } from '@shared/flows';
+
+export type FlowInput = Pick<Flow, 'teamId' | 'name' | 'description' | 'enabled' | 'nodes' | 'edges'>;
 import type { ApiTryResult } from '@shared/ops';
 import type { ShiftException, ShiftPattern } from '@shared/shifts';
 
@@ -218,6 +221,15 @@ export const api = {
     removeException: (teamId: string, id: string) => del<{ schedule: DepartmentSchedule }>(`/shifts/${teamId}/exceptions/${id}`),
     handoverPreview: (teamId: string) => get<{ text: string }>(`/shifts/${teamId}/handover/preview`),
     sendHandover: (teamId: string) => post<{ deliveries: Array<{ channel: string; ok: boolean; detail: string }> }>(`/shifts/${teamId}/handover/send`, {}),
+  },
+
+  flows: {
+    list: (teamId?: string) => get<{ flows: Flow[]; canAddShared: boolean }>(`/flows${toQuery({ teamId })}`),
+    get: (id: string) => get<{ flow: Flow; runs: FlowRun[] }>(`/flows/${id}`),
+    create: (body: FlowInput) => post<{ flow: Flow }>('/flows', body),
+    update: (id: string, body: FlowInput) => put<{ flow: Flow }>(`/flows/${id}`, body),
+    remove: (id: string) => del<void>(`/flows/${id}`),
+    run: (id: string, ticket: string) => post<{ runId: string; runs: FlowRun[] }>(`/flows/${id}/run`, { ticket }),
   },
 
   connections: {

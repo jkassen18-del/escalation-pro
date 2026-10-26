@@ -88,7 +88,14 @@ export async function dispatch(
     }),
   );
 
-  await Promise.all([maybeMirrorToLinear(ctx), sendToHttpIntegrations(ctx), sendToDepartmentConnections(ctx)]);
+  await Promise.all([maybeMirrorToLinear(ctx), sendToHttpIntegrations(ctx), sendToDepartmentConnections(ctx), startFlows(ctx)]);
+}
+
+/** Departments' flows that start on this event. A flow's own changes never start flows. */
+async function startFlows(ctx: NotificationContext): Promise<void> {
+  const { insideFlow, runFlowsForEvent } = await import('../ops/flows.ts');
+  if (insideFlow()) return;
+  await runFlowsForEvent(ctx.event, ctx.ticket, ctx.actorName).catch((error) => console.error('[flows] could not start', error));
 }
 
 /**

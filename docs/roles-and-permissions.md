@@ -107,6 +107,7 @@ The API checks every permission on every request. Hiding a button in the web app
 | `ops.view` | View operations: Monitors, alerts, maintenance, on-call schedules and status pages | ✓ | ✓ | ✓ | ✓ |
 | `monitors.manage` | Manage monitoring: Create monitors and alert sources | ✓ | ✓ |  |  |
 | `alerts.routing` | Manage alert routing: Rules that send alerts to departments and policies | ✓ | ✓ |  |  |
+| `flows.manage` | Build flows: Draw alert and escalation flows for any department (department managers can build their own) | ✓ | ✓ |  |  |
 | `maintenance.manage` | Manage maintenance: Schedule, extend and end maintenance windows | ✓ | ✓ |  |  |
 | `oncall.manage` | Manage all on-call: Every department’s schedules and overrides, escalation policies and telephony | ✓ |  |  |  |
 | `oncall.manage_own_department` | Manage own department’s on-call: Schedules, rosters and overrides for the departments they belong to | ✓ | ✓ |  |  |

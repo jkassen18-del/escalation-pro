@@ -800,6 +800,38 @@ const TABLES: string[] = [
   )`,
 
   /*
+   * Flows: alert and escalation routes drawn as nodes. graph holds the nodes
+   * and arrows (see shared/flows.ts); flow_runs is each run's progress, with
+   * the waits still to come in pending.
+   */
+  `CREATE TABLE IF NOT EXISTS flows (
+    id TEXT PRIMARY KEY,
+    team_id TEXT REFERENCES teams(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    graph TEXT NOT NULL DEFAULT '{}',
+    created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    last_run_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS flow_runs (
+    id TEXT PRIMARY KEY,
+    flow_id TEXT NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+    ticket_id TEXT REFERENCES tickets(id) ON DELETE CASCADE,
+    event TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    pending TEXT NOT NULL DEFAULT '[]',
+    steps TEXT NOT NULL DEFAULT '[]',
+    actor_name TEXT,
+    next_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
+  /*
    * Mailbox connections: every message handled (so Mail.Read alone never
    * raises one twice), and which ticket each email conversation became.
    */
@@ -1053,6 +1085,8 @@ const INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_ticket_approvals_ticket ON ticket_approvals(ticket_id, status)`,
   `CREATE INDEX IF NOT EXISTS idx_ticket_approvals_status ON ticket_approvals(status)`,
   `CREATE INDEX IF NOT EXISTS idx_connections_team ON connections(team_id, kind)`,
+  `CREATE INDEX IF NOT EXISTS idx_flow_runs_flow ON flow_runs(flow_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_flow_runs_due ON flow_runs(status, next_at)`,
 ];
 
 /**

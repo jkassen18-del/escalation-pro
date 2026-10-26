@@ -263,23 +263,23 @@ export async function escalateTicketToTeam(ticket: Ticket, input: EscalateToTeam
     `UPDATE tickets SET team_id = ?, assignee_id = ?, priority = ?, escalation_level = ?, updated_at = ? WHERE id = ?`,
     [target.id, assigneeId, priority, nextLevel, now, ticket.id],
   );
-  await recordEvent(ticket.id, user.id, 'escalated', 'team', fromName, target.name);
-  if (priority !== ticket.priority) await recordEvent(ticket.id, user.id, 'updated', 'priority', ticket.priority, priority);
+  await recordEvent(ticket.id, user.id || null, 'escalated', 'team', fromName, target.name);
+  if (priority !== ticket.priority) await recordEvent(ticket.id, user.id || null, 'updated', 'priority', ticket.priority, priority);
   if (assigneeId !== ticket.assigneeId) {
-    await recordEvent(ticket.id, user.id, 'updated', 'assignee', ticket.assigneeName, assigneeId);
+    await recordEvent(ticket.id, user.id || null, 'updated', 'assignee', ticket.assigneeName, assigneeId);
     if (assigneeId) await addWatcher(ticket.id, assigneeId);
   }
   await db.run(
     `INSERT INTO ticket_comments (id, ticket_id, author_id, body, is_internal, created_at, updated_at)
      VALUES (?, ?, ?, ?, 1, ?, ?)`,
-    [randomId(), ticket.id, user.id, `Escalated from ${fromName} to ${target.name}. ${reason}`, now, now],
+    [randomId(), ticket.id, user.id || null, `Escalated from ${fromName} to ${target.name}. ${reason}`, now, now],
   );
 
   const after = await findTicket(ticket.id, settings.ticketPrefix);
   if (!after) throw new Error('Escalation failed.');
 
   await recordAudit({
-    actorId: user.id,
+    actorId: user.id || null,
     actorName: user.name,
     entityType: 'ticket',
     entityId: after.id,
