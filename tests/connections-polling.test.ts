@@ -27,6 +27,8 @@ const wipe = () => {
 const realFetch = globalThis.fetch;
 const outbound: Array<{ url: string; headers: Record<string, string>; body: any }> = [];
 let jenkinsJobs: Array<{ name: string; color: string; url: string }> = [];
+let inbox: Array<Record<string, unknown>> = [];
+const graphCalls: Array<{ method: string; url: string; body: any }> = [];
 
 let server: http.Server;
 let base: string;
@@ -68,6 +70,14 @@ before(async () => {
   }
   globalThis.fetch = (async (input: any, init?: any) => {
     const url = String(typeof input === 'string' ? input : input.url ?? input);
+    if (url.startsWith('https://login.microsoftonline.com/')) return Response.json({ access_token: 'graph-token', expires_in: 3600 });
+    if (url.startsWith('https://graph.microsoft.com/')) {
+      const method = String(init?.method ?? 'GET');
+      graphCalls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      if (method === 'GET' && url.includes('/messages?')) return Response.json({ value: inbox });
+      if (method === 'GET') return Response.json({ displayName: 'Inbox', unreadItemCount: inbox.length });
+      return new Response(null, { status: method === 'POST' ? 202 : 200 });
+    }
     if (url.includes('.invalid')) {
       const headers: Record<string, string> = {};
       new Headers(init?.headers).forEach((value, key) => (headers[key] = value));
@@ -223,4 +233,72 @@ test('a Jenkins source that polls: a red job raises an incident, and green again
   assert.equal(alert?.status, 'resolved');
   const ticket = await db.get<{ status: string }>(`SELECT status FROM tickets WHERE id = ?`, [ticketId]);
   assert.equal(ticket?.status, 'resolved', 'the incident did not resolve when the job went green');
+});
+
+test("a department's Outlook mailbox: new mail raises its tickets, replies join them, routes send some elsewhere", async () => {
+  const created = await call('fin', 'POST', '/api/connections', {
+    kind: 'mailbox',
+    teamId: finance,
+    name: 'Finance inbox',
+    config: {
+      tenantId: 'acme.onmicrosoft.com',
+      clientId: '00000000-1111-2222-3333-444444444444',
+      clientSecret: 'graph-client-secret',
+      mailbox: 'finance@acme.test',
+      acknowledge: true,
+      routes: [{ field: 'from', contains: '@supplier.invalid', teamId: hr }],
+    },
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.payload));
+  assert.doesNotMatch(JSON.stringify(created.payload), /graph-client-secret/);
+  const id = created.payload.connection.id;
+  assert.match((await call('fin', 'POST', `/api/connections/${id}/test`)).payload.message, /Connected to finance@acme.test/);
+
+  const message = (n: number, from: string, subject: string, conversationId: string, at: string) => ({
+    id: `msg-${n}`,
+    subject,
+    conversationId,
+    receivedDateTime: at,
+    from: { emailAddress: { name: from.split('@')[0], address: from } },
+    body: { contentType: 'html', content: `<p>Body ${n}</p><script>alert(1)</script>` },
+  });
+  inbox = [
+    message(2, 'bob@supplier.invalid', 'Statement for October', 'conv-b', '2026-10-26T08:05:00Z'),
+    message(1, 'fin@acme.test', 'Invoice 77 overdue', 'conv-a', '2026-10-26T08:00:00Z'),
+    message(9, 'finance@acme.test', 'Re: your ticket', 'conv-x', '2026-10-26T08:06:00Z'),
+  ];
+  const first = await call('fin', 'POST', `/api/connections/${id}/check-mail`);
+  assert.equal(first.status, 200, JSON.stringify(first.payload));
+  assert.equal(first.payload.created.length, 2);
+  assert.equal(first.payload.skipped, 1, 'mail from the mailbox itself raised a ticket');
+
+  const tickets = await db.all<{ id: string; subject: string; team_id: string; requester_id: string | null; source: string; description: string }>(
+    `SELECT id, subject, team_id, requester_id, source, description FROM tickets WHERE source = 'email' ORDER BY number`,
+  );
+  assert.deepEqual(tickets.map((t) => t.subject), ['Invoice 77 overdue', 'Statement for October'], 'not raised oldest first');
+  assert.equal(tickets[0].team_id, finance);
+  assert.equal(tickets[0].requester_id, 'u-fin', 'a known sender was not made the requester');
+  assert.equal(tickets[1].team_id, hr, 'the supplier route was not followed');
+  assert.match(tickets[1].description, /bob@supplier\.invalid/);
+  assert.doesNotMatch(tickets[1].description, /<script/);
+  assert.ok(graphCalls.some((c) => c.method === 'POST' && c.url.endsWith('/messages/msg-1/reply') && /this is now ticket [A-Z]+-\d+/.test(c.body.comment)), 'the sender was not told their ticket number');
+  assert.ok(graphCalls.some((c) => c.method === 'PATCH' && c.url.endsWith('/messages/msg-1') && c.body.isRead === true));
+
+  // Mail.Read only: the same mail comes back unread. Nothing is raised twice, and the reply joins its ticket.
+  inbox = [...inbox, message(3, 'fin@acme.test', 'RE: Invoice 77 overdue', 'conv-a', '2026-10-26T09:00:00Z')];
+  const second = await call('fin', 'POST', `/api/connections/${id}/check-mail`);
+  assert.deepEqual(second.payload.created, []);
+  assert.equal(second.payload.commented.length, 1);
+  const comments = await db.all<{ ticket_id: string; author_id: string | null; body: string }>(`SELECT ticket_id, author_id, body FROM ticket_comments WHERE body LIKE '%Body 3%'`);
+  assert.equal(comments.length, 1);
+  assert.equal(comments[0].ticket_id, tickets[0].id);
+  assert.equal(comments[0].author_id, 'u-fin');
+
+  // A new conversation that names the ticket in its subject joins it too.
+  const reference = (await call('admin', 'GET', `/api/tickets/${tickets[1].id}`)).payload.ticket.reference;
+  inbox = [message(4, 'bob@supplier.invalid', `Following up on ${reference}`, 'conv-new', '2026-10-26T10:00:00Z')];
+  const third = await call('fin', 'POST', `/api/connections/${id}/check-mail`);
+  assert.deepEqual(third.payload.commented, [reference]);
+
+  assert.equal((await call('hr', 'POST', `/api/connections/${id}/check-mail`)).status, 404, "HR could reach Finance's mailbox");
 });

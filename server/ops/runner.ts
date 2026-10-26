@@ -71,6 +71,8 @@ async function runMain(): Promise<{ monitors: number; backups: number }> {
   // windows as they stand now.
   await maintenanceTick().catch((error) => console.error('[ops] maintenance', error));
   await handoverTick().catch((error) => console.error('[ops] handover', error));
+  const { mailboxTick } = await import('../integrations/mailbox.ts');
+  await mailboxTick().catch((error) => console.error('[ops] mailboxes', error));
   if (Date.now() - lastPrune > 3_600_000) {
     lastPrune = Date.now();
     await pruneMonitorHistory().catch((error) => console.error('[ops] prune', error));

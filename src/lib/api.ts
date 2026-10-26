@@ -226,6 +226,8 @@ export const api = {
     update: (id: string, body: Record<string, unknown>) => put<{ connection: Connection }>(`/connections/${id}`, body),
     remove: (id: string) => del<void>(`/connections/${id}`),
     tryCall: (id: string, request: ConnectionRequest) => post<{ result: ApiTryResult }>(`/connections/${id}/try`, request),
+    test: (id: string) => post<{ ok: boolean; message: string }>(`/connections/${id}/test`, {}),
+    checkMail: (id: string) => post<{ created: string[]; commented: string[]; skipped: number; error: string | null }>(`/connections/${id}/check-mail`, {}),
   },
 
   approvals: {

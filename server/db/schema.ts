@@ -800,6 +800,25 @@ const TABLES: string[] = [
   )`,
 
   /*
+   * Mailbox connections: every message handled (so Mail.Read alone never
+   * raises one twice), and which ticket each email conversation became.
+   */
+  `CREATE TABLE IF NOT EXISTS mail_messages (
+    connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+    message_id TEXT NOT NULL,
+    ticket_id TEXT REFERENCES tickets(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (connection_id, message_id)
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS mail_threads (
+    conversation_id TEXT PRIMARY KEY,
+    connection_id TEXT REFERENCES connections(id) ON DELETE CASCADE,
+    ticket_id TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL
+  )`,
+
+  /*
    * Approval rules: which new tickets need sign-off, and from whom. The
    * conditions and approvers are JSON (see shared/approvals.ts).
    */

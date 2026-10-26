@@ -10,12 +10,15 @@ import type { IntegrationEventToggles } from './types.ts';
  * - slack_webhook / teams_webhook: the department's own channel; its ticket
  *   notifications, handovers and approval requests go there as well.
  * - webhook: the department's ticket events POSTed as JSON to its own tools.
+ * - mailbox: an Outlook / Microsoft 365 mailbox whose new mail becomes the
+ *   department's tickets, and whose replies join them.
  */
-export const CONNECTION_KINDS = ['api', 'slack_webhook', 'teams_webhook', 'webhook'] as const;
+export const CONNECTION_KINDS = ['api', 'mailbox', 'slack_webhook', 'teams_webhook', 'webhook'] as const;
 export type ConnectionKind = (typeof CONNECTION_KINDS)[number];
 
 export const CONNECTION_LABELS: Record<ConnectionKind, string> = {
   api: 'API connection',
+  mailbox: 'Outlook mailbox (Microsoft 365)',
   slack_webhook: 'Slack channel (incoming webhook)',
   teams_webhook: 'Teams channel (Workflows / incoming webhook)',
   webhook: 'Outgoing webhook',
@@ -27,6 +30,26 @@ export interface ApiConnectionConfig {
   headers?: Record<string, string>;
   query?: Record<string, string>;
   timeoutMs?: number;
+}
+
+/** Read through Microsoft Graph with the department's own app registration. */
+export interface MailboxConfig {
+  tenantId: string;
+  clientId: string;
+  /** Stored encrypted; never sent to the browser. */
+  clientSecret?: string;
+  /** The address, e.g. finance@company.co.za (a shared mailbox is fine). */
+  mailbox: string;
+  /** Folder to read; the inbox when empty. */
+  folder?: string;
+  /** Reply to the sender with the ticket number (needs Mail.Send). */
+  acknowledge?: boolean;
+  /** Mark handled mail read (needs Mail.ReadWrite). On by default. */
+  markRead?: boolean;
+  priority?: 'urgent' | 'high' | 'normal' | 'low';
+  type?: 'incident' | 'request' | 'question' | 'problem' | 'escalation';
+  /** Mail for another department: the first match wins, else the mailbox's own. */
+  routes?: Array<{ field: 'from' | 'subject'; contains: string; teamId: string }>;
 }
 
 export interface WebhookConnectionConfig {
@@ -44,7 +67,7 @@ export interface Connection {
   name: string;
   description: string | null;
   /** api: the config with secrets masked. Webhooks: { url: masked preview }. */
-  config: ApiConnectionConfig | (Omit<WebhookConnectionConfig, 'signingSecret'> & { hasSigningSecret?: boolean });
+  config: ApiConnectionConfig | (Omit<WebhookConnectionConfig, 'signingSecret'> & { hasSigningSecret?: boolean }) | (Omit<MailboxConfig, 'clientSecret'> & { hasSecret?: boolean });
   /** Webhooks: which ticket events are sent. */
   events: IntegrationEventToggles;
   enabled: boolean;

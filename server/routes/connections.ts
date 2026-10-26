@@ -84,3 +84,29 @@ connectionsRouter.post(
     res.json({ result: await callThrough(connection, body) });
   }),
 );
+
+/** Mailboxes: check the credentials can read the mailbox. */
+connectionsRouter.post(
+  '/:id/test',
+  asyncRoute(async (req, res) => {
+    const connection = await usable(req);
+    if (connection.kind !== 'mailbox') return res.json({ ok: true, message: 'Nothing to test: it is used when there is something to send.' });
+    const { testMailbox } = await import('../integrations/mailbox.ts');
+    res.json(await testMailbox(connection));
+  }),
+);
+
+/** Mailboxes: read new mail now rather than at the next minute. */
+connectionsRouter.post(
+  '/:id/check-mail',
+  asyncRoute(async (req, res) => {
+    const connection = await usable(req);
+    if (connection.kind !== 'mailbox') throw notFound('That is not a mailbox.');
+    if (!canManageConnection(userOf(req), connection.teamId)) throw forbidden('Only whoever manages this mailbox can check it by hand.');
+    const { pollMailbox } = await import('../integrations/mailbox.ts');
+    const { noteConnectionUse } = await import('../ops/connections.ts');
+    const result = await pollMailbox(connection);
+    await noteConnectionUse(connection.id, result.error);
+    res.json(result);
+  }),
+);

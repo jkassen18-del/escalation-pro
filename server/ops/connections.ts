@@ -12,6 +12,7 @@ import {
   type Connection,
   type ConnectionKind,
   type ConnectionRequest,
+  type MailboxConfig,
   type WebhookConnectionConfig,
 } from '../../shared/connections.ts';
 import { HTTP_METHODS, type ApiTryResult, type MonitorConfig } from '../../shared/ops.ts';
@@ -42,7 +43,7 @@ interface ConnectionRow {
 
 /** Server-side: secrets readable. */
 export interface ConnectionRecord extends Omit<Connection, 'config' | 'canEdit'> {
-  config: ApiConnectionConfig | WebhookConnectionConfig;
+  config: ApiConnectionConfig | WebhookConnectionConfig | MailboxConfig;
 }
 
 const reveal = (value: string | undefined) => {
@@ -59,7 +60,9 @@ function toRecord(row: ConnectionRow): ConnectionRecord {
   const config =
     row.kind === 'api'
       ? (stored as unknown as ApiConnectionConfig)
-      : { url: reveal(stored.url as string | undefined), signingSecret: reveal(stored.signingSecret as string | undefined) || undefined };
+      : row.kind === 'mailbox'
+        ? ({ ...(stored as unknown as MailboxConfig), clientSecret: reveal(stored.clientSecret as string | undefined) } as MailboxConfig)
+        : { url: reveal(stored.url as string | undefined), signingSecret: reveal(stored.signingSecret as string | undefined) || undefined };
   return {
     id: row.id,
     teamId: row.team_id,
@@ -90,10 +93,13 @@ export function canManageConnection(user: PublicUser, teamId: string | null): bo
 }
 
 export function toPublic(record: ConnectionRecord, user: PublicUser): Connection {
+  const mailbox = record.config as MailboxConfig;
   const config =
     record.kind === 'api'
       ? { ...(record.config as ApiConnectionConfig), auth: maskAuth((record.config as ApiConnectionConfig).auth), headers: maskHeaders((record.config as ApiConnectionConfig).headers) }
-      : { url: maskUrl((record.config as WebhookConnectionConfig).url), hasSigningSecret: Boolean((record.config as WebhookConnectionConfig).signingSecret) };
+      : record.kind === 'mailbox'
+        ? { ...mailbox, clientSecret: undefined, hasSecret: Boolean(mailbox.clientSecret) }
+        : { url: maskUrl((record.config as WebhookConnectionConfig).url), hasSigningSecret: Boolean((record.config as WebhookConnectionConfig).signingSecret) };
   return { ...record, config, canEdit: canManageConnection(user, record.teamId) };
 }
 
@@ -131,6 +137,12 @@ export async function findConnection(id: string): Promise<ConnectionRecord | nul
   return row ? toRecord(row) : null;
 }
 
+/** Every enabled connection of a kind, whichever department owns it. Server-side only. */
+export async function departmentConnectionsOfKind(kind: ConnectionKind): Promise<ConnectionRecord[]> {
+  const rows = await db.all<ConnectionRow>(`${SELECT} WHERE c.kind = ? AND c.enabled = 1`, [kind]);
+  return rows.map(toRecord);
+}
+
 /** The department's own channels and webhooks that want this event. */
 export async function departmentConnections(teamId: string | null, kinds: ConnectionKind[]): Promise<ConnectionRecord[]> {
   if (!teamId) return [];
@@ -163,7 +175,35 @@ export async function saveConnection(id: string | null, body: Record<string, unk
   const raw = (body.config ?? {}) as Record<string, unknown>;
 
   let config: Record<string, unknown>;
-  if (kind === 'api') {
+  if (kind === 'mailbox') {
+    const previous = existing?.kind === 'mailbox' ? (existing.config as MailboxConfig) : undefined;
+    const text = (value: unknown, max = 200) => (typeof value === 'string' ? value.trim().slice(0, max) : '');
+    const mailbox = text(raw.mailbox);
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mailbox)) throw badRequest('Give the mailbox address, e.g. finance@company.co.za.');
+    const tenantId = text(raw.tenantId);
+    const clientId = text(raw.clientId);
+    if (!tenantId || !clientId) throw badRequest('Give the tenant and the app registration (client) id.');
+    const secret = text(raw.clientSecret, 500) || previous?.clientSecret;
+    if (!secret) throw badRequest('Give the app registration’s client secret.');
+    const routes = Array.isArray(raw.routes)
+      ? (raw.routes as Array<Record<string, unknown>>)
+          .filter((route) => typeof route?.contains === 'string' && route.contains.trim() && typeof route.teamId === 'string' && route.teamId)
+          .slice(0, 30)
+          .map((route) => ({ field: route.field === 'from' ? ('from' as const) : ('subject' as const), contains: String(route.contains).trim().slice(0, 200), teamId: String(route.teamId) }))
+      : [];
+    config = {
+      tenantId,
+      clientId,
+      clientSecret: encryptSecret(secret),
+      mailbox,
+      folder: text(raw.folder, 100) || undefined,
+      acknowledge: raw.acknowledge === true,
+      markRead: raw.markRead !== false,
+      priority: ['urgent', 'high', 'normal', 'low'].includes(raw.priority as string) ? raw.priority : undefined,
+      type: ['incident', 'request', 'question', 'problem', 'escalation'].includes(raw.type as string) ? raw.type : undefined,
+      routes,
+    };
+  } else if (kind === 'api') {
     const baseUrl = typeof raw.baseUrl === 'string' ? raw.baseUrl.trim() : '';
     if (!/^https?:\/\//i.test(baseUrl)) throw badRequest('The base URL must start with http:// or https://.');
     // Internal APIs are allowed; metadata and link-local addresses are not.
