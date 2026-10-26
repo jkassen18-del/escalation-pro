@@ -22,6 +22,7 @@ import {
 } from '@shared/types';
 import { SeverityBadge } from '@/components/ops/IncidentPanel';
 import { useDocumentTitle } from '@/state/branding';
+import { useDepartment } from '@/state/department';
 
 const PAGE_SIZE = 50;
 
@@ -29,6 +30,7 @@ export function TicketListPage() {
   useDocumentTitle('Tickets');
   const { can } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { scope, current } = useDepartment();
 
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -47,7 +49,8 @@ export function TicketListPage() {
       status: searchParams.get('status') ?? undefined,
       priority: searchParams.get('priority') ?? undefined,
       type: searchParams.get('type') ?? undefined,
-      teamId: searchParams.get('teamId') ?? undefined,
+      // A team chosen in the filters wins; otherwise the department picked in the top bar.
+      teamId: searchParams.get('teamId') ?? (scope === 'all' ? undefined : scope),
       assigneeId: searchParams.get('assignee') ?? undefined,
       search: searchParams.get('search') ?? undefined,
       tag: searchParams.get('tag') ?? undefined,
@@ -61,7 +64,7 @@ export function TicketListPage() {
       limit: PAGE_SIZE,
       offset,
     }),
-    [searchParams, offset],
+    [searchParams, offset, scope],
   );
 
   // Only the newest request may update the list: a slow answer for "pay"
@@ -134,12 +137,14 @@ export function TicketListPage() {
       : searchParams.get('overdue') === 'true'
         ? 'Breached SLA'
         : 'All tickets';
+  // Shown under the title, so it is clear the list is narrowed to one department.
+  const scopeNote = !searchParams.get('teamId') && current ? current.name : null;
 
   return (
     <div>
       <PageHeader docs="tickets"
         title={title}
-        description={loading ? 'Loading…' : `${total} ticket${total === 1 ? '' : 's'}`}
+        description={`${loading ? 'Loading…' : `${total} ticket${total === 1 ? '' : 's'}`}${scopeNote ? ` · ${scopeNote}` : ''}`}
         actions={
           can('reports.export') ? (
             <Button

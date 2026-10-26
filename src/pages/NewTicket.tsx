@@ -13,6 +13,7 @@ import { LabelPicker, useTeamLabels } from '@/components/Labels';
 import { TICKET_PRIORITIES, TICKET_TYPES, type Team } from '@shared/types';
 import { useDocumentTitle } from '@/state/branding';
 import { useAuth } from '@/state/auth';
+import { useDepartment } from '@/state/department';
 import type { TeamFormField } from '@shared/types';
 
 export function NewTicketPage() {
@@ -20,6 +21,7 @@ export function NewTicketPage() {
   const navigate = useNavigate();
   const toast = useToast();
   const { can } = useAuth();
+  const { scope } = useDepartment();
 
   const [teams, setTeams] = useState<Team[]>([]);
   const [directory, setDirectory] = useState<Awaited<ReturnType<typeof api.users.directory>>['users']>([]);
@@ -70,7 +72,8 @@ export function NewTicketPage() {
         // Pre-select the organisation default so the common path is one click.
         setForm((current) => ({
           ...current,
-          teamId: current.teamId || (settingsResult.value.settings.defaultTeamId ?? ''),
+          // The department picked in the top bar first, then the organisation default.
+          teamId: current.teamId || (scope !== 'all' ? scope : (settingsResult.value.settings.defaultTeamId ?? '')),
           priority: settingsResult.value.settings.defaultPriority,
         }));
       }

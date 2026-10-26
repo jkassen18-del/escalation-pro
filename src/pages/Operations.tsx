@@ -13,6 +13,7 @@ import { ErrorPane, LoadingPane } from '@/components/ui/Feedback';
 import { useAuth } from '@/state/auth';
 import { SeverityBadge } from '@/components/ops/IncidentPanel';
 import { ActivityHeatmap } from '@/components/ActivityHeatmap';
+import { useDepartment } from '@/state/department';
 import { useDocumentTitle } from '@/state/branding';
 import type { Page } from '@shared/ops';
 
@@ -24,6 +25,7 @@ const POLL_MS = 15_000;
  * nobody trusts at three in the morning.
  */
 export function OperationsPage() {
+  const { current } = useDepartment();
   useDocumentTitle('Command centre');
   const toast = useToast();
   const [overview, setOverview] = useState<OpsOverview | null>(null);
@@ -223,7 +225,7 @@ export function OperationsPage() {
                   </p>
                 ) : (
                   <ul className="divide-y">
-                    {overview.onCall.map((entry) => (
+                    {overview.onCall.filter((entry) => !current || entry.teamName === current.name).map((entry) => (
                       <li key={entry.scheduleId} className="px-4 py-2.5">
                         <p className="text-2xs text-subtle">
                           {entry.scheduleName}

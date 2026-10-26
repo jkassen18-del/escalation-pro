@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
+import { useDepartment } from '@/state/department';
 import { SegmentedControl } from '@/components/ui/Field';
 import type { ActivityDay } from '@shared/types';
 
@@ -33,6 +34,7 @@ function cellColor(metric: Metric, step: number): string {
  */
 export function ActivityHeatmap() {
   const navigate = useNavigate();
+  const { scope } = useDepartment();
   const [metric, setMetric] = useState<Metric>('created');
   const [days, setDays] = useState<ActivityDay[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -41,13 +43,13 @@ export function ActivityHeatmap() {
   useEffect(() => {
     let cancelled = false;
     void api.tickets
-      .activity({ days: WEEKS * 7 })
+      .activity({ days: WEEKS * 7, teamId: scope === 'all' ? undefined : scope })
       .then((result) => !cancelled && setDays(result.days))
       .catch(() => !cancelled && setFailed(true));
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [scope]);
 
   const byDate = useMemo(() => new Map((days ?? []).map((day) => [day.date, day])), [days]);
 

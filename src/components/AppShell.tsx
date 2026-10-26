@@ -30,6 +30,8 @@ import {
   Zap,
 } from 'lucide-react';
 import { BrandMark } from '@/components/BrandMark';
+import { DepartmentSwitcher } from '@/components/DepartmentSwitcher';
+import { useDepartment } from '@/state/department';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { QuickTicketMenu } from '@/components/quick/QuickTicketMenu';
 import { MaintenanceBanner } from '@/components/ops/MaintenanceShared';
@@ -82,6 +84,7 @@ const MANAGE_NAV: NavItem[] = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { user, organizationName, logout, can } = useAuth();
   const { theme, setTheme } = useTheme();
+  const { scope } = useDepartment();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -98,7 +101,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const load = async () => {
       try {
         const [nextCounts, nextNotifications] = await Promise.all([
-          api.tickets.counts(),
+          api.tickets.counts(scope === 'all' ? undefined : scope),
           api.notifications.list(),
         ]);
         if (cancelled) return;
@@ -116,7 +119,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [location.pathname, location.search]);
+  }, [location.pathname, location.search, scope]);
 
   useEffect(() => {
     setMobileNavOpen(false);
@@ -260,6 +263,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           >
             <MenuIcon className="size-4" />
           </Button>
+
+          <DepartmentSwitcher />
 
           <div className="flex-1" />
 

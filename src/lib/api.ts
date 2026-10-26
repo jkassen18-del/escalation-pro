@@ -129,8 +129,8 @@ export const api = {
   tickets: {
     list: (params: Record<string, string | number | boolean | undefined>) =>
       get<{ tickets: Ticket[]; total: number; limit: number; offset: number }>(`/tickets${toQuery(params)}`),
-    counts: () =>
-      get<{ all: number; mine: number; unassigned: number; overdue: number; open: number }>('/tickets/counts'),
+    counts: (teamId?: string) =>
+      get<{ all: number; mine: number; unassigned: number; overdue: number; open: number }>(`/tickets/counts${toQuery({ teamId })}`),
     get: (id: string) => get<{ ticket: TicketDetail }>(`/tickets/${id}`),
     create: (body: Record<string, unknown>) => post<{ ticket: Ticket }>('/tickets', body),
     update: (id: string, body: Record<string, unknown>) => patch<{ ticket: Ticket }>(`/tickets/${id}`, body),

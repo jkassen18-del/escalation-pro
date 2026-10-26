@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes, useParams } from 'react-router-dom';
 import { useAuth } from '@/state/auth';
 import { AppShell } from '@/components/AppShell';
+import { DepartmentProvider } from '@/state/department';
 import { Spinner } from '@/components/ui/Feedback';
 import { LoginPage } from '@/pages/Login';
 import { AcceptInvitePage } from '@/pages/AcceptInvite';
@@ -48,6 +49,7 @@ export function App() {
   if (window.location.pathname === '/connect/authorize') return <ConnectAuthorizePage />;
 
   return (
+    <DepartmentProvider>
     <AppShell>
       <Routes>
         <Route path="/" element={<Navigate to="/tickets" replace />} />
@@ -78,6 +80,7 @@ export function App() {
         <Route path="*" element={<NotFound />} />
       </Routes>
     </AppShell>
+    </DepartmentProvider>
   );
 }
 

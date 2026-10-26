@@ -122,7 +122,9 @@ ticketsRouter.get(
   asyncRoute(async (req, res) => {
     const user = (req as AuthedRequest).user;
     const settings = await getSettings();
-    const scope: TicketQuery = { visibleTeamIds: visibleTeamIds(user), viewerId: user.id, limit: 1 };
+    // The department picked in the top bar narrows the badges; visibility still applies.
+    const teamId = optionalString((req.query as Record<string, string>).teamId, 60);
+    const scope: TicketQuery = { visibleTeamIds: visibleTeamIds(user), viewerId: user.id, limit: 1, ...(teamId ? { teamIds: [teamId] } : {}) };
 
     const [all, mine, unassigned, overdue, open] = await Promise.all([
       listTickets(scope, settings.ticketPrefix),

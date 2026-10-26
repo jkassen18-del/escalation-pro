@@ -14,6 +14,7 @@ import { useAuth } from '@/state/auth';
 import type { Page, Schedule } from '@shared/ops';
 import { SeverityBadge, type DirectoryPerson } from './OnCallShared';
 import { PageExplainer } from './PageExplainer';
+import { useDepartment } from '@/state/department';
 
 const PAGE_STATUS_COLORS: Record<Page['status'], string> = {
   triggered: 'var(--priority-urgent)',
@@ -23,6 +24,7 @@ const PAGE_STATUS_COLORS: Record<Page['status'], string> = {
 };
 
 export function OnCallNow({ people }: { people: DirectoryPerson[] }) {
+  const { current } = useDepartment();
   const { user, can } = useAuth();
   // Server-side, only people the page reached (or on-call managers) may act on it.
   const respond = can('pages.respond', 'oncall.manage');
@@ -84,7 +86,7 @@ export function OnCallNow({ people }: { people: DirectoryPerson[] }) {
           <p className="text-xs text-muted">No schedules yet. Create one under Schedules.</p>
         ) : (
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-            {schedules.map((schedule) => {
+            {schedules.filter((schedule) => !current || schedule.teamId === current.id).map((schedule) => {
               const person = schedule.onCallNow ? people.find((p) => p.id === schedule.onCallNow!.userId) : null;
               return (
                 <article key={schedule.id} className="flex items-center gap-3 rounded-md border p-3 surface">
