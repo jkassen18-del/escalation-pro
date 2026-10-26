@@ -1,6 +1,7 @@
 import { runDueBackups } from './backups.ts';
 import { acquireLease } from './lease.ts';
 import { maintenanceTick } from './maintenance-tick.ts';
+import { handoverTick } from './handover.ts';
 import { pruneMonitorHistory, runDueMonitors } from './monitors.ts';
 import { pagerTick } from './pager.ts';
 import { pruneOAuth } from '../mcp/auth.ts';
@@ -67,6 +68,7 @@ async function runMain(): Promise<{ monitors: number; backups: number }> {
   // After the monitors, so a monitor checked this tick is judged against the
   // windows as they stand now.
   await maintenanceTick().catch((error) => console.error('[ops] maintenance', error));
+  await handoverTick().catch((error) => console.error('[ops] handover', error));
   if (Date.now() - lastPrune > 3_600_000) {
     lastPrune = Date.now();
     await pruneMonitorHistory().catch((error) => console.error('[ops] prune', error));

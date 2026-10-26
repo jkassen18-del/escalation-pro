@@ -213,6 +213,8 @@ export const api = {
       put<{ schedule: DepartmentSchedule }>(`/shifts/${teamId}`, body),
     addException: (teamId: string, body: Omit<ShiftException, 'id'>) => post<{ schedule: DepartmentSchedule }>(`/shifts/${teamId}/exceptions`, body),
     removeException: (teamId: string, id: string) => del<{ schedule: DepartmentSchedule }>(`/shifts/${teamId}/exceptions/${id}`),
+    handoverPreview: (teamId: string) => get<{ text: string }>(`/shifts/${teamId}/handover/preview`),
+    sendHandover: (teamId: string) => post<{ deliveries: Array<{ channel: string; ok: boolean; detail: string }> }>(`/shifts/${teamId}/handover/send`, {}),
   },
 
   labels: {

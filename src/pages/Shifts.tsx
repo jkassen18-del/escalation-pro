@@ -280,6 +280,9 @@ function ScheduleEditor({
   const [schedule, setSchedule] = useState<DepartmentSchedule | null>(null);
   const [patterns, setPatterns] = useState<Draft[]>([]);
   const [timeZone, setTimeZone] = useState('');
+  const [handover, setHandover] = useState<DepartmentSchedule['handover']>({});
+  const [preview, setPreview] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
   const [saving, setSaving] = useState(false);
   const [exception, setException] = useState<Omit<ShiftException, 'id'>>({ date: '', patternId: null, kind: 'closed', leaderId: null, start: '08:00', end: '13:00', note: '' });
 
@@ -290,6 +293,7 @@ function ScheduleEditor({
         setSchedule(loaded);
         setPatterns(loaded.patterns.length ? loaded.patterns : [{ ...BLANK }]);
         setTimeZone(loaded.timeZone);
+        setHandover(loaded.handover ?? {});
       })
       .catch((caught) => toast.error('Could not load the schedule', caught instanceof ApiError ? caught.message : undefined));
   }, [teamId, toast]);
@@ -301,7 +305,7 @@ function ScheduleEditor({
   const save = async () => {
     setSaving(true);
     try {
-      const { schedule: saved } = await api.shifts.save(teamId, { timeZone, patterns });
+      const { schedule: saved } = await api.shifts.save(teamId, { timeZone, handover, patterns });
       setSchedule(saved);
       setPatterns(saved.patterns);
       toast.success(`Saved ${teamName}'s shifts.`);
@@ -321,6 +325,33 @@ function ScheduleEditor({
       onSaved();
     } catch (caught) {
       toast.error('Could not add the change', caught instanceof ApiError ? caught.message : undefined);
+    }
+  };
+
+  const channels = handover.channels?.length ? handover.channels : (['msteams', 'slack', 'email'] as const);
+  const toggleChannel = (channel: 'msteams' | 'slack' | 'email') =>
+    setHandover((current) => ({ ...current, channels: channels.includes(channel) ? channels.filter((c) => c !== channel) : [...channels, channel] }));
+
+  const showPreview = async () => {
+    try {
+      setPreview((await api.shifts.handoverPreview(teamId)).text);
+    } catch (caught) {
+      toast.error('Could not build the handover', caught instanceof ApiError ? caught.message : undefined);
+    }
+  };
+
+  const sendNow = async () => {
+    setSending(true);
+    try {
+      const { deliveries } = await api.shifts.sendHandover(teamId);
+      const failed = deliveries.filter((delivery) => !delivery.ok);
+      if (!deliveries.length) toast.error('Nowhere to send it', 'Connect Teams, Slack or email, or set an incoming team leader with an email address.');
+      else if (failed.length) toast.error('Sent with problems', failed.map((delivery) => `${delivery.channel}: ${delivery.detail}`).join(' · '));
+      else toast.success('Handover sent', deliveries.map((delivery) => delivery.detail).join(' · '));
+    } catch (caught) {
+      toast.error('Could not send', caught instanceof ApiError ? caught.message : undefined);
+    } finally {
+      setSending(false);
     }
   };
 
@@ -357,6 +388,52 @@ function ScheduleEditor({
           <Field label="Time zone" hint="Shift times are in this zone.">
             <Input value={timeZone} onChange={(event) => setTimeZone(event.target.value)} placeholder="Africa/Johannesburg" className="max-w-xs" />
           </Field>
+
+          <div className="space-y-3 rounded-md border p-3 surface-2">
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <input type="checkbox" checked={Boolean(handover.enabled)} onChange={(event) => setHandover((current) => ({ ...current, enabled: event.target.checked }))} />
+              Send a handover report at each shift change
+            </label>
+            <p className="text-xs text-[var(--fg-muted)]">
+              What is open, what is paging, monitors that are down, and what happened on the shift that is ending. It goes to this department's Teams and Slack channels and is emailed to
+              the incoming team leader.
+            </p>
+            <div className="flex flex-wrap items-end gap-4">
+              <Field label="Minutes before the shift starts">
+                <Input
+                  type="number"
+                  min={0}
+                  max={120}
+                  value={handover.leadMins ?? 0}
+                  onChange={(event) => setHandover((current) => ({ ...current, leadMins: Number(event.target.value) || 0 }))}
+                  className="w-28"
+                />
+              </Field>
+              <div className="flex gap-3 pb-2 text-sm">
+                {(
+                  [
+                    ['msteams', 'Teams'],
+                    ['slack', 'Slack'],
+                    ['email', 'Email to leader'],
+                  ] as const
+                ).map(([channel, label]) => (
+                  <label key={channel} className="flex items-center gap-1.5">
+                    <input type="checkbox" checked={channels.includes(channel)} onChange={() => toggleChannel(channel)} />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" variant="ghost" onClick={() => void showPreview()}>
+                Preview
+              </Button>
+              <Button size="sm" onClick={() => void sendNow()} loading={sending}>
+                Send now
+              </Button>
+            </div>
+            {preview && <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded border p-2 text-xs bg-[var(--bg)]">{preview}</pre>}
+          </div>
 
           <div className="space-y-3">
             {patterns.map((pattern, index) => (

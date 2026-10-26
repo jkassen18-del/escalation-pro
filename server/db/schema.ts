@@ -766,6 +766,20 @@ const TABLES: string[] = [
   )`,
 
   /*
+   * Shift handover reports, kept as sent. shift_key is the shift they were
+   * sent for, so the scheduler sends each one once; manual sends are keyed
+   * "manual:<time>".
+   */
+  `CREATE TABLE IF NOT EXISTS handover_reports (
+    id TEXT PRIMARY KEY,
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    shift_key TEXT NOT NULL,
+    report TEXT NOT NULL,
+    deliveries TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL
+  )`,
+
+  /*
    * Browser and phone push subscriptions. One person can have several (a
    * phone and a laptop); a subscription the push service reports as gone is
    * deleted on the next send.
@@ -958,6 +972,7 @@ const INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_team_labels_team ON team_labels(team_id, position)`,
   `CREATE INDEX IF NOT EXISTS idx_shift_patterns_team ON dept_shift_patterns(team_id, position)`,
   `CREATE INDEX IF NOT EXISTS idx_shift_exceptions_team ON dept_shift_exceptions(team_id, shift_date)`,
+  `CREATE INDEX IF NOT EXISTS idx_handover_reports_team ON handover_reports(team_id, shift_key)`,
 ];
 
 /**

@@ -14,6 +14,7 @@ import {
   validatePatterns,
   type HandoverSettings,
 } from '../ops/shifts.ts';
+import { buildHandover, handoverText, listHandovers, sendHandover } from '../ops/handover.ts';
 
 /**
  * Department working schedules. Anyone who can see operations sees who is in;
@@ -53,6 +54,38 @@ shiftsRouter.get(
     const days = Math.min(31, Math.max(1, Number(req.query.days ?? 7) || 7));
     if (!Number.isFinite(from)) return res.status(400).json({ error: 'Unreadable date' });
     res.json({ shifts: await departmentShifts(req.params.teamId, from, from + days * 86_400_000) });
+  }),
+);
+
+/** What the handover would say if it were sent now. */
+shiftsRouter.get(
+  '/:teamId/handover/preview',
+  asyncRoute(async (req, res) => {
+    const team = await findTeamById(req.params.teamId);
+    if (!team) throw notFound('That department does not exist.');
+    const schedule = await getDepartmentSchedule(team.id);
+    const report = await buildHandover(team.id);
+    res.json({ report, text: handoverText(report, schedule.timeZone) });
+  }),
+);
+
+shiftsRouter.get(
+  '/:teamId/handover/history',
+  asyncRoute(async (req, res) => {
+    const team = await findTeamById(req.params.teamId);
+    if (!team) throw notFound('That department does not exist.');
+    res.json({ reports: await listHandovers(team.id) });
+  }),
+);
+
+shiftsRouter.post(
+  '/:teamId/handover/send',
+  asyncRoute(async (req, res) => {
+    const team = await editableTeam(req);
+    const result = await sendHandover(team.id);
+    const user = userOf(req);
+    await recordAudit({ actorId: user.id, actorName: user.name, entityType: 'team', entityId: team.id, action: 'handover_sent', summary: `Sent ${team.name}'s shift handover`, ip: clientIp(req) });
+    res.json(result);
   }),
 );
 
