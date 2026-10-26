@@ -4,6 +4,7 @@
       "title": "Getting started",
       "pages": [
         { "slug": "getting-started", "title": "Welcome to InfraTicket", "app": "/tickets" },
+        { "slug": "whats-new-3", "title": "What's new in 3.0", "app": "/flows" },
         { "slug": "roles-and-permissions", "title": "Roles and permissions", "app": "/people" },
         { "slug": "navigation", "title": "Finding your way around", "app": "/operations" }
       ]
