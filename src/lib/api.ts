@@ -25,6 +25,7 @@ import type {
   ActivityDay,
 } from '@shared/types';
 import type { MessageTemplate, TemplateProvider } from '@shared/message-template';
+import type { ShiftException, ShiftPattern } from '@shared/shifts';
 
 export type RoutedProvider = 'slack' | 'msteams' | 'linear' | 'github';
 
@@ -37,6 +38,43 @@ export interface RoutingView {
   fallbackOptions: Array<{ id: string; name: string }>;
   destinations: Array<{ id: string; name: string; warning?: string | null }>;
   notice: string | null;
+}
+
+export interface ShiftPerson {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string;
+  jobTitle: string | null;
+}
+
+export interface StaffedShift {
+  patternId: string;
+  name: string;
+  date: string;
+  startsAt: string;
+  endsAt: string;
+  note: string | null;
+  leader: ShiftPerson | null;
+  members: ShiftPerson[];
+}
+
+export interface DepartmentShiftStatus {
+  teamId: string;
+  teamName: string;
+  color: string;
+  timeZone: string;
+  configured: boolean;
+  current: StaffedShift | null;
+  next: StaffedShift | null;
+}
+
+export interface DepartmentSchedule {
+  teamId: string;
+  timeZone: string;
+  handover: { enabled?: boolean; leadMins?: number; channels?: Array<'slack' | 'msteams' | 'email'> };
+  patterns: ShiftPattern[];
+  exceptions: ShiftException[];
 }
 
 export class ApiError extends Error {
@@ -165,6 +203,16 @@ export const api = {
         results: Array<{ channel: 'in_app' | 'push' | 'msteams'; userId: string | null; status: 'sent' | 'failed' | 'skipped'; detail: string }>;
         notified: OnCallContact[];
       }>(`/tickets/${id}/notify-oncall`, body),
+  },
+
+  shifts: {
+    board: () => get<{ departments: DepartmentShiftStatus[] }>('/shifts/board'),
+    calendar: (teamId: string, from: string, days = 7) => get<{ shifts: StaffedShift[] }>(`/shifts/${teamId}/calendar${toQuery({ from, days })}`),
+    get: (teamId: string) => get<{ schedule: DepartmentSchedule; canEdit: boolean }>(`/shifts/${teamId}`),
+    save: (teamId: string, body: { timeZone?: string; handover?: DepartmentSchedule['handover']; patterns?: Array<Omit<ShiftPattern, 'id'> & { id?: string }> }) =>
+      put<{ schedule: DepartmentSchedule }>(`/shifts/${teamId}`, body),
+    addException: (teamId: string, body: Omit<ShiftException, 'id'>) => post<{ schedule: DepartmentSchedule }>(`/shifts/${teamId}/exceptions`, body),
+    removeException: (teamId: string, id: string) => del<{ schedule: DepartmentSchedule }>(`/shifts/${teamId}/exceptions/${id}`),
   },
 
   labels: {

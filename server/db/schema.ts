@@ -728,6 +728,44 @@ const TABLES: string[] = [
   )`,
 
   /*
+   * Department working schedules: shifts with a team leader, for departments
+   * that work set hours rather than (or as well as) carrying a standby.
+   */
+  `CREATE TABLE IF NOT EXISTS dept_shift_settings (
+    team_id TEXT PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE,
+    time_zone TEXT NOT NULL DEFAULT 'Africa/Johannesburg',
+    handover TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT NOT NULL
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS dept_shift_patterns (
+    id TEXT PRIMARY KEY,
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    days TEXT NOT NULL DEFAULT '[]',
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    leader_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    member_ids TEXT NOT NULL DEFAULT '[]',
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS dept_shift_exceptions (
+    id TEXT PRIMARY KEY,
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    shift_date TEXT NOT NULL,
+    pattern_id TEXT,
+    kind TEXT NOT NULL,
+    leader_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    start_time TEXT,
+    end_time TEXT,
+    note TEXT,
+    created_at TEXT NOT NULL
+  )`,
+
+  /*
    * Browser and phone push subscriptions. One person can have several (a
    * phone and a laptop); a subscription the push service reports as gone is
    * deleted on the next send.
@@ -918,6 +956,8 @@ const INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_backup_runs_job ON backup_runs(job_id, started_at)`,
   `CREATE INDEX IF NOT EXISTS idx_team_links_team ON team_links(team_id, position)`,
   `CREATE INDEX IF NOT EXISTS idx_team_labels_team ON team_labels(team_id, position)`,
+  `CREATE INDEX IF NOT EXISTS idx_shift_patterns_team ON dept_shift_patterns(team_id, position)`,
+  `CREATE INDEX IF NOT EXISTS idx_shift_exceptions_team ON dept_shift_exceptions(team_id, shift_date)`,
 ];
 
 /**

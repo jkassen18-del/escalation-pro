@@ -18,6 +18,7 @@ import { IntegrationsPage } from '@/pages/Integrations';
 import { SettingsPage } from '@/pages/Settings';
 import { AuditLogPage } from '@/pages/AuditLog';
 import { ProfilePage } from '@/pages/Profile';
+import { ShiftsPage } from '@/pages/Shifts';
 import { QuickLinksPage } from '@/pages/QuickLinks';
 import { OperationsPage } from '@/pages/Operations';
 import { MonitorsPage } from '@/pages/Monitors';
@@ -73,6 +74,7 @@ export function App() {
         <Route path="/monitors" element={<Guard permission="ops.view"><MonitorsPage /></Guard>} />
         <Route path="/maintenance" element={<Guard permission="ops.view"><MaintenancePage /></Guard>} />
         <Route path="/oncall" element={<Guard permission="ops.view"><OnCallPage /></Guard>} />
+        <Route path="/shifts" element={<Guard permission="ops.view"><ShiftsPage /></Guard>} />
         <Route path="/status-pages" element={<Guard permission="ops.view"><StatusPagesPage /></Guard>} />
         <Route path="/databases" element={<Guard permission={['databases.manage', 'backups.manage', 'backups.restore']}><DatabasesPage /></Guard>} />
         <Route path="/docs" element={<DocsPage />} />
