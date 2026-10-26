@@ -161,6 +161,8 @@ export async function resolveActor(
 export interface StatusChange {
   changed: boolean;
   from: TicketStatus;
+  /** Set when the move was refused because the ticket is waiting for approval. */
+  blocked?: string;
 }
 
 /**
@@ -176,6 +178,13 @@ export async function applyStatus(
   const current = await db.get<{ status: TicketStatus }>(`SELECT status FROM tickets WHERE id = ?`, [ticketId]);
   if (!current) return null;
   if (current.status === next) return { changed: false, from: current.status };
+  // Waiting for sign-off: it cannot be started or resolved from any channel either.
+  const { pendingApproval } = await import('../services/approvals.ts');
+  const { GATED_STATUSES } = await import('../../shared/approvals.ts');
+  if ((GATED_STATUSES as readonly string[]).includes(next)) {
+    const waiting = await pendingApproval(ticketId);
+    if (waiting) return { changed: false, from: current.status, blocked: `It is waiting for approval (${waiting.title}) from ${waiting.approverNames.join(', ')}.` };
+  }
 
   const now = new Date().toISOString();
 

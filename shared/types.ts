@@ -447,6 +447,8 @@ export const PERMISSIONS = [
   'tickets.attach',
   'tickets.delete_attachment',
   'tickets.delete',
+  'tickets.request_approval',
+  'approvals.manage',
   'templates.manage',
   'users.view',
   'users.create',

@@ -25,6 +25,7 @@ import type {
   ActivityDay,
 } from '@shared/types';
 import type { MessageTemplate, TemplateProvider } from '@shared/message-template';
+import type { ApprovalMode, ApprovalRule, TicketApproval } from '@shared/approvals';
 import type { ShiftException, ShiftPattern } from '@shared/shifts';
 
 export type RoutedProvider = 'slack' | 'msteams' | 'linear' | 'github';
@@ -215,6 +216,19 @@ export const api = {
     removeException: (teamId: string, id: string) => del<{ schedule: DepartmentSchedule }>(`/shifts/${teamId}/exceptions/${id}`),
     handoverPreview: (teamId: string) => get<{ text: string }>(`/shifts/${teamId}/handover/preview`),
     sendHandover: (teamId: string) => post<{ deliveries: Array<{ channel: string; ok: boolean; detail: string }> }>(`/shifts/${teamId}/handover/send`, {}),
+  },
+
+  approvals: {
+    mine: () => get<{ approvals: Array<TicketApproval & { reference: string; subject: string; teamName: string | null }> }>('/approvals/mine'),
+    forTicket: (ticketId: string) => get<{ approvals: TicketApproval[]; canRequest: boolean }>(`/approvals/ticket/${ticketId}`),
+    request: (ticketId: string, body: { title: string; note?: string | null; approverIds: string[]; mode: ApprovalMode; onReject: 'close' | 'keep_open' }) =>
+      post<{ approval: TicketApproval }>(`/approvals/ticket/${ticketId}`, body),
+    decide: (id: string, decision: 'approved' | 'rejected', comment?: string) => post<{ approval: TicketApproval }>(`/approvals/${id}/decide`, { decision, comment }),
+    cancel: (id: string) => post<{ approval: TicketApproval }>(`/approvals/${id}/cancel`, {}),
+    rules: (teamId?: string) => get<{ rules: ApprovalRule[]; canManageAll: boolean }>(`/approvals/rules${toQuery({ teamId })}`),
+    createRule: (body: Omit<ApprovalRule, 'id' | 'position'>) => post<{ rule: ApprovalRule }>('/approvals/rules', body),
+    updateRule: (id: string, body: Omit<ApprovalRule, 'id' | 'position'>) => put<{ rule: ApprovalRule }>(`/approvals/rules/${id}`, body),
+    deleteRule: (id: string) => del<void>(`/approvals/rules/${id}`),
   },
 
   labels: {

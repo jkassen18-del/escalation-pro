@@ -34,6 +34,8 @@ export const PERMISSION_GROUPS: Array<{ label: string; permissions: PermissionIn
       { key: 'tickets.assign', label: 'Assign tickets', hint: 'Choose who works a ticket' },
       { key: 'tickets.escalate', label: 'Escalate', hint: 'Escalate a ticket to another department', impliedBy: 'tickets.update' },
       { key: 'tickets.page', label: 'Page on-call about a ticket', hint: 'Start an escalation policy by hand from a ticket', impliedBy: 'tickets.update' },
+      { key: 'tickets.request_approval', label: 'Request approval', hint: 'Ask named people to sign a ticket off before work starts', impliedBy: 'tickets.update' },
+      { key: 'approvals.manage', label: 'Manage approval rules', hint: 'Which tickets need sign-off, and from whom', impliedBy: 'teams.manage' },
       { key: 'tickets.push_linear', label: 'Send to Linear', hint: 'Create a Linear issue from a ticket', impliedBy: 'tickets.update' },
       { key: 'tickets.reply', label: 'Reply', hint: 'Post public replies on tickets they can see', everyone: true },
       { key: 'tickets.comment_internal', label: 'Internal notes', hint: 'Read and write notes hidden from requesters' },

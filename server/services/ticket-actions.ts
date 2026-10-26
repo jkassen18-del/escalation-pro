@@ -1,3 +1,4 @@
+import { assertNotAwaitingApproval } from './approvals.ts';
 import { commentOnGitHubIssue } from '../integrations/github.ts';
 import { lengthWithoutInlineImages } from '../lib/inline-images.ts';
 import crypto from 'node:crypto';
@@ -125,6 +126,7 @@ export async function updateTicket(before: Ticket, patch: TicketPatch, ctx: Acti
     const status = requireEnum(patch.status, TICKET_STATUSES, 'Status');
     if (status !== before.status) {
       const permission = statusPermission(before.status, status);
+      await assertNotAwaitingApproval(before.id, status);
       needs(permission, permission === 'tickets.close' ? 'resolve or close tickets' : permission === 'tickets.reopen' ? 'reopen tickets' : 'change a ticket status');
       push('status', status);
       changes.push({ field: 'status', from: before.status, to: status });

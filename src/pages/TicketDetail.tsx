@@ -50,6 +50,7 @@ import { IncidentPanel, SeverityBadge } from '@/components/ops/IncidentPanel';
 import { EscalateDialog } from '@/components/EscalateDialog';
 import { LinearPushDialog } from '@/components/LinearPushDialog';
 import { NotifyOnCall, useOnCall } from '@/components/NotifyOnCall';
+import { TicketApprovals } from '@/components/TicketApprovals';
 import { LabelChip, LabelPicker, labelFor, useTeamLabels } from '@/components/Labels';
 
 type Directory = Awaited<ReturnType<typeof api.users.directory>>['users'];
@@ -279,6 +280,7 @@ export function TicketDetailPage() {
           {!isTerminal && (
             <NotifyOnCall ticketId={ticket.id} teamName={ticket.teamName} state={onCall} onNotified={() => void load()} />
           )}
+          <TicketApprovals ticketId={ticket.id} teamId={ticket.teamId} directory={directory} onChanged={() => void load()} />
           <IncidentPanel
             ticket={ticket}
             directory={directory}

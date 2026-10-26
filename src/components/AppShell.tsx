@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Activity,
+  BadgeCheck,
   Link2,
   Bell,
   CalendarClock,
@@ -51,7 +52,7 @@ interface NavItem {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   permission?: Permission | Permission[];
-  countKey?: 'mine' | 'unassigned' | 'overdue' | 'all';
+  countKey?: 'mine' | 'unassigned' | 'overdue' | 'all' | 'approvals';
   end?: boolean;
 }
 
@@ -60,6 +61,7 @@ const PRIMARY_NAV: NavItem[] = [
   { to: '/tickets', label: 'All tickets', icon: TicketIcon, countKey: 'all', end: true },
   { to: '/tickets?unassigned=true', label: 'Unassigned', icon: LayoutGrid, countKey: 'unassigned' },
   { to: '/tickets?overdue=true', label: 'Breached SLA', icon: TriangleAlert, countKey: 'overdue' },
+  { to: '/approvals', label: 'Approvals', icon: BadgeCheck, countKey: 'approvals' },
 ];
 
 const OPERATIONS_NAV: NavItem[] = [
@@ -90,7 +92,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [counts, setCounts] = useState({ all: 0, mine: 0, unassigned: 0, overdue: 0, open: 0 });
+  const [counts, setCounts] = useState({ all: 0, mine: 0, unassigned: 0, overdue: 0, open: 0, approvals: 0 });
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unread, setUnread] = useState(0);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -102,12 +104,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
     const load = async () => {
       try {
-        const [nextCounts, nextNotifications] = await Promise.all([
+        const [nextCounts, nextNotifications, waiting] = await Promise.all([
           api.tickets.counts(scope === 'all' ? undefined : scope),
           api.notifications.list(),
+          api.approvals.mine().catch(() => ({ approvals: [] })),
         ]);
         if (cancelled) return;
-        setCounts(nextCounts);
+        setCounts({ ...nextCounts, approvals: waiting.approvals.length });
         setNotifications(nextNotifications.notifications);
         setUnread(nextNotifications.unread);
       } catch {

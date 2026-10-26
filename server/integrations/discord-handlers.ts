@@ -396,6 +396,7 @@ async function handleResolve(interaction: Interaction, ticketId: string): Promis
   if (TERMINAL_STATUSES.includes(ticket.status)) return reply(interaction, `${ticket.reference} is already ${ticket.status}.`);
 
   const change = await applyStatus(ticket.id, 'resolved', actor.user.id);
+  if (change?.blocked) return reply(interaction, `${ticket.reference} was not resolved. ${change.blocked}`);
   if (!change?.changed) return reply(interaction, `${ticket.reference} is already resolved.`);
   await recordAudit({
     actorId: actor.user.id,

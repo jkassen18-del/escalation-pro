@@ -19,6 +19,7 @@ export interface AuditInput {
     | 'alert'
     | 'oncall'
     | 'status_page'
+    | 'approval_rule'
     | 'invite'
     | 'backup';
   entityId?: string | null;

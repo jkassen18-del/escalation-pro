@@ -780,6 +780,44 @@ const TABLES: string[] = [
   )`,
 
   /*
+   * Approval rules: which new tickets need sign-off, and from whom. The
+   * conditions and approvers are JSON (see shared/approvals.ts).
+   */
+  `CREATE TABLE IF NOT EXISTS approval_rules (
+    id TEXT PRIMARY KEY,
+    team_id TEXT REFERENCES teams(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    conditions TEXT NOT NULL DEFAULT '{}',
+    approvers TEXT NOT NULL DEFAULT '[]',
+    mode TEXT NOT NULL DEFAULT 'any',
+    on_reject TEXT NOT NULL DEFAULT 'close',
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
+  /*
+   * One sign-off request on a ticket. approver_ids is fixed when it is made,
+   * so a change of manager later does not move who it waits on.
+   */
+  `CREATE TABLE IF NOT EXISTS ticket_approvals (
+    id TEXT PRIMARY KEY,
+    ticket_id TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+    rule_id TEXT REFERENCES approval_rules(id) ON DELETE SET NULL,
+    title TEXT NOT NULL,
+    note TEXT,
+    approver_ids TEXT NOT NULL DEFAULT '[]',
+    mode TEXT NOT NULL DEFAULT 'any',
+    on_reject TEXT NOT NULL DEFAULT 'close',
+    status TEXT NOT NULL DEFAULT 'pending',
+    requested_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    decisions TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+  )`,
+
+  /*
    * Browser and phone push subscriptions. One person can have several (a
    * phone and a laptop); a subscription the push service reports as gone is
    * deleted on the next send.
@@ -973,6 +1011,8 @@ const INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_shift_patterns_team ON dept_shift_patterns(team_id, position)`,
   `CREATE INDEX IF NOT EXISTS idx_shift_exceptions_team ON dept_shift_exceptions(team_id, shift_date)`,
   `CREATE INDEX IF NOT EXISTS idx_handover_reports_team ON handover_reports(team_id, shift_key)`,
+  `CREATE INDEX IF NOT EXISTS idx_ticket_approvals_ticket ON ticket_approvals(ticket_id, status)`,
+  `CREATE INDEX IF NOT EXISTS idx_ticket_approvals_status ON ticket_approvals(status)`,
 ];
 
 /**

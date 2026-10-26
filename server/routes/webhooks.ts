@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
+import { APPROVAL_ACTIONS, decide } from '../services/approvals.ts';
 import { db } from '../db/index.ts';
 import { asyncRoute, HttpError } from '../lib/http.ts';
 import { recordAudit } from '../lib/audit.ts';
@@ -742,6 +743,12 @@ async function resolveFromSlack(
   }
 
   const change = await applyStatus(ticket.id, 'resolved', actor.user.id);
+  if (change?.blocked) {
+    if (channel && config.botToken) {
+      await slackApi(config.botToken, 'chat.postEphemeral', { channel, user: slackUserId, text: `${ticket.reference} was not resolved. ${change.blocked}` }).catch(() => undefined);
+    }
+    return 'refused';
+  }
   if (!change?.changed) return 'already';
 
   await announceStatusChange(ticket, 'resolved', change.from, actor.user, 'Slack', how);
@@ -749,6 +756,42 @@ async function resolveFromSlack(
 }
 
 /* ------------------------ Slack button clicks ----------------------------- */
+
+/**
+ * Approve or Reject under an approval request. Being one of the named
+ * approvers is the authorisation; the Slack account only has to be tied
+ * to an active user here.
+ */
+async function respondToApprovalClick(
+  payload: SlackInteractivePayload,
+  decision: 'approved' | 'rejected',
+  approvalId: string,
+  config: SlackConfig,
+  res: Response,
+) {
+  const responseUrl = payload.response_url;
+  const actor = await resolveActor(config.botToken ?? '', payload.user!.id!, 'tickets.reply');
+  if (!actor.ok) {
+    if (responseUrl) await respondEphemeral(responseUrl, actor.message);
+    return res.json({ ok: true, refused: true });
+  }
+  try {
+    const result = await decide(approvalId, actor.user, decision, { via: 'slack' });
+    if (responseUrl) {
+      const { approval, ticket } = result;
+      const text = !result.changed
+        ? `${ticket.reference}: "${approval.title}" is ${approval.status === 'pending' ? 'still waiting for the others' : `already ${approval.status}`}.`
+        : approval.status === 'pending'
+          ? `Recorded: you ${decision} "${approval.title}" on ${ticket.reference}. Still waiting for the others.`
+          : `${ticket.reference}: "${approval.title}" was *${approval.status}* by ${actor.user.name}.`;
+      await respondEphemeral(responseUrl, text);
+    }
+    return res.json({ ok: true });
+  } catch (error) {
+    if (responseUrl) await respondEphemeral(responseUrl, (error as Error).message);
+    return res.json({ ok: true, refused: true });
+  }
+}
 
 /**
  * Inbound Slack interactions: the Resolve/Close/Reopen buttons.
@@ -789,6 +832,9 @@ webhooksRouter.post(
     }
 
     const action = payload.actions?.[0];
+    if ((action?.action_id === APPROVAL_ACTIONS.approve || action?.action_id === APPROVAL_ACTIONS.reject) && action.value && payload.user?.id) {
+      return respondToApprovalClick(payload, action.action_id === APPROVAL_ACTIONS.approve ? 'approved' : 'rejected', action.value, config, res);
+    }
     const next = action?.action_id ? statusForAction(action.action_id) : null;
     const ticketId = action?.value;
     const responseUrl = payload.response_url;
@@ -814,6 +860,10 @@ webhooksRouter.post(
 
     const change = await applyStatus(ticket.id, next, actor.user.id);
     if (!change) return res.json({ ok: true, ignored: true });
+    if (change.blocked) {
+      if (responseUrl) await respondEphemeral(responseUrl, `${ticket.reference} was left alone. ${change.blocked}`);
+      return res.json({ ok: true, refused: true });
+    }
 
     if (!change.changed) {
       if (responseUrl) {
@@ -1090,6 +1140,36 @@ webhooksRouter.post(
     if (activity.type === 'invoke') return res.json(await handleTeamsInvoke(activity, config));
 
     if (!isFromPerson(activity)) return res.json({ ok: true, ignored: true });
+
+    // Approve or Reject on an approval card.
+    if (activity.value?.action === APPROVAL_ACTIONS.teams) {
+      const actor = await resolveTeamsActor(config, activity, null);
+      const reply = async (text: string) => {
+        await sendActivity(config, { serviceUrl, conversationId }, { text, ...(activity.replyToId ? { replyToId: activity.replyToId } : {}) }).catch(() => undefined);
+      };
+      if (!actor.ok) {
+        await reply(actor.message);
+        return res.json({ ok: true, refused: true });
+      }
+      const value = activity.value as { approvalId?: unknown; decision?: unknown; comment?: unknown };
+      try {
+        const result = await decide(String(value.approvalId ?? ''), actor.user, value.decision === 'approved' ? 'approved' : 'rejected', {
+          via: 'teams',
+          comment: typeof value.comment === 'string' ? value.comment : null,
+        });
+        const { approval, ticket } = result;
+        await reply(
+          !result.changed
+            ? `${ticket.reference}: "${approval.title}" is ${approval.status === 'pending' ? 'still waiting for the others' : `already ${approval.status}`}.`
+            : approval.status === 'pending'
+              ? `${actor.user.name} ${value.decision === 'approved' ? 'approved' : 'rejected'} "${approval.title}" on ${ticket.reference}. Still waiting for the others.`
+              : `${ticket.reference}: "${approval.title}" was **${approval.status}** by ${actor.user.name}.`,
+        );
+      } catch (error) {
+        await reply((error as Error).message);
+      }
+      return res.json({ ok: true });
+    }
 
     // A submitted card carries its data in `value`, with no text at all.
     if (activity.value?.action === TICKET_CARD_ACTION) {

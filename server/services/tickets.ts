@@ -202,6 +202,13 @@ export async function createTicket(
     });
   }
 
+  // Sign-off rules: a matching ticket starts out waiting for its approvers.
+  {
+    const { applyApprovalRules } = await import('./approvals.ts');
+    const byKey = Object.fromEntries(answers.map(({ field, value }) => [field.key, value]));
+    await applyApprovalRules(ticket, byKey, context.origin).catch((error) => console.error('[approvals] rules', error));
+  }
+
   dispatchAsync({
     event: 'ticketCreated',
     ticket,

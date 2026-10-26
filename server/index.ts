@@ -31,6 +31,7 @@ import { samlRouter, ssoAdminRouter } from './routes/sso.ts';
 import { teamLinksRouter } from './routes/team-links.ts';
 import { labelsRouter } from './routes/labels.ts';
 import { shiftsRouter } from './routes/shifts.ts';
+import { approvalsRouter } from './routes/approvals.ts';
 import { webhooksRouter } from './routes/webhooks.ts';
 import { cronRouter } from './routes/cron.ts';
 import { opsRouter } from './routes/ops.ts';
@@ -208,6 +209,7 @@ export async function createApp() {
   app.use('/api/team-links', teamLinksRouter);
   app.use('/api/labels', labelsRouter);
   app.use('/api/shifts', shiftsRouter);
+  app.use('/api/approvals', approvalsRouter);
   app.use('/api/ops', opsRouter);
   app.use('/api/discord', discordRouter);
   app.use('/api/connector', connectorRouter);

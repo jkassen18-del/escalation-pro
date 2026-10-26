@@ -60,6 +60,8 @@ The API checks every permission on every request. Hiding a button in the web app
 | `tickets.assign` | Assign tickets: Choose who works a ticket | ✓ | ✓ | ✓ |  |
 | `tickets.escalate` | Escalate: Escalate a ticket to another department | ✓ | ✓ | ✓ |  |
 | `tickets.page` | Page on-call about a ticket: Start an escalation policy by hand from a ticket | ✓ | ✓ | ✓ |  |
+| `tickets.request_approval` | Request approval: Ask named people to sign a ticket off before work starts | ✓ | ✓ | ✓ |  |
+| `approvals.manage` | Manage approval rules: Which tickets need sign-off, and from whom | ✓ | ✓ |  |  |
 | `tickets.push_linear` | Send to Linear: Create a Linear issue from a ticket | ✓ | ✓ | ✓ |  |
 | `tickets.reply` | Reply: Post public replies on tickets they can see | ✓ | ✓ | ✓ | ✓ |
 | `tickets.comment_internal` | Internal notes: Read and write notes hidden from requesters | ✓ | ✓ | ✓ |  |
