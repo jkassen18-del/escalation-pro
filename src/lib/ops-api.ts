@@ -1,5 +1,6 @@
 import { ApiError, toQuery } from '@/lib/api';
 import type {
+  Severity,
   Alert,
   AlertRule,
   AlertRuleActions,
@@ -68,7 +69,7 @@ export type MonitorInput = Pick<
   Monitor,
   'name' | 'kind' | 'target' | 'config' | 'intervalSecs' | 'graceSecs' | 'failureThreshold' | 'teamId' | 'severity' | 'escalationPolicyId' | 'enabled'
 >;
-export type AlertSourceInput = Pick<AlertSource, 'name' | 'kind' | 'teamId' | 'escalationPolicyId' | 'defaultSeverity' | 'mapping' | 'enabled'>;
+export type AlertSourceInput = Pick<AlertSource, 'name' | 'kind' | 'teamId' | 'escalationPolicyId' | 'defaultSeverity' | 'mapping' | 'enabled' | 'poll'>;
 export type ScheduleInput = Pick<Schedule, 'name' | 'description' | 'teamId' | 'timeZone'> & { layers: Array<Omit<Schedule['layers'][number], 'id'>> };
 export type PolicyInput = Pick<EscalationPolicy, 'name' | 'description' | 'teamId' | 'repeatCount'> & {
   levels: Array<{ delayMins: number; targets: Array<{ type: 'user' | 'schedule' | 'team'; id: string }> }>;
@@ -121,6 +122,13 @@ export const opsApi = {
     remove: (id: string) => del(`/alert-sources/${id}`),
     rotate: (id: string) => post<{ source: AlertSource }>(`/alert-sources/${id}/rotate`),
     test: (id: string) => post<{ result: { action: string; ticketId: string | null; paged: boolean } }>(`/alert-sources/${id}/test`),
+    pollPreview: (input: Partial<AlertSourceInput>) =>
+      post<{
+        response: { ok: boolean; status: number | null; message: string; latencyMs: number | null; url: string; body?: string };
+        signals: Array<{ title: string; summary?: string; severity: Severity; status: 'firing' | 'resolved'; dedupKey: string }>;
+        error: string | null;
+      }>('/alert-sources/poll-preview', input),
+    pollNow: (id: string) => post<{ error: string | null; results: Array<{ action: string; ticketId: string | null }> }>(`/alert-sources/${id}/poll`),
   },
 
   alertRules: {

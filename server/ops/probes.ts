@@ -29,7 +29,10 @@ export { statusMatches } from './api-probe.ts';
 
 /** HTTP and API checks share one request runner with "Send request" in the editor. */
 async function probeHttp(target: string, config: MonitorConfig): Promise<ProbeResult> {
-  const result = await callApi(target, config);
+  const { resolveMonitorTarget } = await import('./connections.ts');
+  const resolved = await resolveMonitorTarget(target, config);
+  if ('error' in resolved) return fail(resolved.error);
+  const result = await callApi(resolved.url, resolved.config);
   return { ok: result.ok, latencyMs: result.latencyMs, message: result.message };
 }
 

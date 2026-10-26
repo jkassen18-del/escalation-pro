@@ -33,6 +33,10 @@ export type MonitorState = 'pending' | 'up' | 'down' | 'paused';
 
 /** Kind-specific settings. Every field is optional; defaults are applied server-side. */
 export interface MonitorConfig {
+  /* http: call through a saved API connection (its base URL, auth and headers) instead of a URL of its own */
+  connectionId?: string;
+  /** Appended to the connection's base URL. */
+  connectionPath?: string;
   /* http */
   method?: HttpMethod;
   headers?: Record<string, string>;
@@ -230,6 +234,26 @@ export interface AlertFieldMapping {
   resolvedValues?: string[];
 }
 
+/**
+ * Instead of (or as well as) waiting to be sent alerts, a source can fetch
+ * them: call an API connection on a schedule and read alerts from what
+ * comes back - Jenkins job colours, an incidents list, a status endpoint.
+ */
+export interface AlertSourcePoll {
+  enabled: boolean;
+  connectionId: string;
+  method?: HttpMethod;
+  /** On the connection, e.g. /api/json?tree=jobs[name,url,color]. */
+  path?: string;
+  body?: string;
+  /** 60 seconds to a day. */
+  intervalSecs: number;
+  /** Where the list of alerts is in the response, e.g. "jobs" or "data.incidents". Empty: the response is one alert. */
+  itemsPath?: string;
+  /** An alert in the last poll that is missing from this one is resolved. */
+  resolveMissing?: boolean;
+}
+
 export interface AlertSource {
   id: string;
   name: string;
@@ -242,6 +266,9 @@ export interface AlertSource {
   enabled: boolean;
   /** Full URL to POST alerts to. Contains the source's secret token. */
   webhookUrl: string;
+  poll: AlertSourcePoll | null;
+  lastPolledAt: string | null;
+  lastPollError: string | null;
   lastEventAt: string | null;
   eventCount: number;
   createdAt: string;

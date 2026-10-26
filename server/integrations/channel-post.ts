@@ -12,6 +12,41 @@ import type { SlackConfig } from './slack.ts';
  */
 
 export async function postToDepartmentSlack(teamId: string | null, message: { text: string; blocks?: unknown[] }): Promise<DeliveryResult> {
+  return combine(await Promise.all([postToOrgSlack(teamId, message), ...(await ownChannels(teamId, 'slack_webhook')).map((url) => postWebhook(url, message, [200]))]));
+}
+
+/** `card` is an Adaptive Card's content (type: 'AdaptiveCard'). */
+export async function postToDepartmentTeams(teamId: string | null, card: Record<string, unknown>): Promise<DeliveryResult> {
+  const wrapped = { type: 'message', attachments: [{ contentType: 'application/vnd.microsoft.card.adaptive', contentUrl: null, content: card }] };
+  return combine(await Promise.all([postToOrgTeams(teamId, card), ...(await ownChannels(teamId, 'teams_webhook')).map((url) => postWebhook(url, wrapped, [200, 202]))]));
+}
+
+/** The department's own channels, from its Connections. */
+async function ownChannels(teamId: string | null, kind: 'slack_webhook' | 'teams_webhook'): Promise<string[]> {
+  const { departmentConnections } = await import('../ops/connections.ts');
+  return (await departmentConnections(teamId, [kind]).catch(() => [])).map((connection) => (connection.config as { url: string }).url).filter(Boolean);
+}
+
+async function postWebhook(url: string, body: unknown, okStatuses: number[]): Promise<DeliveryResult> {
+  try {
+    const { status, text } = await postJson(url, body);
+    const ok = okStatuses.includes(status);
+    return { ok, statusCode: status, error: ok ? null : text.slice(0, 200) };
+  } catch (error) {
+    return { ok: false, statusCode: null, error: (error as Error).message };
+  }
+}
+
+/** Delivered if it reached any of the department's channels; otherwise every reason it did not. */
+function combine(results: DeliveryResult[]): DeliveryResult {
+  const delivered = results.find((result) => result.ok);
+  if (delivered) return delivered;
+  // "Not connected" from the organisation-wide side is noise when the department's own channel failed for a real reason.
+  const reasons = results.map((result) => result.error).filter(Boolean);
+  return { ok: false, statusCode: results.at(-1)?.statusCode ?? null, error: reasons.join('; ') || 'Nowhere to post' };
+}
+
+async function postToOrgSlack(teamId: string | null, message: { text: string; blocks?: unknown[] }): Promise<DeliveryResult> {
   const record = await loadIntegration('slack');
   if (!record.enabled) return { ok: false, statusCode: null, error: 'Slack is not connected' };
   const config = record.config as SlackConfig;
@@ -37,8 +72,7 @@ export async function postToDepartmentSlack(teamId: string | null, message: { te
   }
 }
 
-/** `card` is an Adaptive Card's content (type: 'AdaptiveCard'). */
-export async function postToDepartmentTeams(teamId: string | null, card: Record<string, unknown>): Promise<DeliveryResult> {
+async function postToOrgTeams(teamId: string | null, card: Record<string, unknown>): Promise<DeliveryResult> {
   const record = await loadIntegration('msteams');
   if (!record.enabled) return { ok: false, statusCode: null, error: 'Microsoft Teams is not connected' };
   const config = record.config as MsTeamsConfig;

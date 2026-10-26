@@ -72,6 +72,7 @@ const OPERATIONS_NAV: NavItem[] = [
   { to: '/shifts', label: 'Shifts', icon: CalendarClock, permission: 'ops.view' },
   { to: '/status-pages', label: 'Status pages', icon: Globe, permission: 'ops.view' },
   { to: '/databases', label: 'Databases', icon: Database, permission: ['databases.manage', 'backups.manage', 'backups.restore'] },
+  { to: '/connections', label: 'Connections', icon: Plug },
   { to: '/links', label: 'Quick links', icon: Link2 },
 ];
 

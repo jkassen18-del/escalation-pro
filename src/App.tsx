@@ -20,6 +20,7 @@ import { AuditLogPage } from '@/pages/AuditLog';
 import { ProfilePage } from '@/pages/Profile';
 import { ShiftsPage } from '@/pages/Shifts';
 import { ApprovalsPage } from '@/pages/Approvals';
+import { ConnectionsPage } from '@/pages/Connections';
 import { QuickLinksPage } from '@/pages/QuickLinks';
 import { OperationsPage } from '@/pages/Operations';
 import { MonitorsPage } from '@/pages/Monitors';
@@ -77,6 +78,7 @@ export function App() {
         <Route path="/oncall" element={<Guard permission="ops.view"><OnCallPage /></Guard>} />
         <Route path="/shifts" element={<Guard permission="ops.view"><ShiftsPage /></Guard>} />
         <Route path="/approvals" element={<ApprovalsPage />} />
+        <Route path="/connections" element={<ConnectionsPage />} />
         <Route path="/status-pages" element={<Guard permission="ops.view"><StatusPagesPage /></Guard>} />
         <Route path="/databases" element={<Guard permission={['databases.manage', 'backups.manage', 'backups.restore']}><DatabasesPage /></Guard>} />
         <Route path="/docs" element={<DocsPage />} />

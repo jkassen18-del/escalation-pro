@@ -6,8 +6,11 @@ import { getSettings } from '../repositories/settings.ts';
 import {
   ALERT_SOURCE_KINDS,
   SEVERITIES,
+  HTTP_METHODS,
   type AlertFieldMapping,
   type AlertSource,
+  type AlertSourcePoll,
+  type HttpMethod,
   type AlertSourceKind,
   type Severity,
 } from '../../shared/ops.ts';
@@ -37,6 +40,9 @@ interface SourceRow {
   last_event_at: string | null;
   event_count: number | string;
   created_at: string;
+  poll?: string | null;
+  poll_state?: string | null;
+  last_polled_at?: string | null;
 }
 
 async function ingestBase(): Promise<string> {
@@ -56,6 +62,9 @@ function mapSource(row: SourceRow, base: string): AlertSource {
     mapping: parseJson<AlertFieldMapping>(row.mapping, {}),
     enabled: toBool(row.enabled),
     webhookUrl: `${base}/api/ingest/${row.token}`,
+    poll: parseJson<AlertSourcePoll | null>(row.poll, null),
+    lastPolledAt: row.last_polled_at ?? null,
+    lastPollError: parseJson<{ error?: string | null }>(row.poll_state, {}).error ?? null,
     lastEventAt: row.last_event_at,
     eventCount: Number(row.event_count),
     createdAt: row.created_at,
@@ -100,6 +109,28 @@ export function validateSource(body: Record<string, unknown>) {
       resolvedValues: Array.isArray(mapping.resolvedValues) ? mapping.resolvedValues.map(String).slice(0, 10) : undefined,
     },
     enabled: body.enabled !== false,
+    poll: validatePoll(body.poll),
+  };
+}
+
+function validatePoll(value: unknown): AlertSourcePoll | null {
+  if (!value || typeof value !== 'object') return null;
+  const poll = value as Record<string, unknown>;
+  if (typeof poll.connectionId !== 'string' || !poll.connectionId) {
+    if (poll.enabled) throw badRequest('Choose the API connection to poll.');
+    return null;
+  }
+  const path = typeof poll.path === 'string' ? poll.path.trim().slice(0, 1000) : '';
+  if (/^[a-z][a-z0-9+.-]*:/i.test(path) || path.startsWith('//')) throw badRequest('Give a path on the connection, like /api/json, not a full URL.');
+  return {
+    enabled: poll.enabled !== false,
+    connectionId: poll.connectionId,
+    method: HTTP_METHODS.includes(poll.method as HttpMethod) ? (poll.method as HttpMethod) : 'GET',
+    path,
+    body: typeof poll.body === 'string' && poll.body ? poll.body.slice(0, 20_000) : undefined,
+    intervalSecs: Math.min(86_400, Math.max(60, Math.round(Number(poll.intervalSecs) || 300))),
+    itemsPath: typeof poll.itemsPath === 'string' ? poll.itemsPath.trim().slice(0, 200) : '',
+    resolveMissing: poll.resolveMissing !== false,
   };
 }
 
@@ -110,16 +141,16 @@ export async function saveSource(
   const now = new Date().toISOString();
   if (id) {
     await db.run(
-      `UPDATE alert_sources SET name = ?, kind = ?, team_id = ?, escalation_policy_id = ?, default_severity = ?, mapping = ?, enabled = ?, updated_at = ? WHERE id = ?`,
-      [input.name, input.kind, input.teamId, input.escalationPolicyId, input.defaultSeverity, JSON.stringify(input.mapping), input.enabled ? 1 : 0, now, id],
+      `UPDATE alert_sources SET name = ?, kind = ?, team_id = ?, escalation_policy_id = ?, default_severity = ?, mapping = ?, enabled = ?, poll = ?, updated_at = ? WHERE id = ?`,
+      [input.name, input.kind, input.teamId, input.escalationPolicyId, input.defaultSeverity, JSON.stringify(input.mapping), input.enabled ? 1 : 0, input.poll ? JSON.stringify(input.poll) : null, now, id],
     );
     return (await getSource(id))!;
   }
   const sourceId = randomId();
   await db.run(
-    `INSERT INTO alert_sources (id, name, kind, token, team_id, escalation_policy_id, default_severity, mapping, enabled, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [sourceId, input.name, input.kind, crypto.randomBytes(24).toString('base64url'), input.teamId, input.escalationPolicyId, input.defaultSeverity, JSON.stringify(input.mapping), input.enabled ? 1 : 0, now, now],
+    `INSERT INTO alert_sources (id, name, kind, token, team_id, escalation_policy_id, default_severity, mapping, enabled, poll, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [sourceId, input.name, input.kind, crypto.randomBytes(24).toString('base64url'), input.teamId, input.escalationPolicyId, input.defaultSeverity, JSON.stringify(input.mapping), input.enabled ? 1 : 0, input.poll ? JSON.stringify(input.poll) : null, now, now],
   );
   return (await getSource(sourceId))!;
 }
@@ -164,7 +195,7 @@ function str(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : JSON.stringify(value);
 }
 
-type Normalised = Omit<AlertSignal, 'sourceType' | 'sourceId' | 'sourceName' | 'teamId' | 'escalationPolicyId'>;
+export type Normalised = Omit<AlertSignal, 'sourceType' | 'sourceId' | 'sourceName' | 'teamId' | 'escalationPolicyId'>;
 
 function generic(payload: Record<string, unknown>, source: AlertSource): Normalised {
   const m = source.mapping;
@@ -255,6 +286,8 @@ function azure(payload: Record<string, unknown>, source: AlertSource): Normalise
 }
 
 function jenkins(payload: Record<string, unknown>, source: AlertSource): Normalised | null {
+  const polled = jenkinsFromApi(payload, source);
+  if (polled !== undefined) return polled;
   const build = (payload.build ?? {}) as Record<string, unknown>;
   const job = String(payload.name ?? payload.job ?? payload.job_name ?? 'Jenkins job');
   const status = String(build.status ?? payload.status ?? payload.result ?? '').toUpperCase();
@@ -269,6 +302,48 @@ function jenkins(payload: Record<string, unknown>, source: AlertSource): Normali
     dedupKey: `jenkins:${job}`,
     payload,
   };
+}
+
+/**
+ * What Jenkins's own JSON API returns, for a source that polls it:
+ * - a job from /api/json?tree=jobs[name,url,color]: red is failing, yellow
+ *   unstable, blue (or green) passing; anything else (not built, disabled,
+ *   aborted) says nothing. "_anime" means building: judged on the last result.
+ * - a build from /job/X/lastBuild/api/json: its result, unless still building.
+ * Undefined when the payload is neither, so the webhook shapes are tried.
+ */
+function jenkinsFromApi(payload: Record<string, unknown>, source: AlertSource): Normalised | null | undefined {
+  if (typeof payload.color === 'string' && typeof payload.name === 'string') {
+    const color = payload.color.replace(/_anime$/, '');
+    const status = color === 'red' ? 'FAILURE' : color === 'yellow' ? 'UNSTABLE' : color === 'blue' || color === 'green' ? 'SUCCESS' : null;
+    if (!status) return null;
+    const job = String(payload.fullName ?? payload.name);
+    return {
+      title: `Jenkins: ${job} ${status === 'SUCCESS' ? 'recovered' : status.toLowerCase()}`,
+      summary: String(payload.url ?? ''),
+      severity: status === 'UNSTABLE' ? 'sev3' : source.defaultSeverity,
+      status: status === 'SUCCESS' ? 'resolved' : 'firing',
+      dedupKey: `jenkins:${job}`,
+      payload,
+    };
+  }
+  if (typeof payload.fullDisplayName === 'string' && ('result' in payload || 'building' in payload)) {
+    if (payload.building === true || payload.result === null) return null;
+    const status = String(payload.result ?? '').toUpperCase();
+    // An aborted or skipped build says nothing about the job's health.
+    if (status === 'ABORTED' || status === 'NOT_BUILT') return null;
+    // "deploy-prod #42" is a build of the job "deploy-prod".
+    const job = payload.fullDisplayName.replace(/\s+#\d+$/, '');
+    return {
+      title: `Jenkins: ${job} ${status === 'SUCCESS' ? 'recovered' : status.toLowerCase() || 'failed'}`,
+      summary: [payload.url, payload.number ? `Build #${payload.number}` : ''].filter(Boolean).map(String).join('\n'),
+      severity: status === 'UNSTABLE' ? 'sev3' : source.defaultSeverity,
+      status: status === 'SUCCESS' ? 'resolved' : 'firing',
+      dedupKey: `jenkins:${job}`,
+      payload,
+    };
+  }
+  return undefined;
 }
 
 /**

@@ -2,6 +2,7 @@ import { runDueBackups } from './backups.ts';
 import { acquireLease } from './lease.ts';
 import { maintenanceTick } from './maintenance-tick.ts';
 import { handoverTick } from './handover.ts';
+import { pollDueSources } from './source-poll.ts';
 import { pruneMonitorHistory, runDueMonitors } from './monitors.ts';
 import { pagerTick } from './pager.ts';
 import { pruneOAuth } from '../mcp/auth.ts';
@@ -64,6 +65,7 @@ async function runMain(): Promise<{ monitors: number; backups: number }> {
   const [monitors, backups] = await Promise.all([
     runDueMonitors().catch((error) => (console.error('[ops] monitors', error), 0)),
     runDueBackups().catch((error) => (console.error('[ops] backups', error), 0)),
+    pollDueSources().catch((error) => (console.error('[ops] polling sources', error), 0)),
   ]);
   // After the monitors, so a monitor checked this tick is judged against the
   // windows as they stand now.

@@ -102,6 +102,7 @@ export async function seedOpsWorkspace(ownerId: string): Promise<void> {
     defaultSeverity: 'sev3',
     mapping: {},
     enabled: true,
+    poll: null,
   });
   await saveStatusPage(null, {
     title: 'Service status',

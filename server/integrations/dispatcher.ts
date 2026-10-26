@@ -4,7 +4,7 @@ import { getSettings } from '../repositories/settings.ts';
 import { addLink } from '../repositories/tickets.ts';
 import { loadIntegration } from './store.ts';
 import { sendSlack } from './slack.ts';
-import { sendMsTeams } from './msteams.ts';
+import { sendMsTeams, type MsTeamsConfig } from './msteams.ts';
 import { createLinearIssue, shouldMirror, type LinearConfig } from './linear.ts';
 import { sendEmail } from './email.ts';
 import { sendDiscord } from './discord.ts';
@@ -88,7 +88,68 @@ export async function dispatch(
     }),
   );
 
-  await Promise.all([maybeMirrorToLinear(ctx), sendToHttpIntegrations(ctx)]);
+  await Promise.all([maybeMirrorToLinear(ctx), sendToHttpIntegrations(ctx), sendToDepartmentConnections(ctx)]);
+}
+
+/**
+ * The department's own channels and webhooks (Connections). They are the
+ * department's, so they are sent to whether or not the organisation-wide
+ * Slack or Teams integration is set up.
+ */
+async function sendToDepartmentConnections(ctx: NotificationContext): Promise<void> {
+  const { departmentConnections, noteConnectionUse } = await import('../ops/connections.ts');
+  let connections: Awaited<ReturnType<typeof departmentConnections>>;
+  try {
+    connections = (await departmentConnections(ctx.ticket.teamId, ['slack_webhook', 'teams_webhook', 'webhook'])).filter((connection) => connection.events[ctx.event]);
+  } catch (error) {
+    console.error('[integrations] could not load department connections', error);
+    return;
+  }
+  await Promise.all(
+    connections.map(async (connection) => {
+      const { url, signingSecret } = connection.config as { url: string; signingSecret?: string };
+      let result: DeliveryResult;
+      try {
+        if (connection.kind === 'webhook') {
+          result = await sendHttpIntegration(
+            {
+              id: connection.id,
+              name: connection.name,
+              url,
+              method: 'POST',
+              headers: [],
+              bodyTemplate: null,
+              signingSecret: signingSecret ?? null,
+              allowPrivate: true,
+              events: connection.events,
+              teamIds: [],
+              enabled: true,
+              createdAt: connection.createdAt,
+              updatedAt: connection.updatedAt,
+            },
+            ctx,
+          );
+        } else if (connection.kind === 'slack_webhook') {
+          const { buildMessage } = await import('./slack.ts');
+          const { templateFor, valuesFor } = await import('./message-format.ts');
+          const { postJson } = await import('./types.ts');
+          const { status, text } = await postJson(url, buildMessage(ctx, await templateFor('slack'), await valuesFor(ctx)));
+          result = { ok: status === 200, statusCode: status, error: status === 200 ? null : text.slice(0, 200) };
+        } else {
+          const { buildPayload } = await import('./msteams.ts');
+          const teamsConfig = { mode: 'webhook', webhookUrl: url, format: 'auto' } as MsTeamsConfig;
+          const { postJson } = await import('./types.ts');
+          const { status, text } = await postJson(url, await buildPayload(teamsConfig, ctx));
+          result = { ok: status === 200 || status === 202, statusCode: status, error: status === 200 || status === 202 ? null : text.slice(0, 200) };
+        }
+      } catch (error) {
+        result = { ok: false, statusCode: null, error: (error as Error).message };
+      }
+      await noteConnectionUse(connection.id, result.ok ? null : result.error).catch(() => undefined);
+      await logDelivery(`http:${connection.id}`, ctx.event, ctx.ticket.id, result).catch(() => undefined);
+      if (!result.ok) console.warn(`[integrations] department connection "${connection.name}" ${ctx.event} failed: ${result.error}`);
+    }),
+  );
 }
 
 /** Every enabled custom HTTP integration that wants this event for this ticket's team. */

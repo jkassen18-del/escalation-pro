@@ -1,6 +1,7 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, Plus, Send, Terminal, Trash2 } from 'lucide-react';
-import { ApiError } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
+import { joinUrl } from '@shared/connections';
 import { opsApi } from '@/lib/ops-api';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
@@ -182,6 +183,21 @@ export function ApiMonitorEditor({
 
   const addAssertion = (assertion: ApiAssertion) => setAssertions([...assertions, assertion]);
 
+  // A saved API connection supplies the address and credentials; the monitor adds a path.
+  const [connections, setConnections] = useState<Array<{ id: string; name: string; teamName: string | null; baseUrl: string }>>([]);
+  useEffect(() => {
+    void api.connections
+      .list({ kind: 'api' })
+      .then(({ connections: list }) => setConnections(list.map((c) => ({ id: c.id, name: c.name, teamName: c.teamName, baseUrl: (c.config as { baseUrl?: string }).baseUrl ?? '' }))))
+      .catch(() => undefined);
+  }, []);
+  const connection = connections.find((c) => c.id === config.connectionId);
+  const useConnection = (id: string, path = config.connectionPath ?? '') => {
+    const chosen = connections.find((c) => c.id === id);
+    if (!chosen) return onChange({ config: { ...config, connectionId: undefined, connectionPath: undefined } });
+    onChange({ target: joinUrl(chosen.baseUrl, path), config: { ...config, connectionId: id, connectionPath: path, auth: undefined } });
+  };
+
   return (
     <div className="space-y-4 rounded-md border p-3 surface-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -209,6 +225,26 @@ export function ApiMonitorEditor({
         </div>
       )}
 
+      {connections.length > 0 && (
+        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <Field label="Saved API connection" hint="Its address and credentials are used; nothing secret is kept on the monitor.">
+            <Select value={config.connectionId ?? ''} onChange={(event) => useConnection(event.target.value)}>
+              <option value="">None: use the URL above</option>
+              {connections.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} · {c.teamName ?? 'shared'}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          {connection && (
+            <Field label="Path" hint={connection.baseUrl}>
+              <Input value={config.connectionPath ?? ''} onChange={(event) => useConnection(connection.id, event.target.value)} placeholder="/health" className="font-mono text-xs" />
+            </Field>
+          )}
+        </div>
+      )}
+
       <div className="grid gap-3 sm:grid-cols-[8rem_minmax(0,1fr)]">
         <Field label="Method">
           <Select value={method} onChange={(event) => set({ method: event.target.value as HttpMethod })}>
@@ -217,35 +253,41 @@ export function ApiMonitorEditor({
             ))}
           </Select>
         </Field>
-        <Field label="Authentication" hint={auth.secretSet ? 'A secret is saved. Leave its field blank to keep it.' : 'Stored encrypted; never shown again.'}>
-          <div className="grid gap-2 sm:grid-cols-[9rem_minmax(0,1fr)]">
-            <Select value={auth.type} onChange={(event) => set({ auth: { ...auth, type: event.target.value as ApiAuth['type'] } })}>
-              <option value="none">None</option>
-              <option value="bearer">Bearer token</option>
-              <option value="basic">Username and password</option>
-              <option value="apikey">API key</option>
-            </Select>
-            {auth.type === 'bearer' && (
-              <Input type="password" value={auth.token ?? ''} onChange={(event) => setAuth({ token: event.target.value })} placeholder={auth.secretSet ? 'Saved' : 'Token'} autoComplete="off" />
-            )}
-            {auth.type === 'basic' && (
-              <div className="grid grid-cols-2 gap-2">
-                <Input value={auth.username ?? ''} onChange={(event) => setAuth({ username: event.target.value })} placeholder="Username" autoComplete="off" />
-                <Input type="password" value={auth.password ?? ''} onChange={(event) => setAuth({ password: event.target.value })} placeholder={auth.secretSet ? 'Saved' : 'Password'} autoComplete="off" />
-              </div>
-            )}
-            {auth.type === 'apikey' && (
-              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_6rem] gap-2">
-                <Input value={auth.keyName ?? ''} onChange={(event) => setAuth({ keyName: event.target.value })} placeholder="X-API-Key" />
-                <Input type="password" value={auth.keyValue ?? ''} onChange={(event) => setAuth({ keyValue: event.target.value })} placeholder={auth.secretSet ? 'Saved' : 'Key'} autoComplete="off" />
-                <Select value={auth.keyIn ?? 'header'} onChange={(event) => setAuth({ keyIn: event.target.value as 'header' | 'query' })}>
-                  <option value="header">Header</option>
-                  <option value="query">Query</option>
-                </Select>
-              </div>
-            )}
-          </div>
-        </Field>
+        {connection ? (
+          <Field label="Authentication">
+            <p className="py-1.5 text-xs text-muted">From the {connection.name} connection.</p>
+          </Field>
+        ) : (
+          <Field label="Authentication" hint={auth.secretSet ? 'A secret is saved. Leave its field blank to keep it.' : 'Stored encrypted; never shown again.'}>
+            <div className="grid gap-2 sm:grid-cols-[9rem_minmax(0,1fr)]">
+              <Select value={auth.type} onChange={(event) => set({ auth: { ...auth, type: event.target.value as ApiAuth['type'] } })}>
+                <option value="none">None</option>
+                <option value="bearer">Bearer token</option>
+                <option value="basic">Username and password</option>
+                <option value="apikey">API key</option>
+              </Select>
+              {auth.type === 'bearer' && (
+                <Input type="password" value={auth.token ?? ''} onChange={(event) => setAuth({ token: event.target.value })} placeholder={auth.secretSet ? 'Saved' : 'Token'} autoComplete="off" />
+              )}
+              {auth.type === 'basic' && (
+                <div className="grid grid-cols-2 gap-2">
+                  <Input value={auth.username ?? ''} onChange={(event) => setAuth({ username: event.target.value })} placeholder="Username" autoComplete="off" />
+                  <Input type="password" value={auth.password ?? ''} onChange={(event) => setAuth({ password: event.target.value })} placeholder={auth.secretSet ? 'Saved' : 'Password'} autoComplete="off" />
+                </div>
+              )}
+              {auth.type === 'apikey' && (
+                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_6rem] gap-2">
+                  <Input value={auth.keyName ?? ''} onChange={(event) => setAuth({ keyName: event.target.value })} placeholder="X-API-Key" />
+                  <Input type="password" value={auth.keyValue ?? ''} onChange={(event) => setAuth({ keyValue: event.target.value })} placeholder={auth.secretSet ? 'Saved' : 'Key'} autoComplete="off" />
+                  <Select value={auth.keyIn ?? 'header'} onChange={(event) => setAuth({ keyIn: event.target.value as 'header' | 'query' })}>
+                    <option value="header">Header</option>
+                    <option value="query">Query</option>
+                  </Select>
+                </div>
+              )}
+            </div>
+          </Field>
+        )}
       </div>
 
       <PairsEditor label="Query parameters" pairs={query} onChange={(pairs) => updatePairs('query', pairs)} keyPlaceholder="region" valuePlaceholder="eu" />

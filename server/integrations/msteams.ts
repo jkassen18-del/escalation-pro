@@ -136,7 +136,7 @@ function buildMessageCard(template: MessageTemplate, values: TemplateValues, pri
   };
 }
 
-async function buildPayload(config: MsTeamsConfig, ctx: NotificationContext) {
+export async function buildPayload(config: MsTeamsConfig, ctx: NotificationContext) {
   const template = await templateFor('msteams');
   const values = await valuesFor(ctx);
   return resolveFormat(config) === 'messagecard'

@@ -887,8 +887,8 @@ export function SourceDialog({
 }) {
   const [form, setForm] = useState<AlertSourceInput>(
     source
-      ? { name: source.name, kind: source.kind, teamId: source.teamId, escalationPolicyId: source.escalationPolicyId, defaultSeverity: source.defaultSeverity, mapping: source.mapping, enabled: source.enabled }
-      : { name: initialName ?? '', kind: initialKind ?? 'generic', teamId: teams[0]?.id ?? null, escalationPolicyId: null, defaultSeverity: 'sev3', mapping: {}, enabled: true },
+      ? { name: source.name, kind: source.kind, teamId: source.teamId, escalationPolicyId: source.escalationPolicyId, defaultSeverity: source.defaultSeverity, mapping: source.mapping, enabled: source.enabled, poll: source.poll }
+      : { name: initialName ?? '', kind: initialKind ?? 'generic', teamId: teams[0]?.id ?? null, escalationPolicyId: null, defaultSeverity: 'sev3', mapping: {}, enabled: true, poll: null },
   );
   const [resolvedText, setResolvedText] = useState((source?.mapping.resolvedValues ?? []).join(', '));
   const [saving, setSaving] = useState(false);
@@ -1009,9 +1009,174 @@ export function SourceDialog({
           </fieldset>
         )}
 
+        <PollSection form={form} onChange={(poll) => set('poll', poll)} sourceId={source?.id ?? null} />
+
         <Checkbox label="Enabled" hint="A disabled source answers 404 and records nothing." checked={form.enabled} onChange={(e) => set('enabled', e.target.checked)} />
       </div>
     </Modal>
+  );
+}
+
+/** Ready-made polls for APIs whose shape is known. */
+const POLL_PRESETS: Partial<Record<AlertSourceKind, { label: string; path: string; itemsPath: string; hint: string }>> = {
+  jenkins: { label: 'Every job’s health', path: '/api/json?tree=jobs[name,fullName,url,color]', itemsPath: 'jobs', hint: 'Red jobs raise an incident; green again resolves it. Use an API token as the password.' },
+  grafana: { label: 'Firing Grafana alerts', path: '/api/alertmanager/grafana/api/v2/alerts', itemsPath: '', hint: 'Grafana’s own Alertmanager. Use a service account token.' },
+};
+
+type Poll = NonNullable<AlertSourceInput['poll']>;
+
+/**
+ * Fetching instead of waiting: call a saved API connection on a schedule and
+ * read alerts out of the response, with this source's own field rules.
+ */
+function PollSection({ form, onChange, sourceId }: { form: AlertSourceInput; onChange: (poll: Poll | null) => void; sourceId: string | null }) {
+  const toast = useToast();
+  const [connections, setConnections] = useState<Array<{ id: string; name: string; teamName: string | null; baseUrl: string }>>([]);
+  const [preview, setPreview] = useState<Awaited<ReturnType<typeof opsApi.sources.pollPreview>> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const poll = form.poll;
+  const preset = POLL_PRESETS[form.kind];
+
+  useEffect(() => {
+    void api.connections
+      .list({ kind: 'api' })
+      .then(({ connections: list }) => setConnections(list.map((c) => ({ id: c.id, name: c.name, teamName: c.teamName, baseUrl: (c.config as { baseUrl?: string }).baseUrl ?? '' }))))
+      .catch(() => undefined);
+  }, []);
+
+  const patch = (next: Partial<Poll>) => onChange({ enabled: true, connectionId: '', intervalSecs: 300, resolveMissing: true, ...poll, ...next } as Poll);
+
+  const runPreview = async () => {
+    setBusy(true);
+    try {
+      setPreview(await opsApi.sources.pollPreview({ ...form, name: form.name || 'Preview' }));
+    } catch (caught) {
+      toast.error('Could not poll', message(caught, ''));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pollNow = async () => {
+    if (!sourceId) return;
+    const result = await opsApi.sources.pollNow(sourceId);
+    if (result.error) toast.error('The poll failed', result.error);
+    else toast.success('Polled', result.results.length ? `${result.results.length} change${result.results.length === 1 ? '' : 's'} sent through.` : 'Nothing new.');
+  };
+
+  return (
+    <fieldset className="space-y-3 rounded-md border p-3 surface-2">
+      <legend className="px-1 text-xs font-medium">Fetch alerts from an API</legend>
+      <Checkbox
+        label="Call an API on a schedule"
+        hint="For tools that cannot send a webhook. The webhook URL above keeps working too."
+        checked={Boolean(poll?.enabled)}
+        onChange={(e) => (e.target.checked ? patch({ enabled: true }) : onChange(poll ? { ...poll, enabled: false } : null))}
+      />
+      {poll?.enabled && (
+        <>
+          {connections.length === 0 ? (
+            <p className="text-xs text-muted">
+              No API connections yet. Add one under{' '}
+              <Link to="/connections" className="text-[var(--accent)] hover:underline">
+                Connections
+              </Link>{' '}
+              with the API&apos;s address and key, then pick it here.
+            </p>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_8rem]">
+              <Field label="API connection">
+                <Select value={poll.connectionId} onChange={(e) => patch({ connectionId: e.target.value })}>
+                  <option value="">Choose…</option>
+                  {connections.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} · {c.teamName ?? 'shared'} · {c.baseUrl}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Every">
+                <Select value={String(poll.intervalSecs)} onChange={(e) => patch({ intervalSecs: Number(e.target.value) })}>
+                  {[60, 120, 300, 600, 900, 1800, 3600].map((secs) => (
+                    <option key={secs} value={secs}>
+                      {secs < 3600 ? `${secs / 60} min` : '1 hour'}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+          )}
+          <div className="grid gap-3 sm:grid-cols-[6rem_minmax(0,1fr)_10rem]">
+            <Field label="Method">
+              <Select value={poll.method ?? 'GET'} onChange={(e) => patch({ method: e.target.value as Poll['method'] })}>
+                {['GET', 'POST'].map((method) => (
+                  <option key={method}>{method}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Path" hint="Added to the connection's address">
+              <Input value={poll.path ?? ''} onChange={(e) => patch({ path: e.target.value })} placeholder="/api/incidents?status=open" className="font-mono text-xs" />
+            </Field>
+            <Field label="List of alerts at" hint="Empty: the whole response is one">
+              <Input value={poll.itemsPath ?? ''} onChange={(e) => patch({ itemsPath: e.target.value })} placeholder="data.items" className="font-mono text-xs" />
+            </Field>
+          </div>
+          {poll.method === 'POST' && (
+            <Field label="Body (JSON)">
+              <Input value={poll.body ?? ''} onChange={(e) => patch({ body: e.target.value })} className="font-mono text-xs" />
+            </Field>
+          )}
+          {preset && (
+            <p className="text-2xs text-subtle">
+              <button type="button" className="text-[var(--accent)] hover:underline" onClick={() => patch({ path: preset.path, itemsPath: preset.itemsPath })}>
+                Use {preset.label}
+              </button>{' '}
+              · {preset.hint}
+            </p>
+          )}
+          <Checkbox
+            label="Resolve what disappears"
+            hint="An alert in the last answer that is missing from this one is treated as resolved."
+            checked={poll.resolveMissing !== false}
+            onChange={(e) => patch({ resolveMissing: e.target.checked })}
+          />
+          <div className="flex gap-2">
+            <Button size="sm" variant="secondary" onClick={() => void runPreview()} loading={busy} disabled={!poll.connectionId}>
+              <Send className="size-3.5" /> Test the poll
+            </Button>
+            {sourceId && (
+              <Button size="sm" variant="ghost" onClick={() => void pollNow()}>
+                <RefreshCw className="size-3.5" /> Poll now
+              </Button>
+            )}
+          </div>
+          {preview && (
+            <div className="space-y-1.5 rounded-sm border p-2 text-xs surface">
+              <p className="font-mono text-2xs text-subtle">
+                {preview.response.url} · {preview.response.status ? `HTTP ${preview.response.status}` : preview.response.message}
+                {preview.response.latencyMs !== null ? ` · ${preview.response.latencyMs} ms` : ''}
+              </p>
+              {preview.error ? (
+                <p className="text-[var(--priority-urgent)]">{preview.error}</p>
+              ) : preview.signals.length === 0 ? (
+                <p className="text-muted">The call worked, but no alerts were read from it. Check “List of alerts at” and the field mapping.</p>
+              ) : (
+                <ul className="max-h-48 space-y-0.5 overflow-y-auto">
+                  {preview.signals.map((signal) => (
+                    <li key={signal.dedupKey} className="flex items-center gap-2">
+                      <span className={signal.status === 'firing' ? 'text-[var(--priority-urgent)]' : 'text-[var(--status-resolved)]'}>{signal.status === 'firing' ? '● firing' : '○ resolved'}</span>
+                      <span className="truncate">{signal.title}</span>
+                      <span className="ml-auto shrink-0 text-2xs text-subtle">{signal.severity}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {preview.error && preview.response.body && <pre className="max-h-32 overflow-auto whitespace-pre-wrap text-2xs text-subtle">{preview.response.body}</pre>}
+            </div>
+          )}
+        </>
+      )}
+    </fieldset>
   );
 }
 

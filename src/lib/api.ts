@@ -26,6 +26,8 @@ import type {
 } from '@shared/types';
 import type { MessageTemplate, TemplateProvider } from '@shared/message-template';
 import type { ApprovalMode, ApprovalRule, TicketApproval } from '@shared/approvals';
+import type { Connection, ConnectionKind, ConnectionRequest } from '@shared/connections';
+import type { ApiTryResult } from '@shared/ops';
 import type { ShiftException, ShiftPattern } from '@shared/shifts';
 
 export type RoutedProvider = 'slack' | 'msteams' | 'linear' | 'github';
@@ -216,6 +218,14 @@ export const api = {
     removeException: (teamId: string, id: string) => del<{ schedule: DepartmentSchedule }>(`/shifts/${teamId}/exceptions/${id}`),
     handoverPreview: (teamId: string) => get<{ text: string }>(`/shifts/${teamId}/handover/preview`),
     sendHandover: (teamId: string) => post<{ deliveries: Array<{ channel: string; ok: boolean; detail: string }> }>(`/shifts/${teamId}/handover/send`, {}),
+  },
+
+  connections: {
+    list: (filter: { teamId?: string; kind?: ConnectionKind } = {}) => get<{ connections: Connection[]; canAddShared: boolean }>(`/connections${toQuery(filter)}`),
+    create: (body: Record<string, unknown>) => post<{ connection: Connection }>('/connections', body),
+    update: (id: string, body: Record<string, unknown>) => put<{ connection: Connection }>(`/connections/${id}`, body),
+    remove: (id: string) => del<void>(`/connections/${id}`),
+    tryCall: (id: string, request: ConnectionRequest) => post<{ result: ApiTryResult }>(`/connections/${id}/try`, request),
   },
 
   approvals: {

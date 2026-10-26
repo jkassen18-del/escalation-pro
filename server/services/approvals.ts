@@ -413,10 +413,9 @@ async function announceRequest(ticket: Ticket, approval: TicketApproval, origin?
     title: `Approval needed: ${ticket.reference}`,
     body: `${approval.title} · ${ticket.subject}`,
   });
-  const slack = await loadIntegration('slack');
-  if (slack.enabled) await postToDepartmentSlack(ticket.teamId, { text: `Approval needed: ${approval.title} (${ticket.reference})`, blocks: approvalSlackBlocks(ticket, approval, url) });
-  const teams = await loadIntegration('msteams');
-  if (teams.enabled) await postToDepartmentTeams(ticket.teamId, approvalCard(ticket, approval, url));
+  // The organisation's channel for the department and the department's own, whichever exist.
+  await postToDepartmentSlack(ticket.teamId, { text: `Approval needed: ${approval.title} (${ticket.reference})`, blocks: approvalSlackBlocks(ticket, approval, url) });
+  await postToDepartmentTeams(ticket.teamId, approvalCard(ticket, approval, url));
   const email = await loadIntegration('email');
   if (email.enabled) {
     const people = await db.all<{ email: string | null }>(`SELECT email FROM users WHERE id IN (${placeholders(approval.approverIds.length)})`, approval.approverIds);

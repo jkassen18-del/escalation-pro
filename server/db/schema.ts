@@ -780,6 +780,26 @@ const TABLES: string[] = [
   )`,
 
   /*
+   * A department's own connectors (see shared/connections.ts). team_id NULL
+   * is shared with everyone. Secrets inside config are encrypted.
+   */
+  `CREATE TABLE IF NOT EXISTS connections (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    team_id TEXT REFERENCES teams(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    config TEXT NOT NULL DEFAULT '{}',
+    events TEXT NOT NULL DEFAULT '{}',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_used_at TEXT,
+    last_error TEXT,
+    created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+
+  /*
    * Approval rules: which new tickets need sign-off, and from whom. The
    * conditions and approvers are JSON (see shared/approvals.ts).
    */
@@ -1013,6 +1033,7 @@ const INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_handover_reports_team ON handover_reports(team_id, shift_key)`,
   `CREATE INDEX IF NOT EXISTS idx_ticket_approvals_ticket ON ticket_approvals(ticket_id, status)`,
   `CREATE INDEX IF NOT EXISTS idx_ticket_approvals_status ON ticket_approvals(status)`,
+  `CREATE INDEX IF NOT EXISTS idx_connections_team ON connections(team_id, kind)`,
 ];
 
 /**
@@ -1214,6 +1235,24 @@ export const ADDITIVE_COLUMNS: AdditiveColumn[] = [
     column: 'sla_notified_due',
     definition: 'TEXT',
     why: 'the due date an SLA breach was announced for, so each breach is announced once across restarts and instances',
+  },
+  {
+    table: 'alert_sources',
+    column: 'poll',
+    definition: 'TEXT',
+    why: 'sources that fetch alerts from an API connection on a schedule (3.0)',
+  },
+  {
+    table: 'alert_sources',
+    column: 'poll_state',
+    definition: 'TEXT',
+    why: 'what the last poll saw firing, to resolve what has gone, and its last error',
+  },
+  {
+    table: 'alert_sources',
+    column: 'last_polled_at',
+    definition: 'TEXT',
+    why: 'when a polling source last ran, so it runs on its interval',
   },
 ];
 

@@ -26,6 +26,7 @@ import { deleteJob, getJob, jobConnection, listJobs, listRuns, openDecryptedBack
 import { canActOnPage, canManageAnyOnCall, canManageOnCallFor, filterToVisibleTickets, redactMonitor, redactSource } from '../ops/access.ts';
 import { checkDatabaseHealth } from '../ops/db-health.ts';
 import { callApi, sealAuth, validateApiConfig } from '../ops/api-probe.ts';
+import { assertConnectionUsable, resolveMonitorTarget } from '../ops/connections.ts';
 import { checkMonitorNow, deleteMonitor, getMonitor, listMonitors, monitorChecks, monitorDays, saveMonitor, validateMonitor } from '../ops/monitors.ts';
 import {
   addOverride,
@@ -111,6 +112,7 @@ opsRouter.post(
   '/monitors',
   requirePermission('monitors.manage'),
   asyncRoute(async (req, res) => {
+    await assertConnectionUsable(userOf(req), req.body?.config?.connectionId);
     const monitor = await saveMonitor(null, validateMonitor(req.body ?? {}));
     await audit(req, { entityType: 'monitor', entityId: monitor.id, action: 'monitor_created', summary: `Created ${monitor.kind} monitor "${monitor.name}"` });
     res.status(201).json({ monitor });
@@ -122,6 +124,7 @@ opsRouter.put(
   requirePermission('monitors.manage'),
   asyncRoute(async (req, res) => {
     if (!(await getMonitor(req.params.id))) throw notFound('That monitor does not exist.');
+    await assertConnectionUsable(userOf(req), req.body?.config?.connectionId);
     const monitor = await saveMonitor(req.params.id, validateMonitor(req.body ?? {}));
     await audit(req, { entityType: 'monitor', entityId: monitor.id, action: 'monitor_updated', summary: `Updated monitor "${monitor.name}"` });
     res.json({ monitor });
@@ -155,6 +158,12 @@ opsRouter.post(
     const monitorId = optionalString(req.body?.monitorId, 60);
     const stored = monitorId ? await db.get<{ config: string }>(`SELECT config FROM monitors WHERE id = ?`, [monitorId]) : undefined;
     const auth = sealAuth(config.auth, stored ? parseJson<MonitorConfig>(stored.config, {}).auth : undefined);
+    if (config.connectionId) {
+      await assertConnectionUsable(userOf(req), config.connectionId);
+      const resolved = await resolveMonitorTarget(target, config);
+      if ('error' in resolved) throw badRequest(resolved.error);
+      return res.json({ result: await callApi(resolved.url, resolved.config) });
+    }
     res.json({ result: await callApi(target, { ...config, auth }) });
   }),
 );
@@ -186,6 +195,7 @@ opsRouter.post(
   '/alert-sources',
   requirePermission('monitors.manage'),
   asyncRoute(async (req, res) => {
+    await assertConnectionUsable(userOf(req), req.body?.poll?.connectionId);
     const source = await saveSource(null, validateSource(req.body ?? {}));
     await audit(req, { entityType: 'alert', entityId: source.id, action: 'alert_source_created', summary: `Created alert source "${source.name}" (${source.kind})` });
     res.status(201).json({ source });
@@ -197,6 +207,7 @@ opsRouter.put(
   requirePermission('monitors.manage'),
   asyncRoute(async (req, res) => {
     if (!(await getSource(req.params.id))) throw notFound('That alert source does not exist.');
+    await assertConnectionUsable(userOf(req), req.body?.poll?.connectionId);
     const source = await saveSource(req.params.id, validateSource(req.body ?? {}));
     await audit(req, { entityType: 'alert', entityId: source.id, action: 'alert_source_updated', summary: `Updated alert source "${source.name}"` });
     res.json({ source });
@@ -223,6 +234,31 @@ opsRouter.post(
     if (!source) throw notFound('That alert source does not exist.');
     await audit(req, { entityType: 'alert', entityId: source.id, action: 'alert_source_rotated', summary: `Issued a new webhook URL for "${source.name}"` });
     res.json({ source });
+  }),
+);
+
+/** Polls with unsaved settings and shows what alerts would be read, sending nothing. */
+opsRouter.post(
+  '/alert-sources/poll-preview',
+  requirePermission('monitors.manage'),
+  asyncRoute(async (req, res) => {
+    const input = validateSource({ name: 'Preview', ...(req.body ?? {}) });
+    if (!input.poll) throw badRequest('Choose the API connection to poll.');
+    await assertConnectionUsable(userOf(req), input.poll.connectionId);
+    const { previewPoll } = await import('../ops/source-poll.ts');
+    res.json(await previewPoll(input, input.poll));
+  }),
+);
+
+/** Polls a saved source now, sending what it finds down the real pipeline. */
+opsRouter.post(
+  '/alert-sources/:id/poll',
+  requirePermission('monitors.manage'),
+  asyncRoute(async (req, res) => {
+    const { pollNow } = await import('../ops/source-poll.ts');
+    const result = await pollNow(req.params.id);
+    if (!result) throw notFound('That source does not poll.');
+    res.json({ error: result.error, results: result.results.map(({ action, ticketId }) => ({ action, ticketId })) });
   }),
 );
 
