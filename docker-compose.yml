@@ -14,7 +14,9 @@ services:
     environment:
       NODE_ENV: production
       # Comment this line out to run on the embedded SQLite database instead.
-      DATABASE_URL: postgresql://${POSTGRES_USER:-escalation}:${POSTGRES_PASSWORD:-escalation}@postgres:5432/${POSTGRES_DB:-escalation_pro}
+      # sslmode=disable: the bundled Postgres has no TLS, and the app only
+      # assumes "no TLS" for localhost.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-escalation}:${POSTGRES_PASSWORD:-escalation}@postgres:5432/${POSTGRES_DB:-escalation_pro}?sslmode=disable
       SESSION_SECRET: ${SESSION_SECRET:-}
       SECRET_KEY: ${SECRET_KEY:-}
       APP_URL: ${APP_URL:-}
