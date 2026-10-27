@@ -61,7 +61,9 @@ services:
     profiles: ['tunnel']
     command: tunnel --no-autoupdate run
     environment:
-      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN to use the tunnel profile}
+      # Not ${VAR:?}: Compose resolves every service even when its profile is
+      # off, so a required variable here broke plain `docker compose up`.
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
     depends_on:
       - app
 
