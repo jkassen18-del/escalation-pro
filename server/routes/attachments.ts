@@ -134,6 +134,9 @@ attachmentsRouter.post(
   }),
 );
 
+/** Shown in the browser; everything else is downloaded. */
+const INLINE_SAFE = /^(image\/(png|jpe?g|gif|webp|bmp|avif)|application\/pdf|text\/plain|video\/(mp4|webm)|audio\/(mpeg|ogg|wav|webm))$/i;
+
 attachmentsRouter.get(
   '/:attachmentId',
   asyncRoute(async (req, res) => {
@@ -148,10 +151,16 @@ attachmentsRouter.get(
     const bytes = await getAttachment(req.params.attachmentId, row.stored_name);
     if (!bytes) throw notFound('That file is no longer available.');
 
-    // SVGs can carry script, so never render them inline in the app's origin.
-    const inline = req.query.download !== '1' && row.mime_type !== 'image/svg+xml';
-    res.setHeader('Content-Type', row.mime_type);
+    // The type is whatever the uploader's browser claimed, so only types that
+    // cannot run script are shown inline; HTML, SVG, XML and the rest download.
+    const inline = req.query.download !== '1' && INLINE_SAFE.test(row.mime_type);
+    res.setHeader('Content-Type', inline ? row.mime_type : 'application/octet-stream');
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    // Even a file shown inline runs nothing and loads nothing.
+    // (PDFs are left to the browser's own isolated viewer, which a sandbox would block.)
+    if (row.mime_type.toLowerCase() !== 'application/pdf') {
+      res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; sandbox");
+    }
     res.setHeader('Content-Length', String(bytes.length));
     res.setHeader(
       'Content-Disposition',

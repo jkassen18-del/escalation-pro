@@ -61,14 +61,34 @@ Each carries its own proof instead of a session:
 | `/mcp` | A personal token or OAuth access token |
 | `/status/<slug>` | None: public pages are public, and show labels and states only |
 
+## Company network only
+
+Set `ALLOWED_NETWORKS` to the addresses your people come from, and everyone else is turned away before they see anything: no sign-in page, no scripts, no version, no API. Only the signed webhook and secret-URL intake paths in `PUBLIC_PATHS` stay reachable, because Slack, Teams, GitHub and your monitoring tools call them from the internet. Set `PUBLIC_PATHS=none` if nothing outside needs to reach the app.
+
+Behind a Cloudflare Tunnel, the app reads the visitor's address from `CF-Connecting-IP`, which Cloudflare overwrites, and only believes it when the request came from cloudflared on the same machine. So list your office's and VPN's **public** (internet-facing) addresses, as Cloudflare sees them:
+
+```text
+ALLOWED_NETWORKS=196.22.10.0/28, 41.160.5.20
+```
+
+For the strongest setup, put Cloudflare Access (Zero Trust) in front of the tunnel as well, so Cloudflare checks the person's company sign-in before a request reaches the server at all.
+
+## Protections in every response
+
+- **Content-Security-Policy**: scripts only from the app itself, no plugins, no framing (`frame-ancestors 'none'`), forms post only to the app.
+- `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `Permissions-Policy` turning off camera, microphone and location, cross-origin isolation headers.
+- `Strict-Transport-Security` over https.
+- `X-Robots-Tag: noindex` and a `robots.txt` that disallows everything, so nothing is indexed.
+- `Cache-Control: no-store` on every API answer, so no browser or CDN keeps ticket data.
+- A state-changing request made with the session cookie must come from the app's own pages (`Origin`/`Sec-Fetch-Site` checked), on top of `SameSite=Lax`.
+- Per-address request limits on the whole API, sign-in, invites and alert intake.
+- `/health` answers only `{"status": "ok"}` except to the server itself.
+- Attachments are shown in the browser only for images, PDF, plain text and media, under a sandboxing policy; every other type downloads.
+
 ## Known limitations
 
-- No CSRF tokens. Protection relies on `SameSite=Lax` session cookies, which browsers do not send on cross-site form posts.
-- No Content-Security-Policy header; add one at your reverse proxy.
 - The audit log is append-only by convention, not enforced in the database.
-- Rate limiting covers sign-in, OAuth client registration and `/mcp` only.
 - Administrators are trusted: they can configure outbound webhooks and read everything.
-- The XLSX export's Comments and History sheets are not limited to the exporter's departments; see [Reports](reports-and-audit.md#export-xlsx).
 
 ## Reporting a vulnerability
 

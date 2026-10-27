@@ -1,3 +1,4 @@
+import { clientAddress } from './network.ts';
 import type { Request } from 'express';
 import { db } from '../db/index.ts';
 import { randomId } from './crypto.ts';
@@ -49,8 +50,9 @@ export async function recordAudit(input: AuditInput): Promise<void> {
 }
 
 /** Honours X-Forwarded-For when running behind a proxy (`trust proxy` is set). */
+/** The visitor's real address, including behind the Cloudflare Tunnel. */
 export function clientIp(req: Request): string | null {
-  return req.ip ?? req.socket?.remoteAddress ?? null;
+  return clientAddress(req);
 }
 
 export function mapAuditRow(row: Record<string, unknown>): AuditEntry {

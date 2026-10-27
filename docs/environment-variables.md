@@ -55,6 +55,11 @@ DATABASE_URL=mysql://infraticket:secret@127.0.0.1:3306/infraticket
 | `ORGANIZATION_NAME` | `Service Desk` | Organisation name used by the bootstrap administrator |
 | `CRON_SECRET` | empty | Bearer token for `/api/cron/*`; the endpoints refuse everything while it is empty |
 | `MCP_RATE_LIMIT_PER_MIN` | `120` | AI connector requests per minute per credential |
+| `ALLOWED_NETWORKS` | empty (anyone who can reach it) | Comma-separated IP addresses and CIDR ranges allowed in, e.g. `10.0.0.0/8, 196.22.10.4`. Everyone else gets a bare 403 before any page, asset or API. Behind a Cloudflare Tunnel, list the company's and the VPN's *public* addresses. See [Security](security.md#company-network-only) |
+| `PUBLIC_PATHS` | `/api/webhooks/, /api/ingest/, /api/heartbeat/` | Path prefixes still reachable from outside `ALLOWED_NETWORKS`, for signed webhooks and secret-URL alert intake. `none` closes them too |
+| `RATE_LIMIT_API_PER_MIN` | `3000` | API requests per minute per address (an office shares one) |
+| `RATE_LIMIT_AUTH_PER_MIN` | `300` | Requests per minute per address to `/api/auth/*` (wrong passwords are limited separately) |
+| `RATE_LIMIT_INTAKE_PER_MIN` | `600` | Alert, heartbeat and webhook requests per minute per address |
 
 Generate secrets with:
 

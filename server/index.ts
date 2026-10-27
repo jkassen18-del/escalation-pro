@@ -46,6 +46,9 @@ import { handleDiscordEvent } from './integrations/discord-handlers.ts';
 import { startSlaMonitor } from './jobs/sla-monitor.ts';
 import { APP_VERSION } from '../shared/version.ts';
 import { pruneAttempts } from './lib/rate-limit.ts';
+import { isDirectLocal } from './lib/network.ts';
+import { getSettings } from './repositories/settings.ts';
+import { LIMIT_RULES, networkGuard, networkPolicyFromEnv, publicPaths, requestLimiter, robotsTxt, sameOriginGuard, securityHeaders } from './middleware/security.ts';
 
 /** Routes whose JSON bodies may carry pasted screenshots. */
 const SCREENSHOT_ROUTES = ['/api/tickets', '/api/ticket-templates'];
@@ -53,6 +56,9 @@ const carriesScreenshots = (url: string) => SCREENSHOT_ROUTES.some((route) => ur
 
 export async function createApp() {
   const app = express();
+  if (IS_PRODUCTION && !process.env.SECRET_KEY) {
+    console.warn('[security] SECRET_KEY is not set: stored integration secrets are encrypted with a key derived from SESSION_SECRET. Set SECRET_KEY to its own long random value (keep the current SESSION_SECRET when you do, or existing secrets cannot be read).');
+  }
 
   // Required for correct req.ip and secure cookies behind a reverse proxy.
   // The portable exe trusts only a proxy on the same machine ('loopback'): it
@@ -66,6 +72,13 @@ export async function createApp() {
     /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy === 'true' ? true : trustProxy === 'false' ? false : trustProxy,
   );
   app.disable('x-powered-by');
+
+  // The outer wall: headers, the company-network allowlist and request limits
+  // run before anything else, so a refused visitor never reaches a route.
+  app.use(securityHeaders({ production: IS_PRODUCTION }));
+  app.get('/robots.txt', robotsTxt);
+  app.use(networkGuard(networkPolicyFromEnv(), publicPaths(process.env.PUBLIC_PATHS)));
+  app.use(requestLimiter(LIMIT_RULES));
 
   app.use(
     express.json({
@@ -90,6 +103,12 @@ export async function createApp() {
     }),
   );
   app.use(cookieParser());
+  // The app's own address for the same-origin check, kept fresh without a read per request.
+  let ownAppUrl = '';
+  const refreshAppUrl = () => getSettings().then((settings) => (ownAppUrl = settings.appUrl || '')).catch(() => undefined);
+  setInterval(refreshAppUrl, 60_000).unref();
+  void refreshAppUrl();
+  app.use(sameOriginGuard(() => ownAppUrl));
 
   /**
    * express-session reads its store on every request that carries a session
@@ -152,10 +171,13 @@ export async function createApp() {
     }),
   );
 
-  app.get('/health', async (_req, res) => {
+  app.get('/health', async (req, res) => {
+    // Details (database engine, background loops, error text) only for the server itself.
+    const detailed = isDirectLocal(req);
     try {
       await ensureDatabaseReady();
       await db.get('SELECT 1 AS ok');
+      if (!detailed) return res.json({ status: 'ok' });
       // When the background loops last ran: a stale lastPagerTickAt means
       // escalations have stopped, which no other check here would show.
       const ops = await opsHealth().catch(() => null);
@@ -163,6 +185,7 @@ export async function createApp() {
     } catch (error) {
       // Deliberately still a JSON body: an unreachable database is the most
       // common deployment fault, and this is where its reason gets reported.
+      if (!detailed) return res.status(503).json({ status: 'degraded' });
       res.status(503).json({
         status: 'degraded',
         database: dbConfig.driver,
