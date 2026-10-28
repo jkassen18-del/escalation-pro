@@ -3,16 +3,19 @@ import type { Request } from 'express';
 
 /**
  * Who is really on the other end of a request, and whether they are on the
- * company network.
+ * company network - however the app is reached: directly, through a reverse
+ * proxy (IIS, nginx, Caddy) or through a tunnel (Cloudflare and others).
  *
- * Behind a Cloudflare Tunnel every request reaches the app from cloudflared on
- * the same machine, so the socket address is always loopback. Cloudflare puts
- * the visitor's real address in CF-Connecting-IP and overwrites any value the
- * visitor sent, so that header is believed - but only when the request came
- * from this machine. Anyone connecting directly cannot use it to pretend.
+ * By default the address comes from Express, which believes X-Forwarded-For
+ * only from proxies TRUST_PROXY names (the portable exe: a proxy on this
+ * machine). CLIENT_IP_HEADER names a proxy's own header instead, such as
+ * cf-connecting-ip for Cloudflare or x-real-ip for nginx; it too is believed
+ * only when the request came from a trusted proxy, so someone connecting
+ * directly cannot use it to pretend to be on the company network.
  */
 
 const LOOPBACK = /^(127\.|::1$|::ffff:127\.)/;
+const PROXY_HEADERS = ['x-forwarded-for', 'x-real-ip', 'cf-connecting-ip', 'forwarded'];
 
 const normalise = (address: string) => address.trim().replace(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/, '$1');
 
@@ -20,18 +23,27 @@ export function isLoopback(address: string | null | undefined): boolean {
   return Boolean(address && LOOPBACK.test(address));
 }
 
-/** The visitor's address: Cloudflare's report when relayed locally, else Express's view (which honours trust proxy). */
+function fromTrustedProxy(req: Request): boolean {
+  const trust = req.app?.get('trust proxy fn') as ((address: string, hop: number) => boolean) | undefined;
+  const socket = req.socket?.remoteAddress;
+  return Boolean(trust && socket && trust(socket, 0));
+}
+
+/** The visitor's address, as the configured proxy reports it, or as Express sees it. */
 export function clientAddress(req: Request): string | null {
-  const socket = req.socket?.remoteAddress ?? null;
-  const relayed = req.get('cf-connecting-ip');
-  if (relayed && isLoopback(socket) && net.isIP(relayed.trim())) return normalise(relayed);
-  const address = req.ip ?? socket;
+  const header = process.env.CLIENT_IP_HEADER?.trim().toLowerCase();
+  if (header && fromTrustedProxy(req)) {
+    const reported = req.get(header)?.split(',')[0]?.trim();
+    if (reported && net.isIP(reported)) return normalise(reported);
+  }
+  const address = req.ip ?? req.socket?.remoteAddress ?? null;
   return address ? normalise(address) : null;
 }
 
 /** True when the request was made on this machine itself, with no proxy in between. */
 export function isDirectLocal(req: Request): boolean {
-  return isLoopback(req.socket?.remoteAddress) && !req.get('cf-connecting-ip') && !req.get('x-forwarded-for');
+  const configured = process.env.CLIENT_IP_HEADER?.trim().toLowerCase();
+  return isLoopback(req.socket?.remoteAddress) && ![...PROXY_HEADERS, ...(configured ? [configured] : [])].some((name) => req.get(name));
 }
 
 export interface NetworkPolicy {

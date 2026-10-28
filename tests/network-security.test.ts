@@ -36,9 +36,9 @@ const OFFICE = '10.20.4.17';
 const VPN = '196.22.10.4';
 const OUTSIDER = '203.0.113.9';
 
-/** As the tunnel delivers it: from this machine, with Cloudflare's report of the visitor. */
+/** As a reverse proxy or tunnel on this machine delivers it: the visitor in X-Forwarded-For. */
 function via(ip: string, headers: Record<string, string> = {}) {
-  return { 'cf-connecting-ip': ip, 'x-forwarded-for': ip, 'x-forwarded-proto': 'https', ...headers };
+  return { 'x-forwarded-for': ip, 'x-forwarded-proto': 'https', ...headers };
 }
 
 async function req(method: string, url: string, headers: Record<string, string> = {}, body?: unknown) {
@@ -110,8 +110,18 @@ test('outside the company network nothing is served: no login page, no assets, n
 });
 
 test("a forged visitor address does not get past, and signed webhooks still arrive from outside", async () => {
-  // Cloudflare overwrites CF-Connecting-IP; a visitor adding their own X-Forwarded-For changes nothing.
+  // The proxy appends the real address; one the visitor wrote in front of it is not believed.
   assert.equal((await req('GET', '/api/auth/me', via(OUTSIDER, { 'x-forwarded-for': `${OFFICE}, ${OUTSIDER}` }))).status, 403);
+  // A proxy's own header is ignored unless CLIENT_IP_HEADER names it...
+  assert.equal((await req('GET', '/api/auth/me', via(OUTSIDER, { 'cf-connecting-ip': OFFICE }))).status, 403, 'an unconfigured header let an outsider in');
+  // ...and then it is the one believed.
+  process.env.CLIENT_IP_HEADER = 'cf-connecting-ip';
+  try {
+    assert.equal((await req('GET', '/api/auth/me', via(OUTSIDER, { 'cf-connecting-ip': OFFICE, cookie }))).status, 200);
+    assert.equal((await req('GET', '/api/auth/me', via(OFFICE, { 'cf-connecting-ip': OUTSIDER }))).status, 403);
+  } finally {
+    delete process.env.CLIENT_IP_HEADER;
+  }
   // Alert intake and heartbeats carry their own secret: reachable, and refused on the secret instead.
   assert.equal((await req('POST', '/api/ingest/not-a-real-token-123456', via(OUTSIDER), { title: 'x' })).status, 404);
   assert.equal((await req('GET', '/api/heartbeat/not-a-real-token-123456', via(OUTSIDER))).status, 404);
@@ -181,5 +191,48 @@ test('outsiders get a bare health answer; attachments that could hold script are
       assert.match(disposition, /^inline/);
       assert.match(served.headers.get('content-security-policy') ?? '', /sandbox/);
     }
+  }
+});
+
+test('how it is served is a choice: plain http, or https with the organisation\'s own certificate', async () => {
+  const { tlsFromEnv, reachableUrls, createListener } = await import('../server/lib/listen.ts');
+  assert.equal(tlsFromEnv({}), null, 'no certificate means plain http');
+  assert.throws(() => tlsFromEnv({ TLS_CERT_FILE: 'cert.pem' }), /both TLS_CERT_FILE and TLS_KEY_FILE/);
+  assert.throws(() => tlsFromEnv({ TLS_PFX_FILE: 'missing.pfx' }), /TLS_PFX_FILE: cannot read missing\.pfx/);
+  assert.deepEqual(reachableUrls('127.0.0.1', 8080, false), ['http://localhost:8080']);
+  const everywhere = reachableUrls('0.0.0.0', 8443, true);
+  assert.equal(everywhere[0], 'https://localhost:8443');
+  assert.ok(everywhere.length >= 2, 'the network addresses are listed for people to use');
+
+  // A real https server from a PEM certificate, if openssl is here to make one.
+  const { execFileSync } = await import('node:child_process');
+  const os = await import('node:os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'it-tls-'));
+  try {
+    execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-subj', '/CN=localhost', '-days', '1', '-keyout', path.join(dir, 'key.pem'), '-out', path.join(dir, 'cert.pem')], { stdio: 'ignore' });
+  } catch {
+    return; // no openssl on this machine: the parsing checks above still ran
+  }
+  const express = (await import('express')).default;
+  const app = express();
+  app.get('/', (request, response) => response.json({ secure: request.secure }));
+  const tls = tlsFromEnv({ TLS_CERT_FILE: path.join(dir, 'cert.pem'), TLS_KEY_FILE: path.join(dir, 'key.pem') });
+  const secureServer = createListener(app, tls);
+  await new Promise<void>((resolve) => secureServer.listen(0, '127.0.0.1', () => resolve()));
+  try {
+    const https = await import('node:https');
+    const body = await new Promise<string>((resolve, reject) => {
+      https
+        .get({ host: '127.0.0.1', port: (secureServer.address() as { port: number }).port, path: '/', rejectUnauthorized: false }, (response) => {
+          let data = '';
+          response.on('data', (chunk) => (data += chunk));
+          response.on('end', () => resolve(data));
+        })
+        .on('error', reject);
+    });
+    assert.deepEqual(JSON.parse(body), { secure: true });
+  } finally {
+    secureServer.close();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

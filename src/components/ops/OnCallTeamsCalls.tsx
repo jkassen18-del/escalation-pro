@@ -73,7 +73,7 @@ export function OnCallTeamsCalls() {
           (Integrations → Microsoft Teams).
         </Step>
         <Step done={Boolean(settings.callingWebhookUrl)}>
-          The App URL in Settings is a public <strong>https</strong> address. Microsoft posts call events to it; a Cloudflare Tunnel
+          The App URL in Settings is a public <strong>https</strong> address. Microsoft posts call events to it; a reverse proxy or tunnel
           that exposes only <code className="font-mono">/api/webhooks/*</code> and <code className="font-mono">/api/public/*</code> is enough.
         </Step>
         <Step>

@@ -1,7 +1,52 @@
-# Going live on infraticket.co.za
+# Going live
+
+How to give people InfraTicket. There is no required setup: choose the one that
+fits how your company works. The first three need no tunnel, proxy, domain or
+cloud account.
+
+| Setup | Who can open it | What it takes |
+| --- | --- | --- |
+| **A. One computer** | Only that computer | Nothing: run it |
+| **B. Company network / VPN** | Anyone on the network or VPN | `HOST=0.0.0.0` in `.env` (or `--network`), allow the port in the firewall |
+| **C. Company network over https** | Same, over https | B plus your company's certificate: `TLS_PFX_FILE` (+ `TLS_PFX_PASSPHRASE`), or `TLS_CERT_FILE` + `TLS_KEY_FILE` |
+| **D. Your own reverse proxy** | Whatever the proxy allows | IIS, nginx, Caddy or Azure Application Proxy in front, pointing at `http://localhost:8080` |
+| **E. The internet through Cloudflare** | Anyone, or whoever Cloudflare Access lets in | The Cloudflare walkthrough below |
+
+For B to D, add `ALLOWED_NETWORKS` with your office and VPN ranges to turn
+away anyone else, even if the network is wider than you meant. Slack replies,
+the Teams bot, Linear sync and cloud alert sources need an address those
+services can reach from the internet; if you do not use them, B or C is all
+you need. See `docs/portable.md` → *Choose how people reach it* for the exact
+`.env` lines.
+
+### B or C in five minutes
+
+1. Copy `InfraTicket.exe` to a machine that stays on (a server or an always-on
+   PC), in its own folder.
+2. Next to it, create `.env`:
+
+   ```text
+   HOST=0.0.0.0
+   PORT=8080
+   SETUP_TOKEN=pick-a-long-random-value
+   ALLOWED_NETWORKS=10.0.0.0/8, 192.168.0.0/16
+   # For https (option C), add your certificate:
+   # TLS_PFX_FILE=C:\InfraTicket\infraticket.pfx
+   # TLS_PFX_PASSPHRASE=...
+   ```
+
+3. Start the exe, allow it through Windows Firewall, and share one of the
+   addresses the console prints, e.g. `http://SERVER01:8080`. Ask IT for a DNS
+   name such as `infraticket.company.local` if you want a friendlier address.
+4. Set *Settings → App URL* to that address, so links in emails and Teams
+   messages point at it.
+
+---
+
+## E. On the internet through Cloudflare (optional)
 
 How to put InfraTicket on `https://infraticket.co.za` through Cloudflare, so it
-can be tested for a while before the team is given the address.
+can be reached from outside the network.
 
 The app runs on a machine you control. A **Cloudflare Tunnel** connects that
 machine to Cloudflare, and Cloudflare serves the domain over HTTPS. Nothing on
@@ -15,7 +60,8 @@ people ──https──▶ Cloudflare (infraticket.co.za) ◀──tunnel──
 InfraTicket cannot run *on* Cloudflare itself (Workers or Pages): it needs a
 long-running server for monitoring, paging and the SLA clock, and a database.
 
----
+To record visitors' real addresses (and use `ALLOWED_NETWORKS` with the
+addresses Cloudflare sees), add `CLIENT_IP_HEADER=cf-connecting-ip` to `.env`.
 
 ## 1. Check the domain is active in Cloudflare
 

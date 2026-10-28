@@ -50,7 +50,7 @@ export async function recordAudit(input: AuditInput): Promise<void> {
 }
 
 /** Honours X-Forwarded-For when running behind a proxy (`trust proxy` is set). */
-/** The visitor's real address, including behind the Cloudflare Tunnel. */
+/** The visitor's real address, also when a proxy or tunnel relays the request. */
 export function clientIp(req: Request): string | null {
   return clientAddress(req);
 }

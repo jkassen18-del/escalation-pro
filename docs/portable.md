@@ -46,28 +46,49 @@ If something else uses 8080, the console says *Another program is using that por
 
 To see what holds the port: `netstat -ano | findstr :8080`, then look the PID up in Task Manager.
 
-> **Warning** A `.env` file beside the exe **cannot** change `PORT`, `HOST`, `DATA_DIR` or `SQLITE_FILE`: the exe sets those before it reads `.env`. Use `--port` or a real environment variable. Every other variable (for example `SETUP_TOKEN`, `SECRET_KEY`, `APP_URL`, `BACKUP_TOOLS_DIR`) works from `.env`.
+A `.env` file beside the exe can set any of these, including `PORT`, `HOST`, `DATA_DIR` and `SQLITE_FILE`. Restart the exe after changing it.
 
-### Letting other machines connect
+## Choose how people reach it
 
-The exe listens on `127.0.0.1` only. To let colleagues or phones on the network reach it, start it with `HOST` set in the environment:
+Nothing here is required: pick the setup that fits, in `.env` beside the exe. No tunnel, proxy or cloud service is needed for any of the first three.
 
-```bat
-set HOST=0.0.0.0
-InfraTicket.exe --port 8080
+| Setup | `.env` | People open |
+| --- | --- | --- |
+| **This computer only** (the default) | nothing | `http://localhost:8080` |
+| **Company network** | `HOST=0.0.0.0` | `http://<this-pc-name>:8080` |
+| **Company network over https** | `HOST=0.0.0.0` and a certificate (below) | `https://<this-pc-name>:8080` |
+| **Behind your own proxy or tunnel** | see below | your proxy's address |
+
+The console lists the exact addresses when the exe starts. `InfraTicket.exe --network` does the same as `HOST=0.0.0.0` without editing a file.
+
+On a network setup, allow the port through Windows Firewall when asked, and set `SETUP_TOKEN` first if the setup screen is still open. To limit it to the office and VPN, add `ALLOWED_NETWORKS` (see [Security](security.md#company-network-only)).
+
+### https with your own certificate
+
+Ask IT for a certificate for the machine's name, then point the exe at it. A Windows `.pfx`:
+
+```text
+HOST=0.0.0.0
+PORT=443
+TLS_PFX_FILE=C:\Tools\InfraTicket\infraticket.pfx
+TLS_PFX_PASSPHRASE=the-pfx-password
 ```
 
-Allow the port through Windows Firewall when asked, and set `SETUP_TOKEN` first if the setup screen is still open.
+or PEM files: `TLS_CERT_FILE=…\cert.pem` and `TLS_KEY_FILE=…\key.pem`. The sign-in cookie is then marked secure automatically, and phone push works.
+
+### Behind a reverse proxy or tunnel
+
+IIS, nginx, Caddy, Azure Application Proxy, a Cloudflare Tunnel or anything similar can sit in front: leave `HOST` unset (the proxy runs on the same machine) and point the proxy at `http://localhost:8080`. The exe believes the proxy's `X-Forwarded-*` headers only from this machine. If your proxy reports the visitor in its own header, name it: `CLIENT_IP_HEADER=cf-connecting-ip` (Cloudflare) or `CLIENT_IP_HEADER=x-real-ip` (nginx). `GO-LIVE.md` in the repository walks through the Cloudflare option.
 
 ## What works, and what needs extra setup
 
 Everything in the web app works: tickets, forms, SLAs, monitors, alert sources, on-call, status pages and backups.
 
 - **SMS and phone calls** run in **sandbox mode**: each attempt is written to the incident timeline as *simulated*. Add Twilio under *On-call → Phone & SMS* for real ones.
-- **Webhooks from the internet** (Slack replies, Teams bot, Linear sync, cloud alert sources, Twilio) need a public https address: run a Cloudflare Tunnel to `http://localhost:8080` and set *Settings → Public URL* to the tunnel address. Discord, built-in monitors, heartbeats from your own network and outbound notifications need nothing.
+- **Webhooks from the internet** (Slack replies, Teams bot, Linear sync, cloud alert sources, Twilio) need an https address those services can reach: a public IP or port forward, a reverse proxy, or a tunnel; set *Settings → Public URL* to it. If you do not use those, nothing is needed: Discord, built-in monitors, heartbeats from your own network, mailboxes and outbound notifications all work from inside the network.
 - **Backups** of SQLite need nothing; other engines need the vendor's dump tool installed or in a folder named by `BACKUP_TOOLS_DIR` (e.g. `C:\Program Files\PostgreSQL\16\bin`).
 - **Ping monitors** use Windows' own `ping`.
-- **Phone push** works on the laptop at `http://localhost:8080`; phones need an https address.
+- **Phone push** works on the laptop at `http://localhost:8080`; phones need an https address (your own certificate above, or a proxy).
 - **Teams calls** need the Teams bot and an https Public URL Microsoft can reach.
 
 ## Moving a tested workspace

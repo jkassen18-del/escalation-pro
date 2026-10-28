@@ -104,7 +104,7 @@ export function SlackSetup({ result, card }: { result: URLSearchParams; card: Re
       {!setup.publicUrl && (
         <Notice tone="warn">
           InfraTicket is at <span className="font-mono">{setup.base}</span>, which Slack cannot reach from the internet. Notifications will work; replies in threads, buttons and
-          the slash command need a public https address (a Cloudflare Tunnel is free). Set it under Settings → App URL, then come back: the manifest updates itself.
+          the slash command need a public https address (a port forward, reverse proxy or tunnel). Set it under Settings → App URL, then come back: the manifest updates itself.
         </Notice>
       )}
 

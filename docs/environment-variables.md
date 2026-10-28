@@ -11,10 +11,13 @@ Integration credentials (Slack, Teams, Linear, Discord, SMTP, Twilio) are **not*
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `PORT` | `3000` (portable: `8080`) | Port to listen on |
-| `HOST` | `0.0.0.0` (portable: `127.0.0.1`) | Address to bind. `127.0.0.1` means this machine only |
+| `HOST` | `0.0.0.0` (portable: `127.0.0.1`) | Address to bind. `127.0.0.1`: this machine only (or a proxy on it). `0.0.0.0`: everyone on the network. The portable exe reads it from `.env`, or use `--network` |
+| `TLS_PFX_FILE`, `TLS_PFX_PASSPHRASE` | empty | Serve https directly with this `.pfx` certificate, no proxy needed |
+| `TLS_CERT_FILE`, `TLS_KEY_FILE` | empty | The same with PEM files; set both |
 | `APP_URL` | empty | Public address, e.g. `https://tickets.example.com`. Used when *Settings → Public URL* is empty |
 | `NODE_ENV` | (portable: `production`) | `production` serves the built client; anything else runs the Vite dev server |
-| `TRUST_PROXY` | `1` (portable: `0`) | Reverse-proxy hops whose `X-Forwarded-For` is believed. `0` when clients reach the app directly, or the per-IP login limit can be dodged |
+| `TRUST_PROXY` | `1` (portable: `loopback`) | Proxies whose `X-Forwarded-For` is believed: a hop count, `loopback` (a proxy on this machine), addresses, or `false`. Set `false` when clients always reach the app directly |
+| `CLIENT_IP_HEADER` | empty | A proxy's own visitor-address header to believe instead of `X-Forwarded-For`, e.g. `cf-connecting-ip` (Cloudflare) or `x-real-ip` (nginx). Only believed from a trusted proxy |
 | `CLIENT_DIST` | `dist/client` | Folder of the built web client |
 
 ## Database
@@ -55,7 +58,7 @@ DATABASE_URL=mysql://infraticket:secret@127.0.0.1:3306/infraticket
 | `ORGANIZATION_NAME` | `Service Desk` | Organisation name used by the bootstrap administrator |
 | `CRON_SECRET` | empty | Bearer token for `/api/cron/*`; the endpoints refuse everything while it is empty |
 | `MCP_RATE_LIMIT_PER_MIN` | `120` | AI connector requests per minute per credential |
-| `ALLOWED_NETWORKS` | empty (anyone who can reach it) | Comma-separated IP addresses and CIDR ranges allowed in, e.g. `10.0.0.0/8, 196.22.10.4`. Everyone else gets a bare 403 before any page, asset or API. Behind a Cloudflare Tunnel, list the company's and the VPN's *public* addresses. See [Security](security.md#company-network-only) |
+| `ALLOWED_NETWORKS` | empty (anyone who can reach it) | Comma-separated IP addresses and CIDR ranges allowed in, e.g. `10.0.0.0/8, 196.22.10.4`. Everyone else gets a bare 403 before any page, asset or API. Use the addresses the app sees: internal ranges when people connect directly, *public* ones when the internet is in between (a tunnel or cloud proxy). See [Security](security.md#company-network-only) |
 | `PUBLIC_PATHS` | `/api/webhooks/, /api/ingest/, /api/heartbeat/` | Path prefixes still reachable from outside `ALLOWED_NETWORKS`, for signed webhooks and secret-URL alert intake. `none` closes them too |
 | `RATE_LIMIT_API_PER_MIN` | `3000` | API requests per minute per address (an office shares one) |
 | `RATE_LIMIT_AUTH_PER_MIN` | `300` | Requests per minute per address to `/api/auth/*` (wrong passwords are limited separately) |

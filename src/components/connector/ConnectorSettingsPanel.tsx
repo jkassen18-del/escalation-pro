@@ -111,7 +111,7 @@ export function ConnectorSettingsPanel() {
         <Field
           label="Public address"
           htmlFor="connectorUrl"
-          hint="The https address AI clients use, e.g. a Cloudflare Tunnel. Leave empty to use the App URL. Changing it disconnects OAuth apps, whose tokens are bound to the address."
+          hint="The https address AI clients use, e.g. your reverse proxy or tunnel. Leave empty to use the App URL. Changing it disconnects OAuth apps, whose tokens are bound to the address."
         >
           <Input
             id="connectorUrl"

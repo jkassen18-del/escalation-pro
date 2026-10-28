@@ -65,13 +65,17 @@ Each carries its own proof instead of a session:
 
 Set `ALLOWED_NETWORKS` to the addresses your people come from, and everyone else is turned away before they see anything: no sign-in page, no scripts, no version, no API. Only the signed webhook and secret-URL intake paths in `PUBLIC_PATHS` stay reachable, because Slack, Teams, GitHub and your monitoring tools call them from the internet. Set `PUBLIC_PATHS=none` if nothing outside needs to reach the app.
 
-Behind a Cloudflare Tunnel, the app reads the visitor's address from `CF-Connecting-IP`, which Cloudflare overwrites, and only believes it when the request came from cloudflared on the same machine. So list your office's and VPN's **public** (internet-facing) addresses, as Cloudflare sees them:
+List the addresses the app actually sees, which depends on how people reach it:
+
+- **Directly on the network or VPN** (`HOST=0.0.0.0`, with or without the built-in https): the internal ranges, e.g. `ALLOWED_NETWORKS=10.0.0.0/8, 172.16.0.0/12`.
+- **Through a reverse proxy on the same machine** (IIS, nginx, Caddy): the visitors' internal ranges as above. The app believes the proxy's `X-Forwarded-For` because `TRUST_PROXY` trusts a proxy on this machine; someone connecting directly cannot forge it.
+- **Through a tunnel or cloud proxy** (Cloudflare and similar): your office's and VPN's **public** addresses, as the internet sees them. Set `CLIENT_IP_HEADER` if the service reports the visitor in its own header, e.g. `cf-connecting-ip`.
 
 ```text
-ALLOWED_NETWORKS=196.22.10.0/28, 41.160.5.20
+ALLOWED_NETWORKS=10.0.0.0/8, 196.22.10.0/28
 ```
 
-For the strongest setup, put Cloudflare Access (Zero Trust) in front of the tunnel as well, so Cloudflare checks the person's company sign-in before a request reaches the server at all.
+A proxy's own header is only believed when you name it in `CLIENT_IP_HEADER`, and only from a proxy `TRUST_PROXY` trusts. If you use a cloud service in front, its own access controls (for Cloudflare, Access / Zero Trust) add a second wall before requests reach the server.
 
 ## Protections in every response
 

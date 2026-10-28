@@ -16,6 +16,8 @@
  *   InfraTicket.exe                 start, and open the browser
  *   InfraTicket.exe --no-browser    start without opening the browser
  *   InfraTicket.exe --port 9090     listen somewhere other than 8080
+ *   InfraTicket.exe --network       let others on the network open it
+ *                                   (same as HOST=0.0.0.0 in .env)
  *   InfraTicket.exe decrypt-backup <file> [out]
  *                                   decrypt a backup with BACKUP_KEY/SECRET_KEY
  *                                   or this folder's key; no server needed
@@ -124,11 +126,15 @@ async function main() {
 
   const sea = loadSea();
   const home = sea ? path.dirname(process.execPath) : process.cwd();
+  // The .env beside the exe is read before any default is applied, so every
+  // choice in it - who can reach the app, the port, the data folder, the
+  // database - is honoured. (dotenv never overwrites a variable that is
+  // already set, so reading it after the defaults would silently ignore them.)
+  (await import('dotenv')).config({ path: path.join(home, '.env'), quiet: true });
   const dataDir = process.env.DATA_DIR || path.join(home, 'InfraTicket-data');
 
   if (args[0] === 'decrypt-backup') {
     // Needs only the file and a key: no database, no web UI, no server.
-    (await import('dotenv')).config({ path: path.join(home, '.env'), quiet: true });
     const { decryptBackupCommand } = await import('./ops/backup-format.ts');
     await decryptBackupCommand(args.slice(1), [dataDir]).catch((error: Error) => {
       console.error(`decrypt-backup: ${error.message}`);
@@ -139,8 +145,9 @@ async function main() {
 
   fs.mkdirSync(dataDir, { recursive: true });
 
-  // Defaults for a laptop: local-only, embedded database, production UI.
-  // Anything already set in the environment (or a .env beside the exe) wins.
+  // Defaults for a laptop: this computer only, embedded database, production UI.
+  // Anything set in the environment or the .env wins; --network and --host
+  // open it to the company network without editing a file.
   process.env.NODE_ENV ||= 'production';
   process.env.DATA_DIR = dataDir;
   process.env.UPLOADS_DIR ||= path.join(dataDir, 'uploads');
@@ -148,6 +155,8 @@ async function main() {
   process.env.SQLITE_FILE ||= 'infraticket.db';
   process.env.SQLITE_ENGINE ||= 'node';
   process.env.PORT = argValue(args, '--port') || process.env.PORT || '8080';
+  if (args.includes('--network')) process.env.HOST = '0.0.0.0';
+  if (argValue(args, '--host')) process.env.HOST = argValue(args, '--host');
   process.env.HOST ||= '127.0.0.1';
   process.env.INFRATICKET_PORTABLE = '1';
   if (sea) {
@@ -165,7 +174,8 @@ async function main() {
   const { startServer } = await import('./index.ts');
   await startServer();
 
-  const url = `http://localhost:${process.env.PORT}`;
+  const secure = Boolean(process.env.TLS_PFX_FILE || process.env.TLS_CERT_FILE);
+  const url = `${secure ? 'https' : 'http'}://localhost:${process.env.PORT}`;
   console.log(`  Data folder: ${dataDir}`);
   console.log('  Close this window to stop InfraTicket.\n');
   if (!args.includes('--no-browser')) openBrowser(url);

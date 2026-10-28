@@ -31,13 +31,27 @@ Delete the folder to start over.
 InfraTicket.exe                   start and open the browser
 InfraTicket.exe --no-browser      start without opening the browser
 InfraTicket.exe --port 9090       listen somewhere other than 8080
+InfraTicket.exe --network         let others on the network open it
 InfraTicket.exe export [file.zip] pack the workspace to move it elsewhere
 InfraTicket.exe --version
 ```
 
 Any variable from `.env.example` can be set in the environment or in a `.env`
-file next to the executable. The portable build listens on `127.0.0.1` only;
-set `HOST=0.0.0.0` to let other machines on the network reach it.
+file next to the executable, including `HOST`, `PORT` and `DATA_DIR`.
+
+## Choose how people reach it
+
+None of these needs a tunnel, proxy or cloud service; pick one in `.env`:
+
+| Setup | `.env` | People open |
+| --- | --- | --- |
+| This computer only (default) | nothing | `http://localhost:8080` |
+| Company network | `HOST=0.0.0.0` | `http://<this-pc-name>:8080` |
+| Company network over https | `HOST=0.0.0.0` plus `TLS_PFX_FILE` (and `TLS_PFX_PASSPHRASE`), or `TLS_CERT_FILE` and `TLS_KEY_FILE` | `https://<this-pc-name>:8080` |
+| Behind your own proxy or tunnel (IIS, nginx, Caddy, Azure Application Proxy, Cloudflare) | leave `HOST` unset; optionally `CLIENT_IP_HEADER` | your proxy's address |
+
+The console prints the exact addresses on start. Add `ALLOWED_NETWORKS` to
+limit it to the office and VPN ranges.
 
 ## What works, and what needs extra setup
 
@@ -49,11 +63,11 @@ on-call schedules and escalation, status pages and backups.
   without a telephony account. Add Twilio credentials under
   *On-call → Phone & SMS* to place real calls. Use *Profile → Send a test page
   to me* to check what each person would receive.
-- **Webhooks from the internet** (Slack, Teams, Linear, alert sources, Twilio)
-  need a public https address. Run a Cloudflare Tunnel or similar to
-  `http://localhost:8080` and set *Settings → App URL* to the tunnel's address.
-  Built-in monitors, heartbeats from your own network and the web app need no
-  tunnel.
+- **Webhooks from the internet** (Slack, Teams, Linear, cloud alert sources,
+  Twilio) need an https address those services can reach: a public IP or port
+  forward, a reverse proxy or a tunnel. Set *Settings → App URL* to it. Only
+  those features need one: built-in monitors, mailboxes, heartbeats from your
+  own network and the web app work entirely inside the network.
 - **Backups** of SQLite files need nothing. Postgres, Supabase, MySQL, MongoDB
   and SQL Server backups run the vendor's dump tool (`pg_dump`, `mysqldump`,
   `mongodump`, `sqlcmd`). Install the client tools, or put them in a folder
@@ -62,8 +76,8 @@ on-call schedules and escalation, status pages and backups.
 - **Ping monitors** use Windows' own `ping`.
 - **Phone push notifications** need InfraTicket opened over https or on
   `localhost`. On the laptop running the exe, `http://localhost:8080` works;
-  from a phone it needs an https address (the tunnel, or the lab server's
-  wildcard certificate). See *Phone push notifications* in OPERATIONS.md.
+  from a phone it needs an https address (your own certificate, a proxy, or
+  the lab server's wildcard certificate). See *Phone push notifications* in OPERATIONS.md.
 - **Teams calls** need the Teams bot, Graph permissions and an https App URL
   that Microsoft can reach. See *Teams calls* in OPERATIONS.md.
 

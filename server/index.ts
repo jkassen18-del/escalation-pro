@@ -47,6 +47,7 @@ import { startSlaMonitor } from './jobs/sla-monitor.ts';
 import { APP_VERSION } from '../shared/version.ts';
 import { pruneAttempts } from './lib/rate-limit.ts';
 import { isDirectLocal } from './lib/network.ts';
+import { createListener, reachableUrls, tlsFromEnv } from './lib/listen.ts';
 import { getSettings } from './repositories/settings.ts';
 import { LIMIT_RULES, networkGuard, networkPolicyFromEnv, publicPaths, requestLimiter, robotsTxt, sameOriginGuard, securityHeaders } from './middleware/security.ts';
 
@@ -61,11 +62,10 @@ export async function createApp() {
   }
 
   // Required for correct req.ip and secure cookies behind a reverse proxy.
-  // The portable exe trusts only a proxy on the same machine ('loopback'): it
-  // listens on 127.0.0.1, so the only proxy that can reach it is a local one -
-  // a Cloudflare Tunnel connector - and a browser connecting directly sends no
-  // forwarded headers to be fooled by. Trusting nothing there meant the
-  // tunnel's HTTPS went unseen and the secure sign-in cookie was never set.
+  // The portable exe trusts only a proxy on the same machine ('loopback'):
+  // forwarded headers are believed when a local proxy or tunnel connector
+  // (IIS, nginx, cloudflared...) relays the request, and ignored from anyone
+  // connecting directly across the network, who could otherwise forge them.
   const trustProxy = process.env.TRUST_PROXY ?? (process.env.INFRATICKET_PORTABLE ? 'loopback' : '1');
   app.set(
     'trust proxy',
@@ -165,7 +165,8 @@ export async function createApp() {
         // a trusted proxy), and still usable at http://localhost on the machine
         // itself. A plain `true` silently dropped the cookie on any request it
         // could not see as HTTPS, so signing in "worked" and then did not.
-        secure: config.cookieSecure ? 'auto' : false,
+        // 'auto': secure whenever the request arrived over https (built in, or via a trusted proxy).
+        secure: config.cookieSecure || process.env.TLS_PFX_FILE || process.env.TLS_CERT_FILE ? 'auto' : false,
         maxAge: config.sessionMaxAgeMs,
       },
     }),
@@ -342,7 +343,8 @@ export async function startServer() {
   await bootstrapFromEnvironment();
 
   const app = await createApp();
-  const server = app.listen(config.port, config.host);
+  const tls = tlsFromEnv();
+  const server = createListener(app, tls).listen(config.port, config.host);
   // Resolve once listening, so a caller (the portable launcher) can report a
   // port that is already taken instead of the process dying unexplained.
   await new Promise<void>((resolve, reject) => {
@@ -351,7 +353,15 @@ export async function startServer() {
   });
   console.log('');
   console.log(`  InfraTicket ${APP_VERSION}`);
-  console.log(`  → http://localhost:${config.port}`);
+  const urls = reachableUrls(config.host, config.port, Boolean(tls));
+  console.log(`  → ${urls[0]}`);
+  for (const url of urls.slice(1)) console.log(`  → ${url}`);
+  console.log(
+    urls.length > 1
+      ? '  → open to the network: anyone who can reach these addresses gets the sign-in page'
+      : '  → this computer only (set HOST=0.0.0.0 in .env, or start with --network, to let others in)',
+  );
+  if (process.env.ALLOWED_NETWORKS) console.log(`  → limited to: ${process.env.ALLOWED_NETWORKS}`);
   console.log(`  → database: ${db.dialect}`);
   console.log(`  → mode: ${IS_PRODUCTION ? 'production' : 'development'}`);
   console.log('');

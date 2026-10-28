@@ -100,7 +100,7 @@ export function ConnectClaudeCard() {
             {!publicHttps && (
               <p className="rounded-sm border border-[var(--color-brass-400)]/45 bg-[var(--color-brass-50)] px-2.5 py-2 text-xs dark:bg-[var(--color-brass-900)]/20">
                 claude.ai connects from Anthropic's servers, so it needs a public https address. This one isn't - ask an administrator to
-                set one up (for example with a Cloudflare Tunnel). Claude Code and Claude Desktop work with a token on your own network.
+                set one up (a reverse proxy, port forward or tunnel). Claude Code and Claude Desktop work with a token on your own network.
               </p>
             )}
           </div>
