@@ -236,3 +236,24 @@ test('how it is served is a choice: plain http, or https with the organisation\'
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('kept to this computer, it answers on both loopback addresses, so a tunnel pointed at localhost finds it', async () => {
+  const { loopbackTwin, listenOnTwin, createListener } = await import('../server/lib/listen.ts');
+  assert.equal(loopbackTwin('127.0.0.1'), '::1');
+  assert.equal(loopbackTwin('0.0.0.0'), null, 'open to the network already covers both');
+  const express = (await import('express')).default;
+  const app = express();
+  app.get('/', (_request, response) => response.send('ok'));
+  const main = createListener(app, null);
+  await new Promise<void>((resolve) => main.listen(0, '127.0.0.1', () => resolve()));
+  const port = (main.address() as { port: number }).port;
+  const twin = await listenOnTwin(app, null, '127.0.0.1', port);
+  try {
+    if (!twin) return; // IPv6 switched off on this machine: nothing to check
+    const response = await fetch(`http://[::1]:${port}/`);
+    assert.equal(await response.text(), 'ok');
+  } finally {
+    twin?.close();
+    main.close();
+  }
+});

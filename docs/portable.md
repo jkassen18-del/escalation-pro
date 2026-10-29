@@ -78,7 +78,7 @@ or PEM files: `TLS_CERT_FILE=…\cert.pem` and `TLS_KEY_FILE=…\key.pem`. The s
 
 ### Behind a reverse proxy or tunnel
 
-IIS, nginx, Caddy, Azure Application Proxy, a Cloudflare Tunnel or anything similar can sit in front: leave `HOST` unset (the proxy runs on the same machine) and point the proxy at `http://localhost:8080`. The exe believes the proxy's `X-Forwarded-*` headers only from this machine. If your proxy reports the visitor in its own header, name it: `CLIENT_IP_HEADER=cf-connecting-ip` (Cloudflare) or `CLIENT_IP_HEADER=x-real-ip` (nginx). `GO-LIVE.md` in the repository walks through the Cloudflare option.
+IIS, nginx, Caddy, Azure Application Proxy, a Cloudflare Tunnel or anything similar can sit in front: leave `HOST` unset (the proxy runs on the same machine) and point the proxy at `http://127.0.0.1:8080` (`localhost` works too: kept to this computer, the exe answers on both 127.0.0.1 and ::1). The exe believes the proxy's `X-Forwarded-*` headers only from this machine. If your proxy reports the visitor in its own header, name it: `CLIENT_IP_HEADER=cf-connecting-ip` (Cloudflare) or `CLIENT_IP_HEADER=x-real-ip` (nginx). `GO-LIVE.md` in the repository walks through the Cloudflare option.
 
 ## What works, and what needs extra setup
 

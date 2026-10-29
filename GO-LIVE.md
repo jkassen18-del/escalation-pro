@@ -170,7 +170,7 @@ and they cannot be read without it.
 3. On the tunnel's **Routes** tab: **Add route → Published application**.
    Leave the subdomain empty, choose the domain `infraticket.co.za`, and set the
    **Service URL** to:
-   - Windows: `http://localhost:8080`
+   - Windows: `http://127.0.0.1:8080` (no trailing slash)
    - Docker: `http://app:3000`
 
    Select **Add route**. (If it says a DNS record already exists, delete the old
@@ -221,6 +221,8 @@ Now that there is a public HTTPS address, the parts that need one start working:
 | What you see | Why, and the fix |
 | --- | --- |
 | Cloudflare *Error 1033* | The tunnel connector is not running. Start the cloudflared service (Windows) or `docker compose --profile tunnel up -d`. |
+| Cloudflare *Error 1033* | No connector is running for the tunnel the domain points at. Check the tunnel shows *Healthy*, and that the `infraticket.co.za` CNAME under DNS → Records targets that tunnel's ID (`<id>.cfargotunnel.com`), not an old, deleted tunnel. |
+| Cloudflare *Error 502* while `localhost:8080` works on the PC | The route uses `localhost`, which Windows may resolve to the IPv6 `::1`. Set the route to `http://127.0.0.1:8080` (current builds answer on both). |
 | Cloudflare *Error 502* | The tunnel is up but the app is not. Check the console window or `docker compose logs app`, and that the hostname URL matches (`localhost:8080` / `app:3000`). |
 | You sign in, then see "You are not signed in" | An InfraTicket.exe from before 26 Oct 2026 needs `TRUST_PROXY=1` in `.env` behind the tunnel; newer builds do not. Restart after changing `.env`. |
 | *Too many redirects* | SSL/TLS mode is *Flexible*. Set it to **Full**. |

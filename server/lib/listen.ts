@@ -46,6 +46,27 @@ export function createListener(app: Express, tls: TlsOptions | null): http.Serve
   return tls ? https.createServer({ ...tls, minVersion: 'TLSv1.2' }, app) : http.createServer(app);
 }
 
+/**
+ * "localhost" can mean 127.0.0.1 or ::1, and Windows often tries ::1 first.
+ * Browsers fall back to the other address; tunnels and proxies (cloudflared
+ * pointed at http://localhost:8080, for one) may not, and answer 502. So a
+ * server kept to this computer listens on both loopback addresses.
+ */
+export function loopbackTwin(host: string): string | null {
+  return host === '127.0.0.1' || host === 'localhost' ? '::1' : null;
+}
+
+/** Also listen on the twin address; quietly skipped where IPv6 is switched off. */
+export async function listenOnTwin(app: Express, tls: TlsOptions | null, host: string, port: number): Promise<http.Server | null> {
+  const twin = loopbackTwin(host);
+  if (!twin) return null;
+  const server = createListener(app, tls);
+  return new Promise((resolve) => {
+    server.once('error', () => resolve(null));
+    server.listen(port, twin, () => resolve(server));
+  });
+}
+
 /** The addresses people can type in, for the startup message. */
 export function reachableUrls(host: string, port: number, secure: boolean): string[] {
   const scheme = secure ? 'https' : 'http';

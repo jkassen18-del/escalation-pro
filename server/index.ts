@@ -48,7 +48,7 @@ import { startSlaMonitor } from './jobs/sla-monitor.ts';
 import { APP_VERSION } from '../shared/version.ts';
 import { pruneAttempts } from './lib/rate-limit.ts';
 import { isDirectLocal } from './lib/network.ts';
-import { createListener, reachableUrls, tlsFromEnv } from './lib/listen.ts';
+import { createListener, listenOnTwin, reachableUrls, tlsFromEnv } from './lib/listen.ts';
 import { getSettings } from './repositories/settings.ts';
 import { LIMIT_RULES, networkGuard, networkPolicyFromEnv, publicPaths, requestLimiter, robotsTxt, sameOriginGuard, securityHeaders } from './middleware/security.ts';
 
@@ -356,6 +356,7 @@ export async function startServer() {
     server.once('listening', resolve);
     server.once('error', reject);
   });
+  const twin = await listenOnTwin(app, tls, config.host, config.port);
   console.log('');
   console.log(`  InfraTicket ${APP_VERSION}`);
   const urls = reachableUrls(config.host, config.port, Boolean(tls));
@@ -390,6 +391,7 @@ export async function startServer() {
     stopDiscord();
     clearInterval(pruneTimer);
     sessionStore.stopSweeper();
+    twin?.close();
     server.close(() => {
       void db.close().then(() => process.exit(0));
     });
