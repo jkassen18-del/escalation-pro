@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import session from 'express-session';
@@ -79,6 +80,10 @@ export async function createApp() {
   app.get('/robots.txt', robotsTxt);
   app.use(networkGuard(networkPolicyFromEnv(), publicPaths(process.env.PUBLIC_PATHS)));
   app.use(requestLimiter(LIMIT_RULES));
+  // Compressed responses: the web app and API answers are mostly text, and
+  // through a tunnel or VPN they travel over someone's upload link. /mcp is
+  // left alone because its responses may be streamed.
+  app.use(compression({ filter: (req, res) => !req.path.startsWith('/mcp') && compression.filter(req, res) }));
 
   app.use(
     express.json({

@@ -31,6 +31,7 @@
     "@xmldom/xmldom": "^0.8.15",
     "@xyflow/react": "^12.12.0",
     "clsx": "^2.1.1",
+    "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
     "date-fns": "^4.1.0",
     "dotenv": "^17.2.3",
@@ -53,6 +54,7 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.14",
     "@types/better-sqlite3": "^7.6.13",
+    "@types/compression": "^1.8.1",
     "@types/cookie-parser": "^1.4.8",
     "@types/express": "^4.17.21",
     "@types/express-session": "^1.18.1",

@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes, useParams } from 'react-router-dom';
 import { useAuth } from '@/state/auth';
 import { AppShell } from '@/components/AppShell';
@@ -9,29 +10,32 @@ import { SetupPage } from '@/pages/Setup';
 import { TicketListPage } from '@/pages/TicketList';
 import { TicketDetailPage } from '@/pages/TicketDetail';
 import { NewTicketPage } from '@/pages/NewTicket';
-import { QuickTicketPage } from '@/pages/QuickTicket';
-import { QuickTicketsPage } from '@/pages/QuickTickets';
-import { PeoplePage } from '@/pages/People';
-import { TeamsPage } from '@/pages/Teams';
-import { ReportsPage } from '@/pages/Reports';
-import { IntegrationsPage } from '@/pages/Integrations';
-import { SettingsPage } from '@/pages/Settings';
-import { AuditLogPage } from '@/pages/AuditLog';
-import { ProfilePage } from '@/pages/Profile';
-import { ShiftsPage } from '@/pages/Shifts';
-import { ApprovalsPage } from '@/pages/Approvals';
-import { ConnectionsPage } from '@/pages/Connections';
-import { FlowEditorPage, FlowsPage } from '@/pages/Flows';
-import { QuickLinksPage } from '@/pages/QuickLinks';
-import { OperationsPage } from '@/pages/Operations';
-import { MonitorsPage } from '@/pages/Monitors';
-import { MaintenancePage } from '@/pages/Maintenance';
-import { OnCallPage } from '@/pages/OnCall';
-import { StatusPagesPage } from '@/pages/StatusPages';
-import { DatabasesPage } from '@/pages/Databases';
-import { DocsPage } from '@/pages/Docs';
-import { ConnectAuthorizePage } from '@/pages/ConnectAuthorize';
 import type { Permission } from '@shared/types';
+
+// Loaded when first opened, so the first visit downloads only sign-in and tickets.
+const QuickTicketPage = lazy(() => import('@/pages/QuickTicket').then((module) => ({ default: module.QuickTicketPage })));
+const QuickTicketsPage = lazy(() => import('@/pages/QuickTickets').then((module) => ({ default: module.QuickTicketsPage })));
+const PeoplePage = lazy(() => import('@/pages/People').then((module) => ({ default: module.PeoplePage })));
+const TeamsPage = lazy(() => import('@/pages/Teams').then((module) => ({ default: module.TeamsPage })));
+const ReportsPage = lazy(() => import('@/pages/Reports').then((module) => ({ default: module.ReportsPage })));
+const IntegrationsPage = lazy(() => import('@/pages/Integrations').then((module) => ({ default: module.IntegrationsPage })));
+const SettingsPage = lazy(() => import('@/pages/Settings').then((module) => ({ default: module.SettingsPage })));
+const AuditLogPage = lazy(() => import('@/pages/AuditLog').then((module) => ({ default: module.AuditLogPage })));
+const ProfilePage = lazy(() => import('@/pages/Profile').then((module) => ({ default: module.ProfilePage })));
+const ShiftsPage = lazy(() => import('@/pages/Shifts').then((module) => ({ default: module.ShiftsPage })));
+const ApprovalsPage = lazy(() => import('@/pages/Approvals').then((module) => ({ default: module.ApprovalsPage })));
+const ConnectionsPage = lazy(() => import('@/pages/Connections').then((module) => ({ default: module.ConnectionsPage })));
+const FlowEditorPage = lazy(() => import('@/pages/Flows').then((module) => ({ default: module.FlowEditorPage })));
+const FlowsPage = lazy(() => import('@/pages/Flows').then((module) => ({ default: module.FlowsPage })));
+const QuickLinksPage = lazy(() => import('@/pages/QuickLinks').then((module) => ({ default: module.QuickLinksPage })));
+const OperationsPage = lazy(() => import('@/pages/Operations').then((module) => ({ default: module.OperationsPage })));
+const MonitorsPage = lazy(() => import('@/pages/Monitors').then((module) => ({ default: module.MonitorsPage })));
+const MaintenancePage = lazy(() => import('@/pages/Maintenance').then((module) => ({ default: module.MaintenancePage })));
+const OnCallPage = lazy(() => import('@/pages/OnCall').then((module) => ({ default: module.OnCallPage })));
+const StatusPagesPage = lazy(() => import('@/pages/StatusPages').then((module) => ({ default: module.StatusPagesPage })));
+const DatabasesPage = lazy(() => import('@/pages/Databases').then((module) => ({ default: module.DatabasesPage })));
+const DocsPage = lazy(() => import('@/pages/Docs').then((module) => ({ default: module.DocsPage })));
+const ConnectAuthorizePage = lazy(() => import('@/pages/ConnectAuthorize').then((module) => ({ default: module.ConnectAuthorizePage })));
 
 export function App() {
   const { user, loading, setupRequired } = useAuth();
@@ -50,11 +54,18 @@ export function App() {
   if (inviteMatch) return <AcceptInvitePage token={decodeURIComponent(inviteMatch[1])} />;
   if (!user) return <LoginPage />;
   // The OAuth consent screen stands alone, outside the app shell.
-  if (window.location.pathname === '/connect/authorize') return <ConnectAuthorizePage />;
+  if (window.location.pathname === '/connect/authorize') {
+    return (
+      <Suspense fallback={<PageLoading />}>
+        <ConnectAuthorizePage />
+      </Suspense>
+    );
+  }
 
   return (
     <DepartmentProvider>
     <AppShell>
+      <Suspense fallback={<PageLoading />}>
       <Routes>
         <Route path="/" element={<Navigate to="/tickets" replace />} />
         <Route path="/tickets" element={<TicketListPage />} />
@@ -88,6 +99,7 @@ export function App() {
         <Route path="/docs/:slug" element={<DocsPage />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
+      </Suspense>
     </AppShell>
     </DepartmentProvider>
   );
@@ -122,6 +134,14 @@ function NotFound() {
     <div className="px-6 py-16 text-center">
       <p className="text-sm font-medium">Page not found</p>
       <p className="mt-1 text-xs text-muted">The link may be out of date.</p>
+    </div>
+  );
+}
+
+function PageLoading() {
+  return (
+    <div className="flex min-h-[40vh] items-center justify-center">
+      <Spinner className="size-5" />
     </div>
   );
 }
